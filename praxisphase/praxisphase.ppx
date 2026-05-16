@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<settings version="1.0">
+	<category name="write.c">
+		<category name="Window">
+			<property name="Left" type="integer">32</property>
+			<property name="Top" type="integer">32</property>
+			<property name="Right" type="integer">1472</property>
+			<property name="Bottom" type="integer">569</property>
+			<property name="Maximized" type="integer">0</property>
+			<property name="Active" type="integer">0</property>
+		</category>
+	</category>
+	<category name="main.c">
+		<category name="Window">
+			<property name="Left" type="integer">4294967287</property>
+			<property name="Top" type="integer">4294967258</property>
+			<property name="Right" type="integer">1464</property>
+			<property name="Bottom" type="integer">726</property>
+			<property name="Maximized" type="integer">1</property>
+			<property name="Active" type="integer">1</property>
+		</category>
+	</category>
+	<category name="io.h">
+		<category name="Window">
+			<property name="Left" type="integer">96</property>
+			<property name="Top" type="integer">96</property>
+			<property name="Right" type="integer">1536</property>
+			<property name="Bottom" type="integer">633</property>
+			<property name="Maximized" type="integer">0</property>
+			<property name="Active" type="integer">0</property>
+		</category>
+	</category>
+	<category name="plot.plt">
+		<category name="Window">
+			<property name="Left" type="integer">128</property>
+			<property name="Top" type="integer">128</property>
+			<property name="Right" type="integer">1568</property>
+			<property name="Bottom" type="integer">665</property>
+			<property name="Maximized" type="integer">0</property>
+			<property name="Active" type="integer">0</property>
+		</category>
+	</category>
+	<category name="read.c">
+		<category name="Window">
+			<property name="Left" type="integer">160</property>
+			<property name="Top" type="integer">160</property>
+			<property name="Right" type="integer">1600</property>
+			<property name="Bottom" type="integer">697</property>
+			<property name="Maximized" type="integer">0</property>
+			<property name="Active" type="integer">0</property>
+		</category>
+	</category>
+</settings>
