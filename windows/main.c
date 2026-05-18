@@ -78,7 +78,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmd, int nShow)
 
     HWND hWnd = CreateWindow(
         L"MyWindow",
-        L"Slider + Button",
+        L"Windows",
         WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT, CW_USEDEFAULT,
         600, 250,
