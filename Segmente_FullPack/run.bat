@@ -1,0 +1,4 @@
+@echo off
+Segmente_Generator
+Segmente_Schnittpunkte
+start Segmente_Visualisierung
