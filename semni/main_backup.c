@@ -5,6 +5,14 @@
 #include <GL/gl.h>
 #include <math.h>
 #include <commctrl.h>
+#include <stdio.h>
+
+#include "geometry.h"
+#include "app.h"
+#include "mode.h"
+
+#include "environment.h"
+
 
 #pragma comment(lib, "opengl32.lib")
 #pragma comment(lib, "gdi32.lib")
@@ -13,33 +21,13 @@
 
 // ---------------- DATA ----------------
 
-typedef struct {
-    float x, y;
-} Point;
+AppState app;
 
-typedef struct {
-    float leftX, rightX;
-    float y;
+int paintWasInside = 0;
 
-    float leftRadius;
-    float rightRadius;
-
-    Point topCtrl;
-    Point bottomCtrl;
-
-    Point innerCircle;     
-    float innerRadius;     
-
-    float angle;
-} CapsuleBody;
-
-CapsuleBody robot;
-
+// Rendering
 HDC hdc;
 HGLRC hrc;
-
-float MIN_R = 0.05f;
-float MAX_R = 0.35f;
 
 HWND hwndSlider;
 
@@ -49,15 +37,8 @@ HWND sliderLeft;
 HWND labelRight;
 HWND sliderRight;
 
-int draggingTop = 0;
-int draggingBottom = 0;
-
-int activeHandle = 0; // 0 = none, 1 = top, 2 = bottom
-
-int sliderDraggingLeft = 0;
-int sliderDraggingRight = 0;
-
-int draggingInner = 0;
+float MIN_R = 0.05f;
+float MAX_R = 0.35f;
 
 #define ID_LEFT  101
 #define ID_RIGHT 102
@@ -65,6 +46,9 @@ int draggingInner = 0;
 #define HANDLE_RADIUS 0.06f
 
 #define INNER_HANDLE_RADIUS 0.03f
+
+#define BREAK_POINT_X 999999.0f
+#define BREAK_POINT_Y 999999.0f
 
 // ---------------- DRAW ----------------
 
@@ -215,8 +199,8 @@ void drawCapsuleBody(CapsuleBody b, int activeHandle)
 
     float angle = b.angle;
 
-	int topActive = draggingTop;
-	int bottomActive = draggingBottom;
+	int topActive = app.draggingTop;
+	int bottomActive = app.draggingBottom;
 
     // rotated circle centers
     Point leftCenter  = rotatePoint((Point){b.leftX,  b.y}, center, angle);
@@ -226,21 +210,21 @@ void drawCapsuleBody(CapsuleBody b, int activeHandle)
 	Point inner = rotatePoint(b.innerCircle, center, angle);
 
     // circles
-	if (sliderDraggingLeft)
+	if (app.sliderDraggingLeft)
 	    glColor3f(0.2f, 0.4f, 1.0f); 
 	else
 	    glColor3f(0, 0, 0);
 
-	drawCircle(leftCenter, robot.leftRadius);
+	drawCircle(leftCenter, app.robotScene.robot.leftRadius);
 
-    if (sliderDraggingRight)
+    if (app.sliderDraggingRight)
 	    glColor3f(0.2f, 0.4f, 1.0f); 
 	else
 	    glColor3f(0, 0, 0);
 
-	drawCircle(rightCenter, robot.rightRadius);
+	drawCircle(rightCenter, app.robotScene.robot.rightRadius);
 
-	if (draggingInner)
+	if (app.draggingInner)
 	    glColor3f(1.0f, 0.85f, 0.35f); // highlight
 	else
 	    glColor3f(0, 0, 0);
@@ -276,17 +260,26 @@ void drawCapsuleBody(CapsuleBody b, int activeHandle)
 	Point topHandle = rotatePoint(b.topCtrl, center, angle);
 	Point bottomHandle = rotatePoint(b.bottomCtrl, center, angle);
 
-	drawHandle(topHandle, activeHandle == 1);
-	drawHandle(bottomHandle, activeHandle == 2);
+	drawHandle(topHandle, app.activeHandle == 1);
+	drawHandle(bottomHandle, app.activeHandle == 2);
 
-	drawInnerHandle(inner, draggingInner);
+	drawInnerHandle(inner, app.draggingInner);
 	
-	if (activeHandle == 1)
+	if (app.activeHandle == 1)
 	    glColor3f(1.0f, 0.3f, 0.3f); // highlight top
-	else if (activeHandle == 2)
+	else if (app.activeHandle == 2)
 	    glColor3f(0.3f, 0.3f, 1.0f); // highlight bottom
 	else
 	    glColor3f(0, 0, 0);
+}
+
+void addBreak()
+{
+    if (app.paintCount + 2 < MAX_POINTS)
+    {
+        app.paintPoints[app.paintCount++] = BREAK_POINT_X;
+        app.paintPoints[app.paintCount++] = BREAK_POINT_Y;
+    }
 }
 
 // ---------------- OPENGL ----------------
@@ -384,8 +377,127 @@ void render()
     glLoadIdentity();
 
     glColor3f(0,0,0);
+	
+    drawEnvironment();
 
-    drawCapsuleBody(robot, activeHandle);
+	if (app.mode == MODE_ENVIRONMENT && app.isDrawingWall)
+	{
+	    glColor3f(1.0f, 0.0f, 0.0f);
+
+	    glBegin(GL_LINES);
+	    glVertex2f(app.wallStart.x, app.wallStart.y);
+	    glVertex2f(app.mouseGL.x, app.mouseGL.y);
+	    glEnd();
+	}
+    
+    drawCapsuleBody(app.robotScene.robot, app.activeHandle);
+
+    // ---- FINAL STROKE (BLACK) ----
+    if (app.paintCount >= 4 && !app.painting)
+	{
+	    glColor3f(0, 0, 0);
+
+	    float thickness = 0.01f;
+
+	    glBegin(GL_TRIANGLE_STRIP);
+
+	    for (int i = 2; i < app.paintCount - 2; i += 2)
+	    {
+	        float x0 = app.paintPoints[i - 2];
+	        float y0 = app.paintPoints[i - 1];
+
+	        float x1 = app.paintPoints[i];
+	        float y1 = app.paintPoints[i + 1];
+
+	        float x2 = app.paintPoints[i + 2];
+	        float y2 = app.paintPoints[i + 3];
+
+	        if (x0 == BREAK_POINT_X || x1 == BREAK_POINT_X || x2 == BREAK_POINT_X)
+	            continue;
+
+	        float dx = x2 - x0;
+	        float dy = y2 - y0;
+
+	        float len = sqrtf(dx * dx + dy * dy);
+	        if (len == 0) continue;
+
+	        dx /= len;
+	        dy /= len;
+
+	        float px = -dy * thickness;
+	        float py = dx * thickness;
+
+	        glVertex2f(x1 + px, y1 + py);
+	        glVertex2f(x1 - px, y1 - py);
+	    }
+
+	    glEnd();
+	}
+
+    // ---- LIVE PREVIEW (RED WHILE HOLDING MOUSE) ----
+    if (app.mode == MODE_PAINT && app.painting)
+	{
+	    glColor3f(1.0f, 0.0f, 0.0f);
+
+	    float thickness = 0.01f;
+
+	    glBegin(GL_TRIANGLE_STRIP);
+
+	    for (int i = 2; i < app.paintCount; i += 2)
+	    {
+	        float x0 = app.paintPoints[i - 2];
+	        float y0 = app.paintPoints[i - 1];
+
+	        float x1 = app.paintPoints[i];
+	        float y1 = app.paintPoints[i + 1];
+
+	        if (x0 == BREAK_POINT_X || x1 == BREAK_POINT_X)
+	            continue;
+
+	        float dx = x1 - x0;
+	        float dy = y1 - y0;
+
+	        float len = sqrtf(dx * dx + dy * dy);
+	        if (len == 0) continue;
+
+	        dx /= len;
+	        dy /= len;
+
+	        float px = -dy * thickness;
+	        float py = dx * thickness;
+
+	        glVertex2f(x1 + px, y1 + py);
+	        glVertex2f(x1 - px, y1 - py);
+	    }
+
+	    // extend last segment to mouse
+	    if (app.paintCount >= 2)
+	    {
+	        float x0 = app.paintPoints[app.paintCount - 2];
+	        float y0 = app.paintPoints[app.paintCount - 1];
+
+	        float x1 = app.mouseGL.x;
+	        float y1 = app.mouseGL.y;
+
+	        float dx = x1 - x0;
+	        float dy = y1 - y0;
+
+	        float len = sqrtf(dx * dx + dy * dy);
+	        if (len != 0)
+	        {
+	            dx /= len;
+	            dy /= len;
+
+	            float px = -dy * thickness;
+	            float py = dx * thickness;
+
+	            glVertex2f(x1 + px, y1 + py);
+	            glVertex2f(x1 - px, y1 - py);
+	        }
+	    }
+
+	    glEnd();
+	}
 
     SwapBuffers(hdc);
 }
@@ -492,119 +604,211 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		    if (src == sliderLeft)
 		    {
 		        if (code == TB_THUMBTRACK)
-		            sliderDraggingLeft = 1;
+		            app.sliderDraggingLeft = 1;
 		        else if (code == TB_ENDTRACK)
-		            sliderDraggingLeft = 0;
+		            app.sliderDraggingLeft = 0;
 	
 				LRESULT pos = SendMessage(sliderLeft, TBM_GETPOS, 0, 0);
 		        int value = (int)pos;
 
-		        robot.leftRadius = value / 1000.0f;
+		        app.robotScene.robot.leftRadius = value / 1000.0f;
 		    }
 		    else if (src == sliderRight)
 		    {
 		        if (code == TB_THUMBTRACK)
-		            sliderDraggingRight = 1;
+		            app.sliderDraggingRight = 1;
 		        else if (code == TB_ENDTRACK)
-		            sliderDraggingRight = 0;
+		            app.sliderDraggingRight = 0;
 
 		        LRESULT pos = SendMessage(sliderRight, TBM_GETPOS, 0, 0);
 		        int value = (int)pos;
 
-		        robot.rightRadius = value / 1000.0f;
+		        app.robotScene.robot.rightRadius = value / 1000.0f;
 		    }
 		}
 		break;
 
 		case WM_LBUTTONDOWN:
 		{
-			draggingTop = 0;
-			draggingBottom = 0;
-			draggingInner = 0;
-
 		    int mx = LOWORD(lParam);
 		    int my = HIWORD(lParam);
 
-		    float x, y;
-		    screenToGL(hwnd, mx, my, &x, &y);
+		    //float x, y;
+		    screenToGL(hwnd, mx, my, &app.mouseGL.x, &app.mouseGL.y);
 
-		    Point mouse = { x, y };
+		    Point mouse = app.mouseGL;
 
-		    Point topHandle = rotatePoint(robot.topCtrl, getCenter(robot), robot.angle);
-			Point bottomHandle = rotatePoint(robot.bottomCtrl, getCenter(robot), robot.angle);
+		    if (app.mode == MODE_ROBOT)
+		    {
+		        app.draggingTop = 0;
+		        app.draggingBottom = 0;
+		        app.draggingInner = 0;
 
+		        Point topHandle = rotatePoint(app.robotScene.robot.topCtrl, getCenter(app.robotScene.robot), app.robotScene.robot.angle);
+		        Point bottomHandle = rotatePoint(app.robotScene.robot.bottomCtrl, getCenter(app.robotScene.robot), app.robotScene.robot.angle);
 
+		        Point center = getCenter(app.robotScene.robot);
+		        Point innerWorld = rotatePoint(app.robotScene.robot.innerCircle, center, app.robotScene.robot.angle);
 
-			Point center = getCenter(robot);
-			float angle = robot.angle;
+		        app.activeHandle = 0;
 
-			Point innerWorld = rotatePoint(robot.innerCircle, center, angle);
-
-			activeHandle = 0;
-
-			if (isNear(mouse, topHandle))
+		        if (isNear(mouse, topHandle))
+		        {
+		            app.draggingTop = 1;
+		            app.activeHandle = 1;
+		        }
+		        else if (isNear(mouse, bottomHandle))
+		        {
+		            app.draggingBottom = 1;
+		            app.activeHandle = 2;
+		        }
+		        else if (isNear(mouse, innerWorld))
+		        {
+		            app.draggingInner = 1;
+		            app.activeHandle = 3;
+		        }
+		    }
+		    else if (app.mode == MODE_ENVIRONMENT)
+		    {
+		        //app.wallStart = mouse;   // IMPORTANT: use local mouse
+		        app.isDrawingWall = 1;
+				printf("CLICK wallStart: %f %f\n", app.wallStart.x, app.wallStart.y);
+		    }
+			else if (app.mode == MODE_PAINT)
 			{
-			    draggingTop = 1;
-			    activeHandle = 1;
-			}
-			else if (isNear(mouse, bottomHandle))
-			{
-			    draggingBottom = 1;
-			    activeHandle = 2;
-			}
-			else if (isNear(mouse, innerWorld))
-			{
-			    draggingInner = 1;
-			    activeHandle = 3; // optional
+			    app.painting = 1;
+			    app.paintCount = 0;
+			    SetCapture(hwnd);
+
+				TRACKMOUSEEVENT tme;
+				tme.cbSize = sizeof(tme);
+				tme.dwFlags = TME_LEAVE;
+				tme.hwndTrack = hwnd;
+				TrackMouseEvent(&tme);
 			}
 		}
 		break;
 
 		case WM_MOUSEMOVE:
 		{
-		    if (!draggingTop && !draggingBottom && !draggingInner)
-    		break;
-
 		    int mx = LOWORD(lParam);
 		    int my = HIWORD(lParam);
 
-		    float x, y;
-		    screenToGL(hwnd, mx, my, &x, &y);
+		    screenToGL(hwnd, mx, my, &app.mouseGL.x, &app.mouseGL.y);
 
-		    Point mouse = { x, y };
+		    // robot only logic
+		    if (app.mode == MODE_ROBOT)
+		    {
+		        if (!app.draggingTop && !app.draggingBottom && !app.draggingInner)
+		            break;
 
-		    Point center = getCenter(robot);
-		    float angle = robot.angle;
+		        Point mouse = app.mouseGL;
 
-		    Point localMouse = inverseRotate(mouse, center, angle);
+		        Point center = getCenter(app.robotScene.robot);
+		        float angle = app.robotScene.robot.angle;
 
-		    if (draggingTop)
-			    robot.topCtrl = localMouse;
+		        Point localMouse = inverseRotate(mouse, center, angle);
 
-			if (draggingBottom)
-			    robot.bottomCtrl = localMouse;
+		        if (app.draggingTop)
+		            app.robotScene.robot.topCtrl = localMouse;
 
-			if (draggingInner)
-			    robot.innerCircle = localMouse;
+		        if (app.draggingBottom)
+		            app.robotScene.robot.bottomCtrl = localMouse;
+
+		        if (app.draggingInner)
+		            app.robotScene.robot.innerCircle = localMouse;
+		    }
+			if (app.mode == MODE_ENVIRONMENT && app.isDrawingWall)
+			{
+			    screenToGL(hwnd, mx, my, &app.mouseGL.x, &app.mouseGL.y);
+			}
+
+			if (app.mode == MODE_PAINT && app.painting)
+			{
+			    RECT r;
+			    GetClientRect(hwnd, &r);
+
+			    POINT pt = { mx, my };
+
+			    int inside =
+			        (pt.x >= 0 && pt.y >= 0 &&
+			         pt.x < r.right && pt.y < r.bottom);
+
+			    if (!inside)
+			    {
+			        addBreak();   // IMPORTANT
+			        break;
+			    }
+
+			    float nx, ny;
+			    screenToGL(hwnd, mx, my, &nx, &ny);
+
+			    if (app.paintCount + 2 < MAX_POINTS)
+			    {
+			        app.paintPoints[app.paintCount++] = nx;
+			        app.paintPoints[app.paintCount++] = ny;
+			    }
+			}
 		}
 		break;
 
 		case WM_LBUTTONUP:
 		{
-		    draggingTop = 0;
-		    draggingBottom = 0;
-		    activeHandle = 0;
-			draggingInner = 0;
+			int mx = LOWORD(lParam);
+		    int my = HIWORD(lParam);
+
+			if (app.mode == MODE_ENVIRONMENT && app.isDrawingWall)
+			{
+			    Point end;
+			    screenToGL(hwnd, mx, my, &end.x, &end.y);
+
+			    addWall(app.wallStart, end);
+
+			    app.isDrawingWall = 0;
+			}
+
+			if (app.mode == MODE_PAINT)
+			{
+			    app.painting = 0;
+			    ReleaseCapture();
+			}
+
+		    app.draggingTop = 0;
+		    app.draggingBottom = 0;
+		    app.draggingInner = 0;
+    		app.activeHandle = 0;
 		}
 		break;
+
+		case WM_MOUSELEAVE:
+		{
+		    if (app.mode == MODE_PAINT && app.painting)
+		    {
+		        addBreak();   // prevents line continuation
+		        app.painting = 0;
+		        ReleaseCapture();
+		    }
+		    return 0;
+		}
 
 		case WM_KEYDOWN:
 		{
 		    if (wParam == VK_LEFT)
-		        robot.angle += 2.0f;
+		        app.robotScene.robot.angle += 2.0f;
 
 		    if (wParam == VK_RIGHT)
-		        robot.angle -= 2.0f;
+		        app.robotScene.robot.angle -= 2.0f;
+
+			if (wParam == 'E')
+			    app.mode = MODE_ENVIRONMENT;
+		        
+
+			if (wParam == 'R')
+			    app.mode = MODE_ROBOT;
+
+			if (wParam == 'P')
+			    app.mode = MODE_PAINT;
+		        
 		}
 		break;
 
@@ -622,31 +826,45 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
 int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmdLine, int nShowCmd)
 {
+	AllocConsole();
+	if (!freopen("CONOUT$", "w", stdout))
+	{
+	    MessageBox(NULL, L"stdout redirect failed", L"Error", MB_OK);
+	}
+
+	if (!freopen("CONOUT$", "w", stderr))
+	{
+	    MessageBox(NULL, L"stderr redirect failed", L"Error", MB_OK);
+	}
+
     INITCOMMONCONTROLSEX icc;
     icc.dwSize = sizeof(icc);
     icc.dwICC = ICC_BAR_CLASSES;
     InitCommonControlsEx(&icc);
 
-    robot.leftX = -0.6f;
-    robot.rightX = 0.6f;
-    robot.y = 0.0f;
-    robot.leftRadius = 0.2f;
-    robot.rightRadius = 0.2f;
+    app.robotScene.robot.leftX = -0.6f;
+    app.robotScene.robot.rightX = 0.6f;
+    app.robotScene.robot.y = 0.0f;
+    app.robotScene.robot.leftRadius = 0.2f;
+    app.robotScene.robot.rightRadius = 0.2f;
 
-	robot.topCtrl.x = 0.0f;
-	robot.topCtrl.y = 0.4f;
+	app.robotScene.robot.topCtrl.x = 0.0f;
+	app.robotScene.robot.topCtrl.y = 0.4f;
 
-	robot.bottomCtrl.x = 0.0f;
-	robot.bottomCtrl.y = -0.4f;
+	app.robotScene.robot.bottomCtrl.x = 0.0f;
+	app.robotScene.robot.bottomCtrl.y = -0.4f;
 
-	robot.innerCircle.x = 0.0f;
-	robot.innerCircle.y = 0.0f;
-	robot.innerRadius = 0.12f;
+	app.robotScene.robot.innerCircle.x = 0.0f;
+	app.robotScene.robot.innerCircle.y = 0.0f;
+	app.robotScene.robot.innerRadius = 0.12f;
+
+	app.paintCount = 0;
+	app.painting = 0;
 
     WNDCLASS wc = {0};
     wc.lpfnWndProc = WndProc;
     wc.hInstance = hInst;
-    wc.lpszClassName = L"CapsuleRobot";
+    wc.lpszClassName = L"CapsulerobotScene.robot";
 
     RegisterClass(&wc);
 
@@ -658,8 +876,8 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmdLine, int nShowC
     RegisterClass(&wcSlider);
 
     HWND hwnd = CreateWindow(
-        L"CapsuleRobot",
-        L"Capsule Robot Body",
+        L"CapsulerobotScene.robot",
+        L"Capsule robotScene.robot Body",
         WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT, CW_USEDEFAULT,
         800, 600,

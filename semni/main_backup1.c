@@ -23,8 +23,6 @@
 
 AppState app;
 
-int paintWasInside = 0;
-
 // Rendering
 HDC hdc;
 HGLRC hrc;
@@ -46,9 +44,6 @@ float MAX_R = 0.35f;
 #define HANDLE_RADIUS 0.06f
 
 #define INNER_HANDLE_RADIUS 0.03f
-
-#define BREAK_POINT_X 999999.0f
-#define BREAK_POINT_Y 999999.0f
 
 // ---------------- DRAW ----------------
 
@@ -273,15 +268,6 @@ void drawCapsuleBody(CapsuleBody b, int activeHandle)
 	    glColor3f(0, 0, 0);
 }
 
-void addBreak()
-{
-    if (app.paintCount + 2 < MAX_POINTS)
-    {
-        app.paintPoints[app.paintCount++] = BREAK_POINT_X;
-        app.paintPoints[app.paintCount++] = BREAK_POINT_Y;
-    }
-}
-
 // ---------------- OPENGL ----------------
 
 void setupOpenGL(HWND hwnd)
@@ -377,127 +363,12 @@ void render()
     glLoadIdentity();
 
     glColor3f(0,0,0);
-	
-    drawEnvironment();
 
-	if (app.mode == MODE_ENVIRONMENT && app.isDrawingWall)
-	{
-	    glColor3f(1.0f, 0.0f, 0.0f);
+	if (app.showEnvironment)
+        drawEnvironment();
 
-	    glBegin(GL_LINES);
-	    glVertex2f(app.wallStart.x, app.wallStart.y);
-	    glVertex2f(app.mouseGL.x, app.mouseGL.y);
-	    glEnd();
-	}
-    
-    drawCapsuleBody(app.robotScene.robot, app.activeHandle);
-
-    // ---- FINAL STROKE (BLACK) ----
-    if (app.paintCount >= 4 && !app.painting)
-	{
-	    glColor3f(0, 0, 0);
-
-	    float thickness = 0.01f;
-
-	    glBegin(GL_TRIANGLE_STRIP);
-
-	    for (int i = 2; i < app.paintCount - 2; i += 2)
-	    {
-	        float x0 = app.paintPoints[i - 2];
-	        float y0 = app.paintPoints[i - 1];
-
-	        float x1 = app.paintPoints[i];
-	        float y1 = app.paintPoints[i + 1];
-
-	        float x2 = app.paintPoints[i + 2];
-	        float y2 = app.paintPoints[i + 3];
-
-	        if (x0 == BREAK_POINT_X || x1 == BREAK_POINT_X || x2 == BREAK_POINT_X)
-	            continue;
-
-	        float dx = x2 - x0;
-	        float dy = y2 - y0;
-
-	        float len = sqrtf(dx * dx + dy * dy);
-	        if (len == 0) continue;
-
-	        dx /= len;
-	        dy /= len;
-
-	        float px = -dy * thickness;
-	        float py = dx * thickness;
-
-	        glVertex2f(x1 + px, y1 + py);
-	        glVertex2f(x1 - px, y1 - py);
-	    }
-
-	    glEnd();
-	}
-
-    // ---- LIVE PREVIEW (RED WHILE HOLDING MOUSE) ----
-    if (app.mode == MODE_PAINT && app.painting)
-	{
-	    glColor3f(1.0f, 0.0f, 0.0f);
-
-	    float thickness = 0.01f;
-
-	    glBegin(GL_TRIANGLE_STRIP);
-
-	    for (int i = 2; i < app.paintCount; i += 2)
-	    {
-	        float x0 = app.paintPoints[i - 2];
-	        float y0 = app.paintPoints[i - 1];
-
-	        float x1 = app.paintPoints[i];
-	        float y1 = app.paintPoints[i + 1];
-
-	        if (x0 == BREAK_POINT_X || x1 == BREAK_POINT_X)
-	            continue;
-
-	        float dx = x1 - x0;
-	        float dy = y1 - y0;
-
-	        float len = sqrtf(dx * dx + dy * dy);
-	        if (len == 0) continue;
-
-	        dx /= len;
-	        dy /= len;
-
-	        float px = -dy * thickness;
-	        float py = dx * thickness;
-
-	        glVertex2f(x1 + px, y1 + py);
-	        glVertex2f(x1 - px, y1 - py);
-	    }
-
-	    // extend last segment to mouse
-	    if (app.paintCount >= 2)
-	    {
-	        float x0 = app.paintPoints[app.paintCount - 2];
-	        float y0 = app.paintPoints[app.paintCount - 1];
-
-	        float x1 = app.mouseGL.x;
-	        float y1 = app.mouseGL.y;
-
-	        float dx = x1 - x0;
-	        float dy = y1 - y0;
-
-	        float len = sqrtf(dx * dx + dy * dy);
-	        if (len != 0)
-	        {
-	            dx /= len;
-	            dy /= len;
-
-	            float px = -dy * thickness;
-	            float py = dx * thickness;
-
-	            glVertex2f(x1 + px, y1 + py);
-	            glVertex2f(x1 - px, y1 - py);
-	        }
-	    }
-
-	    glEnd();
-	}
+    if (app.showRobot)
+        drawCapsuleBody(app.robotScene.robot, app.activeHandle);
 
     SwapBuffers(hdc);
 }
@@ -670,22 +541,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		    }
 		    else if (app.mode == MODE_ENVIRONMENT)
 		    {
-		        //app.wallStart = mouse;   // IMPORTANT: use local mouse
-		        app.isDrawingWall = 1;
+		        app.wallStart = mouse;   // IMPORTANT: use local mouse
+		        app.drawingWall = 1;
 				printf("CLICK wallStart: %f %f\n", app.wallStart.x, app.wallStart.y);
 		    }
-			else if (app.mode == MODE_PAINT)
-			{
-			    app.painting = 1;
-			    app.paintCount = 0;
-			    SetCapture(hwnd);
-
-				TRACKMOUSEEVENT tme;
-				tme.cbSize = sizeof(tme);
-				tme.dwFlags = TME_LEAVE;
-				tme.hwndTrack = hwnd;
-				TrackMouseEvent(&tme);
-			}
 		}
 		break;
 
@@ -718,60 +577,21 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		        if (app.draggingInner)
 		            app.robotScene.robot.innerCircle = localMouse;
 		    }
-			if (app.mode == MODE_ENVIRONMENT && app.isDrawingWall)
-			{
-			    screenToGL(hwnd, mx, my, &app.mouseGL.x, &app.mouseGL.y);
-			}
-
-			if (app.mode == MODE_PAINT && app.painting)
-			{
-			    RECT r;
-			    GetClientRect(hwnd, &r);
-
-			    POINT pt = { mx, my };
-
-			    int inside =
-			        (pt.x >= 0 && pt.y >= 0 &&
-			         pt.x < r.right && pt.y < r.bottom);
-
-			    if (!inside)
-			    {
-			        addBreak();   // IMPORTANT
-			        break;
-			    }
-
-			    float nx, ny;
-			    screenToGL(hwnd, mx, my, &nx, &ny);
-
-			    if (app.paintCount + 2 < MAX_POINTS)
-			    {
-			        app.paintPoints[app.paintCount++] = nx;
-			        app.paintPoints[app.paintCount++] = ny;
-			    }
-			}
 		}
 		break;
 
 		case WM_LBUTTONUP:
 		{
-			int mx = LOWORD(lParam);
-		    int my = HIWORD(lParam);
+		    if (app.mode == MODE_ENVIRONMENT && app.drawingWall)
+		    {
+		        int mx = LOWORD(lParam);
+		        int my = HIWORD(lParam);
 
-			if (app.mode == MODE_ENVIRONMENT && app.isDrawingWall)
-			{
-			    Point end;
-			    screenToGL(hwnd, mx, my, &end.x, &end.y);
+		        screenToGL(hwnd, mx, my, &app.mouseGL.x, &app.mouseGL.y);
 
-			    addWall(app.wallStart, end);
-
-			    app.isDrawingWall = 0;
-			}
-
-			if (app.mode == MODE_PAINT)
-			{
-			    app.painting = 0;
-			    ReleaseCapture();
-			}
+		        addWall(app.wallStart, app.mouseGL);
+		        app.drawingWall = 0;
+		    }
 
 		    app.draggingTop = 0;
 		    app.draggingBottom = 0;
@@ -779,17 +599,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
     		app.activeHandle = 0;
 		}
 		break;
-
-		case WM_MOUSELEAVE:
-		{
-		    if (app.mode == MODE_PAINT && app.painting)
-		    {
-		        addBreak();   // prevents line continuation
-		        app.painting = 0;
-		        ReleaseCapture();
-		    }
-		    return 0;
-		}
 
 		case WM_KEYDOWN:
 		{
@@ -801,14 +610,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
 			if (wParam == 'E')
 			    app.mode = MODE_ENVIRONMENT;
-		        
+		        app.showEnvironment = 1;
+		        app.showRobot = 0;
 
 			if (wParam == 'R')
 			    app.mode = MODE_ROBOT;
-
-			if (wParam == 'P')
-			    app.mode = MODE_PAINT;
-		        
+		        app.showEnvironment = 0;
+		        app.showRobot = 1;
 		}
 		break;
 
@@ -857,9 +665,6 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmdLine, int nShowC
 	app.robotScene.robot.innerCircle.x = 0.0f;
 	app.robotScene.robot.innerCircle.y = 0.0f;
 	app.robotScene.robot.innerRadius = 0.12f;
-
-	app.paintCount = 0;
-	app.painting = 0;
 
     WNDCLASS wc = {0};
     wc.lpfnWndProc = WndProc;
