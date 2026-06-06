@@ -5,14 +5,6 @@
 #include "geometry.h"
 #include "app.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 Point getCenter(CapsuleBody b);
-
-#ifdef __cplusplus
-}
-#endif
 
 #endif
