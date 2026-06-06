@@ -2,8 +2,8 @@
 <settings version="1.0">
 	<category name="main.c">
 		<category name="Window">
-			<property name="Left" type="integer">4294967288</property>
-			<property name="Top" type="integer">4294967265</property>
+			<property name="Left" type="integer">2147483647</property>
+			<property name="Top" type="integer">2147483647</property>
 			<property name="Right" type="integer">1463</property>
 			<property name="Bottom" type="integer">699</property>
 			<property name="Maximized" type="integer">1</property>

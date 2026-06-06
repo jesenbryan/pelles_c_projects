@@ -13,6 +13,8 @@
 
 #include "environment.h"
 
+#include "robot.h"
+
 
 #pragma comment(lib, "opengl32.lib")
 #pragma comment(lib, "gdi32.lib")
@@ -89,104 +91,32 @@ void drawBezier(Point p0, Point p1, Point p2)
     glEnd();
 }
 
-Point rotatePoint(Point p, Point center, float angleDeg)
+
+
+
+
+
+
+void drawHandle(Point p, int selected, float radius)
 {
-    float a = angleDeg * 3.1415926f / 180.0f;
+    const int segments = 64;
 
-    float s = sinf(a);
-    float c = cosf(a);
-
-    // translate to origin
-    p.x -= center.x;
-    p.y -= center.y;
-
-    // rotate
-    float xnew = p.x * c - p.y * s;
-    float ynew = p.x * s + p.y * c;
-
-    // translate back
-    p.x = xnew + center.x;
-    p.y = ynew + center.y;
-
-    return p;
-}
-
-Point inverseRotate(Point p, Point center, float angleDeg)
-{
-    float a = -angleDeg * 3.1415926f / 180.0f;
-
-    float s = sinf(a);
-    float c = cosf(a);
-
-    p.x -= center.x;
-    p.y -= center.y;
-
-    float xnew = p.x * c - p.y * s;
-    float ynew = p.x * s + p.y * c;
-
-    p.x = xnew + center.x;
-    p.y = ynew + center.y;
-
-    return p;
-}
-
-Point getCenter(CapsuleBody b)
-{
-    Point c;
-    c.x = (b.leftX + b.rightX) * 0.5f;
-    c.y = b.y;
-    return c;
-}
-
-Point circleEdge(Point center, float radius, float angleDeg)
-{
-    float a = angleDeg * 3.1415926f / 180.0f;
-
-    Point p;
-    p.x = center.x + cosf(a) * radius;
-    p.y = center.y + sinf(a) * radius;
-
-    return p;
-}
-
-void drawHandle(Point p, int selected)
-{
     if (selected)
-        glColor3f(1.0f, 0.85f, 0.35f); // soft amber yellow highlight
+        glColor3f(1.0f, 0.85f, 0.35f);
     else
-        glColor3f(1.0f, 0.0f, 0.0f); // normal red
+        glColor3f(1.0f, 0.0f, 0.0f);
 
     glBegin(GL_TRIANGLE_FAN);
 
     glVertex2f(p.x, p.y);
 
-    for (float t = 0; t <= 6.28318f; t += 0.1f)
+    for (int i = 0; i <= segments; i++)
     {
+        float t = 2.0f * 3.1415926f * i / segments;
+
         glVertex2f(
-            p.x + cosf(t) * HANDLE_RADIUS,
-            p.y + sinf(t) * HANDLE_RADIUS
-        );
-    }
-
-    glEnd();
-}
-
-void drawInnerHandle(Point p, int selected)
-{
-    if (selected)
-        glColor3f(1.0f, 0.85f, 0.35f); // highlight
-    else
-        glColor3f(1.0f, 0.0f, 0.0f); // solid red
-
-    glBegin(GL_TRIANGLE_FAN);
-
-    glVertex2f(p.x, p.y);
-
-    for (float t = 0; t <= 6.28318f; t += 0.1f)
-    {
-        glVertex2f(
-            p.x + cosf(t) * INNER_HANDLE_RADIUS,
-            p.y + sinf(t) * INNER_HANDLE_RADIUS
+            p.x + cosf(t) * radius,
+            p.y + sinf(t) * radius
         );
     }
 
@@ -260,10 +190,10 @@ void drawCapsuleBody(CapsuleBody b, int activeHandle)
 	Point topHandle = rotatePoint(b.topCtrl, center, angle);
 	Point bottomHandle = rotatePoint(b.bottomCtrl, center, angle);
 
-	drawHandle(topHandle, app.activeHandle == 1);
-	drawHandle(bottomHandle, app.activeHandle == 2);
+	drawHandle(topHandle, app.activeHandle == 1, HANDLE_RADIUS);
+	drawHandle(bottomHandle, app.activeHandle == 2, HANDLE_RADIUS);
 
-	drawInnerHandle(inner, app.draggingInner);
+	drawHandle(inner, app.draggingInner, INNER_HANDLE_RADIUS);
 	
 	if (app.activeHandle == 1)
 	    glColor3f(1.0f, 0.3f, 0.3f); // highlight top
@@ -362,12 +292,7 @@ void screenToGL(HWND hwnd, int mx, int my, float *x, float *y)
     }
 }
 
-int isNear(Point a, Point b)
-{
-    float dx = a.x - b.x;
-    float dy = a.y - b.y;
-    return (dx*dx + dy*dy) < (HANDLE_RADIUS * HANDLE_RADIUS);
-}
+
 
 void render()
 {
@@ -652,17 +577,17 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
 		        app.activeHandle = 0;
 
-		        if (isNear(mouse, topHandle))
+		        if (isNear(mouse, topHandle, HANDLE_RADIUS))
 		        {
 		            app.draggingTop = 1;
 		            app.activeHandle = 1;
 		        }
-		        else if (isNear(mouse, bottomHandle))
+		        else if (isNear(mouse, bottomHandle, HANDLE_RADIUS))
 		        {
 		            app.draggingBottom = 1;
 		            app.activeHandle = 2;
 		        }
-		        else if (isNear(mouse, innerWorld))
+		        else if (isNear(mouse, innerWorld, INNER_HANDLE_RADIUS))
 		        {
 		            app.draggingInner = 1;
 		            app.activeHandle = 3;
