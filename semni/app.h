@@ -1,6 +1,8 @@
 ﻿#ifndef APP_H
 #define APP_H
 
+#include <windows.h>
+
 #include "geometry.h"
 #include "mode.h"
 
@@ -31,8 +33,15 @@ typedef struct {
 } EnvironmentScene;
 
 typedef struct {
+    HWND sliderLeft;
+    HWND sliderRight;
+} UIState;
+
+typedef struct {
     RobotScene robotScene;
     EnvironmentScene envScene;
+
+	UIState ui;
 
     Mode mode;
 
