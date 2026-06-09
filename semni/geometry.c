@@ -59,3 +59,27 @@ int isNear(Point a, Point b, float radius)
     float dy = a.y - b.y;
     return (dx*dx + dy*dy) < (radius * radius);
 }
+
+void buildBezierSegment2(RobotSegment* seg, Point p0, Point p1, Point p2)
+{
+    seg->vertexCount = 0;
+
+    for (float t = 0; t <= 1.0f; t += 0.02f)
+    {
+        float u = 1 - t;
+
+        Point p;
+
+        p.x =
+            u*u*p0.x +
+            2*u*t*p1.x +
+            t*t*p2.x;
+
+        p.y =
+            u*u*p0.y +
+            2*u*t*p1.y +
+            t*t*p2.y;
+
+        seg->vertices[seg->vertexCount++] = p;
+    }
+}

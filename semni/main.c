@@ -54,10 +54,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
     return handleInput(hwnd, msg, wParam, lParam, &app);
 }
 
-LRESULT CALLBACK SliderWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
-{
-    return handleInput(hwnd, msg, wParam, lParam, &app);
-}
+//LRESULT CALLBACK SliderWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
+//{
+    //return handleInput(hwnd, msg, wParam, lParam, &app);
+//}
 
 // ---------------- MAIN ----------------
 
@@ -72,13 +72,13 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmdLine, int nShowC
 
     initAppState(&app);
 
-	HWND hwnd = platformCreateMainWindow(hInst, nShowCmd, WndProc);
+	app.hwndMain = platformCreateMainWindow(hInst, nShowCmd, WndProc);
 
-    setupOpenGL(hwnd);
+    setupOpenGL(app.hwndMain);
 
-	app.ui.SliderWindow = platformCreateSliderWindow(hInst, WndProc);
+	app.hwndUI = platformCreateSliderWindow(hInst, WndProc);
 
-    uiCreateControls(app.ui.SliderWindow, hInst, &app);
+    uiCreateControls(app.hwndUI, hInst, &app);
 
     MSG msg;
 

@@ -11,6 +11,7 @@
 
 #include "robot.h"
 #include "graphics.h"
+#include "save.h"
 
 LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState* app)
 {
@@ -241,8 +242,66 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
 		    int h = HIWORD(lParam);
 
 		    graphicsOnResize(w, h);
+
+			RECT rect;
+			GetClientRect(hwnd, &rect);
+
+			int btnWidth = 80;
+			int btnHeight = 30;
+			int spacing = 10;
+
+			int y = (rect.bottom / 2) - (btnHeight / 2);
+
+			int xSave = 10;
+			int xLoad = xSave + btnWidth + spacing;
+			
+		    SetWindowPos(app->ui.hSaveButton, NULL,
+                 xSave, y, 0, 0,
+                 SWP_NOZORDER | SWP_NOSIZE);
+
+		    SetWindowPos(app->ui.hLoadButton, NULL,
+		                 xLoad, y, 0, 0,
+		                 SWP_NOZORDER | SWP_NOSIZE);
 		}
 		break;
+
+		case WM_CREATE:
+		{
+		     app->ui.hSaveButton = CreateWindow(
+		        "BUTTON",
+		        "Save",
+		        WS_VISIBLE | WS_CHILD,
+		        10, 10, 80, 30,
+		        hwnd,
+		        (HMENU)ID_SAVE_BUTTON,
+		        NULL,
+		        NULL
+		    );
+			app->ui.hLoadButton = CreateWindow(
+			    "BUTTON",
+			    "Load",
+			    WS_VISIBLE | WS_CHILD,
+			    100, 10, 80, 30,
+			    hwnd,
+			    (HMENU)ID_LOAD_BUTTON,
+			    NULL,
+			    NULL
+			);
+		}
+		break;
+
+		case WM_COMMAND:
+		    switch (LOWORD(wParam))
+		    {
+		        case ID_SAVE_BUTTON:
+		            saveRobot("robot.dat", app);
+		            break;
+				case ID_LOAD_BUTTON:
+		            loadRobot("robot.dat", app);
+					InvalidateRect(app->hwndMain, NULL, TRUE);
+		            break;
+		    }
+		    break;
     }
 
     return DefWindowProc(hwnd, msg, wParam, lParam);

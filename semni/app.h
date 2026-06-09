@@ -8,6 +8,9 @@
 
 #define MAX_POINTS 200000
 
+#define ID_SAVE_BUTTON 1001
+#define ID_LOAD_BUTTON 1002
+
 typedef struct {
     float leftX, rightX;
     float y;
@@ -33,17 +36,19 @@ typedef struct {
 } EnvironmentScene;
 
 typedef struct {
-	//HWND hwndSlider;
-	HWND SliderWindow;
     HWND sliderLeft;
     HWND sliderRight;
 	HWND labelLeft;
 	HWND labelRight;
 
-	int savePressed;
+	HWND hSaveButton;
+	HWND hLoadButton;
 } UIState;
 
 typedef struct {
+	HWND hwndMain;          // main robot window
+    HWND hwndUI;            // UI window (SliderWindow)
+
     RobotScene robotScene;
     EnvironmentScene envScene;
 
