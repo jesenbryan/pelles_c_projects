@@ -8,8 +8,6 @@
 #define ID_LEFT  101
 #define ID_RIGHT 102
 
-
-
 HWND createSliderWindow(HINSTANCE hInst)
 {
     HWND hwndSlider = CreateWindow(

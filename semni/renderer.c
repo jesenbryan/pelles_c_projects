@@ -7,6 +7,14 @@
 #include "config.h"
 #include <stdio.h>
 
+static void setColor(int active, float r, float g, float b)
+{
+    if (active)
+        glColor3f(r, g, b);
+    else
+        glColor3f(0.0f, 0.0f, 0.0f);
+}
+
 void drawCircle(Point c, float r)
 {
     glBegin(GL_LINE_LOOP);
@@ -70,84 +78,212 @@ void drawHandle(Point p, int selected, float radius)
     glEnd();
 }
 
-void drawSemni(AppState* app, Semni b, int activeHandle)
+void drawSemniBody(Semni b, RenderState* rs)
 {
     Point center = getCenter(b);
-
     float angle = b.angle;
 
-	int topActive = app->draggingTop;
-	int bottomActive = app->draggingBottom;
-
-    // rotated circle centers
     Point leftCenter  = rotatePoint((Point){b.leftX,  b.y}, center, angle);
     Point rightCenter = rotatePoint((Point){b.rightX, b.y}, center, angle);
+    Point inner = rotatePoint(b.innerCircle, center, angle);
 
-	// inner circle
-	Point inner = rotatePoint(b.innerCircle, center, angle);
+	// ---- LEFT circle ----
+    setColor(rs->sliderDraggingLeft,  0.2f, 0.4f, 1.0f);
+    drawCircle(leftCenter, b.leftRadius);
 
-    // circles
-	if (app->sliderDraggingLeft)
-	    glColor3f(0.2f, 0.4f, 1.0f); 
-	else
-	    glColor3f(0, 0, 0);
+	// ---- RIGHT circle ----
+    setColor(rs->sliderDraggingRight, 0.2f, 0.4f, 1.0f);
+    drawCircle(rightCenter, b.rightRadius);
 
-	drawCircle(leftCenter, app->robotScene.robot.leftRadius);
 
-    if (app->sliderDraggingRight)
-	    glColor3f(0.2f, 0.4f, 1.0f); 
-	else
-	    glColor3f(0, 0, 0);
+	// ---- INNER circle ----
+    setColor(rs->draggingInner, 0.2f, 0.4f, 1.0f);
+    drawCircle(inner, b.innerRadius);
 
-	drawCircle(rightCenter, app->robotScene.robot.rightRadius);
-
-	if (app->draggingInner)
-	    glColor3f(1.0f, 0.85f, 0.35f); // highlight
-	else
-	    glColor3f(0, 0, 0);
-
-	drawCircle(inner, b.innerRadius);
-
-    // TOP curve (use circle surface, not center)
     Point topP0 = circleEdge(leftCenter,  b.leftRadius,  angle + 90);
     Point topP2 = circleEdge(rightCenter, b.rightRadius, angle + 90);
     Point topP1 = rotatePoint(b.topCtrl, center, angle);
 
-    // BOTTOM curve
     Point botP0 = circleEdge(leftCenter,  b.leftRadius,  angle - 90);
     Point botP2 = circleEdge(rightCenter, b.rightRadius, angle - 90);
     Point botP1 = rotatePoint(b.bottomCtrl, center, angle);
 
-	if (topActive)
-	    glColor3f(0.2f, 0.4f, 1.0f); // blue
-	else
-	    glColor3f(0, 0, 0);
+	setColor(rs->draggingTop, 0.2f, 0.4f, 1.0f);
+    drawBezier(topP0, topP1, topP2);
 
-	drawBezier(topP0, topP1, topP2);
+	setColor(rs->draggingBottom, 0.2f, 0.4f, 1.0f);
+    drawBezier(botP0, botP1, botP2);
+}
 
-	if (bottomActive)
-	    glColor3f(0.2f, 0.4f, 1.0f);
-	else
-	    glColor3f(0, 0, 0);
+void drawSemniHandles(Semni b, RenderState* rs)
+{
+    Point center = getCenter(b);
+    float angle = b.angle;
 
-	drawBezier(botP0, botP1, botP2);
+    Point topHandle    = rotatePoint(b.topCtrl, center, angle);
+    Point bottomHandle = rotatePoint(b.bottomCtrl, center, angle);
+    Point inner        = rotatePoint(b.innerCircle, center, angle);
 
+    drawHandle(topHandle,
+               rs->activeHandle == 1,
+               HANDLE_RADIUS);
 
-	// HANDLE
-	Point topHandle = rotatePoint(b.topCtrl, center, angle);
-	Point bottomHandle = rotatePoint(b.bottomCtrl, center, angle);
+    drawHandle(bottomHandle,
+               rs->activeHandle == 2,
+               HANDLE_RADIUS);
 
-	drawHandle(topHandle, app->activeHandle == 1, HANDLE_RADIUS);
-	drawHandle(bottomHandle, app->activeHandle == 2, HANDLE_RADIUS);
+    drawHandle(inner,
+               rs->draggingInner,
+               INNER_HANDLE_RADIUS);
+}
 
-	drawHandle(inner, app->draggingInner, INNER_HANDLE_RADIUS);
-	
-	if (app->activeHandle == 1)
-	    glColor3f(1.0f, 0.3f, 0.3f); // highlight top
-	else if (app->activeHandle == 2)
-	    glColor3f(0.3f, 0.3f, 1.0f); // highlight bottom
-	else
-	    glColor3f(0, 0, 0);
+void drawSemni(Semni b, RenderState* rs)
+{
+    drawSemniBody(b, rs);
+    drawSemniHandles(b, rs);
+}
+
+static void renderRobot(AppState* app)
+{
+    RenderState rs;
+
+    rs.activeHandle = app->activeHandle;
+    rs.draggingTop = app->draggingTop;
+    rs.draggingBottom = app->draggingBottom;
+    rs.draggingInner = app->draggingInner;
+    rs.sliderDraggingLeft = app->sliderDraggingLeft;
+    rs.sliderDraggingRight = app->sliderDraggingRight;
+
+    drawSemni(app->robotScene.robot, &rs);
+}
+
+static void renderLiveStroke(AppState* app)
+{
+    glColor3f(1.0f, 0.0f, 0.0f);
+    float thickness = 0.01f;
+
+    glBegin(GL_TRIANGLE_STRIP);
+
+    for (int i = 2; i < app->paintCount; i += 2)
+    {
+        float x0 = app->paintPoints[i - 2];
+        float y0 = app->paintPoints[i - 1];
+
+        float x1 = app->paintPoints[i];
+        float y1 = app->paintPoints[i + 1];
+
+        if (x0 == BREAK_POINT_X || x1 == BREAK_POINT_X)
+            continue;
+
+        float dx = x1 - x0;
+        float dy = y1 - y0;
+
+        float len = sqrtf(dx * dx + dy * dy);
+        if (len == 0) continue;
+
+        dx /= len;
+        dy /= len;
+
+        float px = -dy * thickness;
+        float py = dx * thickness;
+
+        glVertex2f(x1 + px, y1 + py);
+        glVertex2f(x1 - px, y1 - py);
+    }
+
+    // last segment
+    if (app->paintCount >= 2)
+    {
+        float x0 = app->paintPoints[app->paintCount - 2];
+        float y0 = app->paintPoints[app->paintCount - 1];
+
+        float x1 = app->mouseGL.x;
+        float y1 = app->mouseGL.y;
+
+        float dx = x1 - x0;
+        float dy = y1 - y0;
+
+        float len = sqrtf(dx * dx + dy * dy);
+
+        if (len != 0)
+        {
+            dx /= len;
+            dy /= len;
+
+            float px = -dy * thickness;
+            float py = dx * thickness;
+
+            glVertex2f(x1 + px, y1 + py);
+            glVertex2f(x1 - px, y1 - py);
+        }
+    }
+
+    glEnd();
+}
+
+static void renderEnvironment(AppState* app)
+{
+    glColor3f(0, 0, 0);
+    drawEnvironment();
+
+    if (app->mode == MODE_ENVIRONMENT && app->isDrawingWall)
+    {
+        glColor3f(1, 0, 0);
+        glBegin(GL_LINES);
+        glVertex2f(app->wallStart.x, app->wallStart.y);
+        glVertex2f(app->mouseGL.x, app->mouseGL.y);
+        glEnd();
+    }
+}
+
+static void renderFinalStroke(AppState* app)
+{
+    glColor3f(0, 0, 0);
+    float thickness = 0.01f;
+
+    glBegin(GL_TRIANGLE_STRIP);
+
+    for (int i = 2; i < app->paintCount - 2; i += 2)
+    {
+        float x0 = app->paintPoints[i - 2];
+        float y0 = app->paintPoints[i - 1];
+
+        float x1 = app->paintPoints[i];
+        float y1 = app->paintPoints[i + 1];
+
+        float x2 = app->paintPoints[i + 2];
+        float y2 = app->paintPoints[i + 3];
+
+        if (x0 == BREAK_POINT_X || x1 == BREAK_POINT_X || x2 == BREAK_POINT_X)
+            continue;
+
+        float dx = x2 - x0;
+        float dy = y2 - y0;
+
+        float len = sqrtf(dx * dx + dy * dy);
+        if (len == 0) continue;
+
+        dx /= len;
+        dy /= len;
+
+        float px = -dy * thickness;
+        float py = dx * thickness;
+
+        glVertex2f(x1 + px, y1 + py);
+        glVertex2f(x1 - px, y1 - py);
+    }
+
+    glEnd();
+}
+
+static void renderPaint(AppState* app)
+{
+    if (app->paintCount < 4) return;
+
+    if (app->painting)
+        renderLiveStroke(app);
+    else
+        renderFinalStroke(app);
 }
 
 void renderApp(AppState* app, HDC hdc)
@@ -158,128 +294,9 @@ void renderApp(AppState* app, HDC hdc)
     glMatrixMode(GL_MODELVIEW);
     glLoadIdentity();
 
-    glColor3f(0,0,0);
-	
-    drawEnvironment();
-
-	if (app->mode == MODE_ENVIRONMENT && app->isDrawingWall)
-	{
-	    glColor3f(1.0f, 0.0f, 0.0f);
-
-	    glBegin(GL_LINES);
-	    glVertex2f(app->wallStart.x, app->wallStart.y);
-	    glVertex2f(app->mouseGL.x, app->mouseGL.y);
-	    glEnd();
-	}
-    
-    drawSemni(app, app->robotScene.robot, app->activeHandle);
-
-    // ---- FINAL STROKE (BLACK) ----
-    if (app->paintCount >= 4 && !app->painting)
-	{
-	    glColor3f(0, 0, 0);
-
-	    float thickness = 0.01f;
-
-	    glBegin(GL_TRIANGLE_STRIP);
-
-	    for (int i = 2; i < app->paintCount - 2; i += 2)
-	    {
-	        float x0 = app->paintPoints[i - 2];
-	        float y0 = app->paintPoints[i - 1];
-
-	        float x1 = app->paintPoints[i];
-	        float y1 = app->paintPoints[i + 1];
-
-	        float x2 = app->paintPoints[i + 2];
-	        float y2 = app->paintPoints[i + 3];
-
-	        if (x0 == BREAK_POINT_X || x1 == BREAK_POINT_X || x2 == BREAK_POINT_X)
-	            continue;
-
-	        float dx = x2 - x0;
-	        float dy = y2 - y0;
-
-	        float len = sqrtf(dx * dx + dy * dy);
-	        if (len == 0) continue;
-
-	        dx /= len;
-	        dy /= len;
-
-	        float px = -dy * thickness;
-	        float py = dx * thickness;
-
-	        glVertex2f(x1 + px, y1 + py);
-	        glVertex2f(x1 - px, y1 - py);
-	    }
-
-	    glEnd();
-	}
-
-    // ---- LIVE PREVIEW (RED WHILE HOLDING MOUSE) ----
-    if (app->mode == MODE_PAINT && app->painting)
-	{
-	    glColor3f(1.0f, 0.0f, 0.0f);
-
-	    float thickness = 0.01f;
-
-	    glBegin(GL_TRIANGLE_STRIP);
-
-	    for (int i = 2; i < app->paintCount; i += 2)
-	    {
-	        float x0 = app->paintPoints[i - 2];
-	        float y0 = app->paintPoints[i - 1];
-
-	        float x1 = app->paintPoints[i];
-	        float y1 = app->paintPoints[i + 1];
-
-	        if (x0 == BREAK_POINT_X || x1 == BREAK_POINT_X)
-	            continue;
-
-	        float dx = x1 - x0;
-	        float dy = y1 - y0;
-
-	        float len = sqrtf(dx * dx + dy * dy);
-	        if (len == 0) continue;
-
-	        dx /= len;
-	        dy /= len;
-
-	        float px = -dy * thickness;
-	        float py = dx * thickness;
-
-	        glVertex2f(x1 + px, y1 + py);
-	        glVertex2f(x1 - px, y1 - py);
-	    }
-
-	    // extend last segment to mouse
-	    if (app->paintCount >= 2)
-	    {
-	        float x0 = app->paintPoints[app->paintCount - 2];
-	        float y0 = app->paintPoints[app->paintCount - 1];
-
-	        float x1 = app->mouseGL.x;
-	        float y1 = app->mouseGL.y;
-
-	        float dx = x1 - x0;
-	        float dy = y1 - y0;
-
-	        float len = sqrtf(dx * dx + dy * dy);
-	        if (len != 0)
-	        {
-	            dx /= len;
-	            dy /= len;
-
-	            float px = -dy * thickness;
-	            float py = dx * thickness;
-
-	            glVertex2f(x1 + px, y1 + py);
-	            glVertex2f(x1 - px, y1 - py);
-	        }
-	    }
-
-	    glEnd();
-	}
+	renderEnvironment(app);
+	renderRobot(app);
+	renderPaint(app);
 
     SwapBuffers(hdc);
 }

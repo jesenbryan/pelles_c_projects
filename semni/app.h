@@ -59,8 +59,8 @@ typedef struct {
     int sliderDraggingLeft;
     int sliderDraggingRight;
 
-	int showRobot;
-    int showEnvironment;
+	//int showRobot;
+    //int showEnvironment;
 
     Point mouseGL;
     Point wallStart;

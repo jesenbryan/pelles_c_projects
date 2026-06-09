@@ -1,34 +1,49 @@
 ﻿#define UNICODE
 #define _UNICODE
 
+// ---------------- SYSTEM HEADERS ----------------
 #include <windows.h>
-#include <GL/gl.h>
-#include <math.h>
-#include <commctrl.h>
 #include <stdio.h>
+#include <math.h>
 
-#include "geometry.h"
+// ---------------- OPENGL / WIN32 EXT ----------------
+#include <GL/gl.h>
+#include <commctrl.h>
+
+// ---------------- PROJECT CORE ----------------
 #include "app.h"
+#include "config.h"
 #include "mode.h"
+#include "geometry.h"
 
+// ---------------- SIMULATION / DOMAIN ----------------
+#include "robot.h"
 #include "environment.h"
 #include "paint.h"
 
-#include "robot.h"
-#include "renderer.h"
-#include "config.h"
-#include "input.h"
+// ---------------- RENDER / PLATFORM ----------------
 #include "graphics.h"
-#include "ui_controls.h"
+#include "renderer.h"
 #include "platform_win32.h"
+
+// ---------------- INPUT / UI ----------------
+#include "input.h"
+#include "ui_controls.h"
+
+// ---------------- APP LIFECYCLE ----------------
 #include "app_init.h"
 
-#pragma comment(lib, "opengl32.lib")
-#pragma comment(lib, "gdi32.lib")
+// Win32 core
 #pragma comment(lib, "user32.lib")
+#pragma comment(lib, "gdi32.lib")
+
+// OpenGL
+#pragma comment(lib, "opengl32.lib")
+
+// UI controls
 #pragma comment(lib, "comctl32.lib")
 
-// ---------------- DATA ----------------
+// ---------------- APPLICATION STATE ----------------
 
 AppState app;
 
