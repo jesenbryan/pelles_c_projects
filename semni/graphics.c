@@ -45,7 +45,7 @@ void setupOpenGL(HWND hwnd)
     glClearColor(1,1,1,1);
 }
 
-void resizeGL(int w, int h)
+void graphicsOnResize(int w, int h)
 {
     if (h == 0) h = 1;
 
@@ -56,10 +56,9 @@ void resizeGL(int w, int h)
 
     float aspect = (float)w / (float)h;
 
-    if (aspect >= 1.0f)
-        glOrtho(-1.5f * aspect, 1.5f * aspect, -1.5f, 1.5f, -1, 1);
-    else
-        glOrtho(-1.5f, 1.5f, -1.5f / aspect, 1.5f / aspect, -1, 1);
+    glOrtho(-1.5f * aspect, 1.5f * aspect,
+            -1.5f, 1.5f,
+            -1, 1);
 
     glMatrixMode(GL_MODELVIEW);
 }
@@ -88,23 +87,3 @@ void screenToGL(HWND hwnd, int mx, int my, float *x, float *y)
         *y = ny * 1.5f / aspect;
     }
 }
-
-void graphicsOnResize(int w, int h)
-{
-    if (h == 0) h = 1;
-
-    glViewport(0, 0, w, h);
-
-    glMatrixMode(GL_PROJECTION);
-    glLoadIdentity();
-
-    float aspect = (float)w / (float)h;
-
-    if (aspect >= 1.0f)
-        glOrtho(-1.5f * aspect, 1.5f * aspect, -1.5f, 1.5f, -1, 1);
-    else
-        glOrtho(-1.5f, 1.5f, -1.5f / aspect, 1.5f / aspect, -1, 1);
-
-    glMatrixMode(GL_MODELVIEW);
-}
-
