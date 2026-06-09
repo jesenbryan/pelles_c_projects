@@ -5,6 +5,7 @@
 #include "robot.h"
 #include "environment.h"
 #include "config.h"
+#include <stdio.h>
 
 void drawCircle(Point c, float r)
 {
@@ -69,7 +70,7 @@ void drawHandle(Point p, int selected, float radius)
     glEnd();
 }
 
-void drawCapsuleBody(AppState* app, CapsuleBody b, int activeHandle)
+void drawSemni(AppState* app, Semni b, int activeHandle)
 {
     Point center = getCenter(b);
 
@@ -151,6 +152,7 @@ void drawCapsuleBody(AppState* app, CapsuleBody b, int activeHandle)
 
 void renderApp(AppState* app, HDC hdc)
 {
+
     glClear(GL_COLOR_BUFFER_BIT);
 
     glMatrixMode(GL_MODELVIEW);
@@ -170,7 +172,7 @@ void renderApp(AppState* app, HDC hdc)
 	    glEnd();
 	}
     
-    drawCapsuleBody(app, app->robotScene.robot, app->activeHandle);
+    drawSemni(app, app->robotScene.robot, app->activeHandle);
 
     // ---- FINAL STROKE (BLACK) ----
     if (app->paintCount >= 4 && !app->painting)

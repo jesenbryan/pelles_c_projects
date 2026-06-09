@@ -5,6 +5,6 @@
 #include "geometry.h"
 #include "app.h"
 
-Point getCenter(CapsuleBody b);
+Point getCenter(Semni b);
 
 #endif

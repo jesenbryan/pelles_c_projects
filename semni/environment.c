@@ -43,7 +43,4 @@ void drawEnvironment(void)
         glVertex2f(app.mouseGL.x, app.mouseGL.y);
         glEnd();
     }
-
-    printf("wallStart: %f %f\n", app.wallStart.x, app.wallStart.y);
-    printf("mouseGL: %f %f\n", app.mouseGL.x, app.mouseGL.y);
 }

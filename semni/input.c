@@ -9,12 +9,8 @@
 #include "geometry.h"
 #include "config.h"
 
-
-
 #include "robot.h"
 #include "graphics.h"
-
-
 
 LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState* app)
 {
@@ -24,6 +20,9 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
         {
             int mx = LOWORD(lParam);
             int my = HIWORD(lParam);
+
+			//int mx = GET_X_LPARAM(lParam);
+    		//int my = GET_Y_LPARAM(lParam);
 
             screenToGL(hwnd, mx, my, &app->mouseGL.x, &app->mouseGL.y);
 
@@ -39,12 +38,36 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
 
                 Point topHandle = rotatePoint(app->robotScene.robot.topCtrl, center, app->robotScene.robot.angle);
 
+				Point bottomHandle = rotatePoint(app->robotScene.robot.bottomCtrl, getCenter(app->robotScene.robot), app->robotScene.robot.angle);
+
+		        Point innerWorld = rotatePoint(app->robotScene.robot.innerCircle, center, app->robotScene.robot.angle);
+
                 if (isNear(mouse, topHandle, HANDLE_RADIUS))
                 {
                     app->draggingTop = 1;
                     app->activeHandle = 1;
                 }
+				else if (isNear(mouse, bottomHandle, HANDLE_RADIUS))
+		        {
+		            app->draggingBottom = 1;
+		            app->activeHandle = 2;
+		        }
+		        else if (isNear(mouse, innerWorld, INNER_HANDLE_RADIUS))
+		        {
+		            app->draggingInner = 1;
+		            app->activeHandle = 3;
+		        }
             }
+			else if (app->mode == MODE_ENVIRONMENT)
+		    {
+		        app->isDrawingWall = 1;
+		    }
+		    else if (app->mode == MODE_PAINT)
+		    {
+		        app->painting = 1;
+		        app->paintCount = 0;
+		        SetCapture(hwnd);
+		    }
         }
 		break;
 
@@ -82,6 +105,14 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
 		    int my = HIWORD(lParam);
 
 		    screenToGL(hwnd, mx, my, &app->mouseGL.x, &app->mouseGL.y);
+
+			DWORD now = GetTickCount();
+
+			if (now - app->lastLogTime >= 1000)
+		    {
+		        printf("mouse: %f %f\n", app->mouseGL.x, app->mouseGL.y);
+		        app->lastLogTime = now;
+		    }
 
 		    // robot only logic
 		    if (app->mode == MODE_ROBOT)
@@ -174,32 +205,33 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
         case WM_HSCROLL:
 		{
 		    HWND src = (HWND)lParam;
-		    int code = LOWORD(wParam);
+	        int code = LOWORD(wParam);
 
-		    if (src == app->ui.sliderLeft)
-		    {
-		        if (code == TB_THUMBTRACK)
-		            app->sliderDraggingLeft = 1;
-		        else if (code == TB_ENDTRACK)
-		            app->sliderDraggingLeft = 0;
-	
-				LRESULT pos = SendMessage(app->ui.sliderLeft, TBM_GETPOS, 0, 0);
-		        int value = (int)pos;
+	        if (src == app->ui.sliderLeft)
+	        {
+	            if (code == TB_THUMBTRACK)
+	                app->sliderDraggingLeft = 1;
+	            else if (code == TB_ENDTRACK)
+	                app->sliderDraggingLeft = 0;
 
-		        app->robotScene.robot.leftRadius = value / 1000.0f;
-		    }
-		    else if (src == app->ui.sliderRight)
-		    {
-		        if (code == TB_THUMBTRACK)
-		            app->sliderDraggingRight = 1;
-		        else if (code == TB_ENDTRACK)
-		            app->sliderDraggingRight = 0;
+	            int value = (int)SendMessage(src, TBM_GETPOS, 0, 0);
+				float t = (value - 100) / 200.0f;
+				app->robotScene.robot.leftRadius = 0.05f + t * (0.35f - 0.05f);
+	            return 0;
+	        }
 
-		        LRESULT pos = SendMessage(app->ui.sliderRight, TBM_GETPOS, 0, 0);
-		        int value = (int)pos;
+	        if (src == app->ui.sliderRight)
+	        {
+	            if (code == TB_THUMBTRACK)
+	                app->sliderDraggingRight = 1;
+	            else if (code == TB_ENDTRACK)
+	                app->sliderDraggingRight = 0;
 
-		        app->robotScene.robot.rightRadius = value / 1000.0f;
-		    }
+	            int value = (int)SendMessage(src, TBM_GETPOS, 0, 0);
+				float t = (value - 100) / 200.0f;	            
+				app->robotScene.robot.rightRadius = 0.05f + t * (0.35f - 0.05f);
+	            return 0;
+	        }
 		}
 		break;
 

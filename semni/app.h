@@ -22,10 +22,10 @@ typedef struct {
     float innerRadius;
 
     float angle;
-} CapsuleBody;
+} Semni;
 
 typedef struct {
-    CapsuleBody robot;
+    Semni robot;
 } RobotScene;
 
 typedef struct {
@@ -33,8 +33,14 @@ typedef struct {
 } EnvironmentScene;
 
 typedef struct {
+	//HWND hwndSlider;
+	HWND SliderWindow;
     HWND sliderLeft;
     HWND sliderRight;
+	HWND labelLeft;
+	HWND labelRight;
+
+	int savePressed;
 } UIState;
 
 typedef struct {
@@ -68,6 +74,8 @@ typedef struct {
 
 	int strokeBreaks[MAX_POINTS];
 	int newStroke;
+
+	DWORD lastLogTime;
 
 } AppState;
 
