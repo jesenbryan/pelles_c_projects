@@ -28,20 +28,19 @@
 
 int main(int argc, char *argv[])
 {
-    printf("Hello, world!\n");
 	printf("Console initialized!\n");
 
 	printf("A\n");
 
-	Image* img = loadBMP("Untitled.bmp");
+	Image* img = loadBMP("hor.bmp");
 
 	printf("B\n");
 
 	Path path = extractPath(img);
 
-	printf("C\n");
-
 	printf("Points: %d\n", path.count);
+
+	savePathCSV("hor.csv", path);
     return 0;
 }
 

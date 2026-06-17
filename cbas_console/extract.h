@@ -3,8 +3,8 @@
 #include "bmp.h"
 
 typedef struct {
-    float x;
-    float y;
+    int x;
+    int y;
 } Point;
 
 typedef struct {

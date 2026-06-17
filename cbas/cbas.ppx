@@ -2,70 +2,70 @@
 <settings version="1.0">
 	<category name="extract.h">
 		<category name="Window">
-			<property name="Left" type="integer">26</property>
-			<property name="Top" type="integer">26</property>
-			<property name="Right" type="integer">1117</property>
-			<property name="Bottom" type="integer">544</property>
+			<property name="Left" type="integer">32</property>
+			<property name="Top" type="integer">32</property>
+			<property name="Right" type="integer">1472</property>
+			<property name="Bottom" type="integer">569</property>
 			<property name="Maximized" type="integer">0</property>
 			<property name="Active" type="integer">0</property>
 		</category>
 	</category>
 	<category name="extract.c">
 		<category name="Window">
-			<property name="Left" type="integer">52</property>
-			<property name="Top" type="integer">52</property>
-			<property name="Right" type="integer">1143</property>
-			<property name="Bottom" type="integer">570</property>
+			<property name="Left" type="integer">64</property>
+			<property name="Top" type="integer">64</property>
+			<property name="Right" type="integer">1504</property>
+			<property name="Bottom" type="integer">601</property>
 			<property name="Maximized" type="integer">0</property>
 			<property name="Active" type="integer">0</property>
 		</category>
 	</category>
 	<category name="bmp.c">
 		<category name="Window">
-			<property name="Left" type="integer">4294967288</property>
-			<property name="Top" type="integer">4294967265</property>
-			<property name="Right" type="integer">1463</property>
-			<property name="Bottom" type="integer">699</property>
+			<property name="Left" type="integer">4294967287</property>
+			<property name="Top" type="integer">4294967258</property>
+			<property name="Right" type="integer">1651</property>
+			<property name="Bottom" type="integer">726</property>
 			<property name="Maximized" type="integer">1</property>
 			<property name="Active" type="integer">1</property>
 		</category>
 	</category>
 	<category name="main.c">
 		<category name="Window">
-			<property name="Left" type="integer">104</property>
-			<property name="Top" type="integer">104</property>
-			<property name="Right" type="integer">1195</property>
-			<property name="Bottom" type="integer">622</property>
+			<property name="Left" type="integer">128</property>
+			<property name="Top" type="integer">128</property>
+			<property name="Right" type="integer">1568</property>
+			<property name="Bottom" type="integer">665</property>
 			<property name="Maximized" type="integer">0</property>
 			<property name="Active" type="integer">0</property>
 		</category>
 	</category>
 	<category name="utils.h">
 		<category name="Window">
-			<property name="Left" type="integer">130</property>
-			<property name="Top" type="integer">130</property>
-			<property name="Right" type="integer">1221</property>
-			<property name="Bottom" type="integer">648</property>
+			<property name="Left" type="integer">160</property>
+			<property name="Top" type="integer">160</property>
+			<property name="Right" type="integer">1600</property>
+			<property name="Bottom" type="integer">697</property>
 			<property name="Maximized" type="integer">0</property>
 			<property name="Active" type="integer">0</property>
 		</category>
 	</category>
 	<category name="utils.c">
 		<category name="Window">
-			<property name="Left" type="integer">156</property>
-			<property name="Top" type="integer">156</property>
-			<property name="Right" type="integer">1247</property>
-			<property name="Bottom" type="integer">674</property>
+			<property name="Left" type="integer">192</property>
+			<property name="Top" type="integer">192</property>
+			<property name="Right" type="integer">1632</property>
+			<property name="Bottom" type="integer">729</property>
 			<property name="Maximized" type="integer">0</property>
 			<property name="Active" type="integer">0</property>
 		</category>
 	</category>
 	<category name="bmp.h">
 		<category name="Window">
-			<property name="Left" type="integer">182</property>
-			<property name="Top" type="integer">182</property>
-			<property name="Right" type="integer">1273</property>
-			<property name="Bottom" type="integer">700</property>
+			<property name="Left" type="integer">224</property>
+			<property name="Top" type="integer">224</property>
+			<property name="Right" type="integer">1664</property>
+			<property name="Bottom" type="integer">761</property>
 			<property name="Maximized" type="integer">0</property>
 			<property name="Active" type="integer">0</property>
 		</category>

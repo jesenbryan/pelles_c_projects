@@ -1,173 +1,75 @@
 ﻿#include <stdio.h>
 #include <stdlib.h>
-#include <math.h>
-
 #include "extract.h"
 
-typedef struct {
-    int dx;
-    int dy;
-} Dir;
+int cmp_x(const void* a, const void* b)
+{
+    Point* p1 = (Point*)a;
+    Point* p2 = (Point*)b;
+    return (p1->x - p2->x);
+}
 
-static Dir dirs[8] = {
-    {1, 0},   // right
-    {1, 1},
-    {0, 1},
-    {-1, 1},
-    {-1, 0},
-    {-1,-1},
-    {0, -1},
-    {1, -1}
-};
-
-
-// -------------------- USER MUST DEFINE --------------------
-void markVisited(int* visited, int x, int y, int width);
-
-// ----------------------------------------------------------
+int cmp_y(const void* a, const void* b)
+{
+    Point* p1 = (Point*)a;
+    Point* p2 = (Point*)b;
+    return (p1->y - p2->y);
+}
 
 int isLinePixel(Image* img, int x, int y)
 {
-    int rowSize = ((img->width * 3 + 3) / 4) * 4;
+    int fy = img->height - 1 - y;
 
-    unsigned char* p = &img->data[y * rowSize + x * 3];
+    unsigned char* p = &img->data[(fy * img->width + x) * 3];
 
-    unsigned char b = p[0];
-    unsigned char g = p[1];
-    unsigned char r = p[2];
+    int gray = (p[0] + p[1] + p[2]) / 3;
 
-    int gray = (r + g + b) / 3;
-
-    return r < 80 && g < 80 && b < 80;
+    return gray < 80;
 }
 
-Point findStartPixel(Image* img)
+Path extractPath(Image* img)
 {
+    Path path;
+    path.points = malloc(sizeof(Point) * img->width * img->height);
+    path.count = 0;
+
+    // 1. collect pixels
     for (int y = 0; y < img->height; y++)
     {
         for (int x = 0; x < img->width; x++)
         {
             if (isLinePixel(img, x, y))
             {
-				printf("Checking pixel (%d,%d)\n", x, y);
-                return (Point){ (float)x, (float)y };
+                path.points[path.count++] = (Point){x, y};
             }
         }
     }
 
-    return (Point){ -1, -1 };
-}
+    if (path.count == 0)
+        return path;
 
+    // 2. detect orientation
+    int minx = path.points[0].x;
+    int maxx = path.points[0].x;
+    int miny = path.points[0].y;
+    int maxy = path.points[0].y;
 
-// 8-neighborhood
-int dx[8] = {1,1,0,-1,-1,-1,0,1};
-int dy[8] = {0,1,1,1,0,-1,-1,-1};
-
-
-// check if valid pixel
-int isValid(int x, int y, int w, int h)
-{
-    return (x >= 0 && x < w && y >= 0 && y < h);
-}
-
-
-// find next connected pixel
-Point findNextNeighbor(Image* img, Point current, int* visited)
-{
-    int cx = (int)current.x;
-    int cy = (int)current.y;
-
-    for (int i = 0; i < 8; i++)
+    for (int i = 1; i < path.count; i++)
     {
-        int nx = cx + dirs[i].dx;
-        int ny = cy + dirs[i].dy;
-
-        if (nx < 0 || ny < 0 || nx >= img->width || ny >= img->height)
-            continue;
-
-        int idx = ny * img->width + nx;
-
-        if (visited[idx])
-            continue;
-
-        if (isLinePixel(img, nx, ny))
-        {
-            Point p = { (float)nx, (float)ny };
-            return p;
-        }
+        if (path.points[i].x < minx) minx = path.points[i].x;
+        if (path.points[i].x > maxx) maxx = path.points[i].x;
+        if (path.points[i].y < miny) miny = path.points[i].y;
+        if (path.points[i].y > maxy) maxy = path.points[i].y;
     }
 
-    Point invalid = { -1, -1 };
-    return invalid;
-}
+    int dx = maxx - minx;
+    int dy = maxy - miny;
 
+    // 3. sort
+    if (dx > dy)
+        qsort(path.points, path.count, sizeof(Point), cmp_x); // horizontal
+    else
+        qsort(path.points, path.count, sizeof(Point), cmp_y); // vertical
 
-// ---------------- MAIN EXTRACTION ----------------
-Path extractPath(Image* img)
-{
-	printf("ENTER extractPath\n");
-	
-
-    Path path;
-    path.points = malloc(sizeof(Point) * 100000);
-    path.count = 0;
-
-	printf("WIDTH=%d HEIGHT=%d\n", img->width, img->height);
-	fflush(stdout);
-
-    int* visited = calloc(img->width * img->height, sizeof(int));
-
-    Point current = findStartPixel(img);
-	
-	printf("START PIXEL: %f %f\n", current.x, current.y);
-
-	if (current.x < 0 || current.y < 0)
-	{
-	    printf("No valid start pixel found\n");
-	    return path;
-	}
-
-	printf("BEFORE LOOP\n");
-	fflush(stdout);
-
-    while (1)
-    {
-        int cx = (int)current.x;
-        int cy = (int)current.y;
-
-		if (cx < 0 || cy < 0 || cx >= img->width || cy >= img->height)
-		{
-		    printf("OUT OF BOUNDS: %d %d\n", cx, cy);
-		    break;
-		}
-
-		printf("CX CY: %d %d\n", cx, cy);
-		fflush(stdout);
-
-        // store point
-        path.points[path.count++] = current;
-
-        // mark visited
-        visited[cy * img->width + cx] = 1;
-
-        // find next
-        Point next = findNextNeighbor(img, current, visited);
-
-        if (next.x < 0)
-            break;
-
-        current = next;
-    }
-
-    free(visited);
     return path;
 }
-
-//float dist(Point a, Point b)
-//{
-    //float dx = a.x - b.x;
-    //float dy = a.y - b.y;
-    //return sqrtf(dx*dx + dy*dy);
-//}
-
-
