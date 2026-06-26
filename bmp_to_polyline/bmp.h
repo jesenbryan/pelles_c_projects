@@ -12,6 +12,6 @@ typedef struct {
 
 Image* loadBMP(const char* filename);
 
-int saveBMP(const char* filename, Image* img);
+int saveBMP_RGB(const char* filename, Image* img);
 
-int save_binary_bmp(const char* filename, uint8_t* bin, int w, int h);
+int saveBMP_BIN(const char* filename, uint8_t* bin, int w, int h);

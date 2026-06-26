@@ -71,7 +71,7 @@ Image* loadBMP(const char* filename)
     return img;
 }
 
-int saveBMP(const char* filename, Image* img)
+int saveBMP_RGB(const char* filename, Image* img)
 {
     FILE* f = fopen(filename, "wb");
     if (!f) return 0;
@@ -120,7 +120,7 @@ int saveBMP(const char* filename, Image* img)
     return 1;
 }
 
-int save_binary_bmp(const char* filename, uint8_t* bin, int w, int h)
+int saveBMP_BIN(const char* filename, uint8_t* bin, int w, int h)
 {
     FILE* f = fopen(filename, "wb");
     if (!f) return 0;
@@ -154,7 +154,7 @@ int save_binary_bmp(const char* filename, uint8_t* bin, int w, int h)
 
     // grayscale palette
     for (int i = 0; i < 256; i++) {
-        uint8_t c[4] = {i, i, i, 0};
+        uint8_t c[4] = {(uint8_t)i, (uint8_t)i, (uint8_t)i, 0};
         fwrite(c, 4, 1, f);
     }
 

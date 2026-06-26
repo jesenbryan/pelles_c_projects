@@ -1,7 +1,16 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <windows.h>
+
+#include "bmp_ui.h"
 #include "bmp.h"
-#include "extract.h"
+
+#include "geometry.h"
+#include "binary.h"
+#include "thinning.h"
+#include "endpoints.h"
+#include "path_trace.h"
+
 #include "utils.h"
 
 #define MAX_POINTS 100000
@@ -10,15 +19,15 @@ int main(int argc, char *argv[])
 {
 	printf("Console initialized!\n");
 
-	Image* img = loadBMP("curve1.bmp");
+	Image* img = loadBMP_UI(""); //"curve1.bmp"
 
 	//saveBMP("load.bmp", img);
 
-	img->bin = create_binary(img);
+	img->bin = img_to_bin(img);
+
+	//saveBMP_UI("", img, img->bin, BMP_BIN);
 
 	//thinningZhangSuen(img->bin, img->width, img->height); // doesnt work when line is already 1 pixel wide, should do it auto in the future
-
-	//save_binary_bmp("curve_bin.bmp", img->bin, img->width, img->height);
 
 	Point* poly = malloc(sizeof(Point) * 100000);
 	//int count;
@@ -51,7 +60,7 @@ int main(int argc, char *argv[])
 	printf("Number of points: %d\n", numPoints);
 
 
-	savePathCSV("curve1.csv", path, numPoints);
+	//savePathCSV("", path, numPoints);
 
     return 0;
 }

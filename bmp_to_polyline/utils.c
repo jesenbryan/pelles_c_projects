@@ -1,5 +1,4 @@
-﻿#include "extract.h"
-#include <stdio.h>
+﻿#include "utils.h"
 
 //float
 //void savePathCSV(const char* filename, Path path)
@@ -24,6 +23,19 @@
 
 int savePathCSV(const char *filename, Point path[], int numPoints)
 {
+    char pathBuf[MAX_PATH];
+
+    // If no filename → open save dialog
+    if (filename == NULL || filename[0] == '\0')
+    {
+        if (!saveFileDialog(pathBuf, MAX_PATH, "csv", 2))
+        {
+            printf("Save cancelled\n");
+            return 0;
+        }
+        filename = pathBuf;
+    }
+
     FILE *fp = fopen(filename, "w");
     if (fp == NULL)
         return 0;
