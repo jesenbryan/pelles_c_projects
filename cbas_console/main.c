@@ -1,30 +1,8 @@
-/****************************************************************************
- *                                                                          *
- * File    : main.c                                                         *
- *                                                                          *
- * Purpose : Console mode (command line) program.                           *
- *                                                                          *
- * History : Date      Reason                                               *
- *           00/00/00  Created                                              *
- *                                                                          *
- ****************************************************************************/
-
 #include <stdio.h>
 
 #include "bmp.h"
 #include "extract.h"
 #include "utils.h"
-
-/****************************************************************************
- *                                                                          *
- * Function: main                                                           *
- *                                                                          *
- * Purpose : Main entry point.                                              *
- *                                                                          *
- * History : Date      Reason                                               *
- *           00/00/00  Created                                              *
- *                                                                          *
- ****************************************************************************/
 
 int main(int argc, char *argv[])
 {
@@ -32,7 +10,7 @@ int main(int argc, char *argv[])
 
 	printf("A\n");
 
-	Image* img = loadBMP("hor.bmp");
+	Image* img = loadBMP("ver.bmp");
 
 	printf("B\n");
 
@@ -40,7 +18,8 @@ int main(int argc, char *argv[])
 
 	printf("Points: %d\n", path.count);
 
-	savePathCSV("hor.csv", path);
+	savePathCSV("ver.csv", path);
+
     return 0;
 }
 

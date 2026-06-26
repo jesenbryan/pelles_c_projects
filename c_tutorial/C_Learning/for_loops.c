@@ -1,0 +1,20 @@
+﻿#include <stdio.h>
+
+int main(int argc, char *argv[])
+{
+	//int i = 1;
+	//while (i <= 5){
+		//printf("%d\n", i);
+		//i++;	
+	//}
+
+	int luckyNumbers[] = {4, 8, 15, 16, 23, 42};
+		
+	int i;
+	for (i = 0; i < 6; i++){
+		printf("%d\n", luckyNumbers[i]);
+	}
+
+    return 0;
+}
+ 

@@ -1,0 +1,40 @@
+﻿#include "extract.h"
+#include <stdio.h>
+
+//float
+//void savePathCSV(const char* filename, Path path)
+//{
+    //FILE* f = fopen(filename, "w");
+    //if (!f) return;
+
+    //fprintf(f, "x,y\n");
+
+    //for (int i = 0; i < path.count; i++)
+    //{
+        //fprintf(f, "%f,%f\n",
+            //path.pts[i].x,
+            //path.pts[i].y);
+    //}
+
+    //fclose(f);
+    //printf("Saved path to %s\n", filename);
+//}
+
+//int
+
+int savePathCSV(const char *filename, Point path[], int numPoints)
+{
+    FILE *fp = fopen(filename, "w");
+    if (fp == NULL)
+        return 0;
+
+    fprintf(fp, "x,y\n");
+
+    for (int i = 0; i < numPoints; i++)
+    {
+        fprintf(fp, "%d,%d\n", path[i].x, path[i].y);
+    }
+
+    fclose(fp);
+    return 1;
+}
