@@ -1,26 +1,5 @@
 ﻿#include "utils.h"
 
-//float
-//void savePathCSV(const char* filename, Path path)
-//{
-    //FILE* f = fopen(filename, "w");
-    //if (!f) return;
-
-    //fprintf(f, "x,y\n");
-
-    //for (int i = 0; i < path.count; i++)
-    //{
-        //fprintf(f, "%f,%f\n",
-            //path.pts[i].x,
-            //path.pts[i].y);
-    //}
-
-    //fclose(f);
-    //printf("Saved path to %s\n", filename);
-//}
-
-//int
-
 int savePathCSV(const char *filename, Point path[], int numPoints)
 {
     char pathBuf[MAX_PATH];

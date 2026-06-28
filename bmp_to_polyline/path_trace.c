@@ -1,15 +1,6 @@
 ﻿#include "path_trace.h"
 
-int tracePath(
-    uint8_t *bin,
-    int width,
-    int height,
-    int sx,
-    int sy,
-    int ex,
-    int ey,
-    Point path[],
-    int maxPoints)
+int tracePath(uint8_t *bin, int width, int height, int sx, int sy, int ex, int ey, Point path[], int maxPoints)
 {
     // N, E, S, W, NE, SE, SW, NW
     const int dx[8] = { 0, 1, 0,-1, 1, 1,-1,-1 };
