@@ -88,8 +88,8 @@ int find_start_end_pixels(uint8_t* bin, int w, int h, int* sx, int* sy, int* ex,
 	        *ey = ty;
 	    }
 
-	    printf("Start: (%d, %d) (left)\n", *sx, *sy);
-	    printf("End  : (%d, %d)\n", *ex, *ey);
+	    printf("Start (RED): (%d, %d) (left)\n", *sx, *sy);
+	    printf("End  (BLUE): (%d, %d)\n", *ex, *ey);
 	}
 	else if (count_found == 0) {
 	    printf("No start/end pixels found\n");

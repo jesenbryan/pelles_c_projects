@@ -1,8 +1,4 @@
-﻿#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-
-#include "bmp.h"
+﻿#include "bmp.h"
 
 #pragma pack(push, 1)
 typedef struct {
@@ -36,8 +32,25 @@ Image* loadBMP(const char* filename)
     BMPHeader bmpHeader;
     DIBHeader dibHeader;
 
-    fread(&bmpHeader, sizeof(bmpHeader), 1, f);
-    fread(&dibHeader, sizeof(dibHeader), 1, f);
+    if (fread(&bmpHeader, sizeof(bmpHeader), 1, f) != 1 ||
+        fread(&dibHeader, sizeof(dibHeader), 1, f) != 1)
+    {
+        printf("Failed to read BMP headers\n");
+        fclose(f);
+        return NULL;
+    }
+
+    if (bmpHeader.type != 0x4D42) {
+        printf("Not a valid BMP file\n");
+        fclose(f);
+        return NULL;
+    }
+
+    if (dibHeader.bits != 24) {
+        printf("Only 24-bit BMP files are supported (got %d-bit)\n", dibHeader.bits);
+        fclose(f);
+        return NULL;
+    }
 
     Image* img = malloc(sizeof(Image));
 

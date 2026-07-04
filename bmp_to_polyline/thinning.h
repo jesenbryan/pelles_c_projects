@@ -2,5 +2,6 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include "bmp.h"
 
-void thinningZhangSuen(unsigned char* img, int w, int h);
+void thinningZhangSuen(Image* img);

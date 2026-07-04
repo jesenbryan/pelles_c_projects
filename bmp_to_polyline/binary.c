@@ -14,9 +14,9 @@ uint8_t* img_to_bin(Image* img)
 
 	        int i = y * w + x;
 
-	        uint8_t r = img->data[i * 3 + 0];
-	        uint8_t g = img->data[i * 3 + 1];
-	        uint8_t b = img->data[i * 3 + 2];
+			uint8_t b = img->data[i * 3 + 0]; // Index 0 is Blue in BMP
+			uint8_t g = img->data[i * 3 + 1]; // Index 1 is Green
+			uint8_t r = img->data[i * 3 + 2]; // Index 2 is Red
 
 	        uint8_t gray = (uint8_t)(0.299*r + 0.587*g + 0.114*b);
 
