@@ -63,3 +63,25 @@ void debugPrintPath(Point* path, int numPoints) {
     printf("-------------------------\n");
     printf("[DEBUG] End of trace.\n\n");
 }
+
+void debugPrintSegments(ArcSegment* segments, int count)
+{
+    printf("\n[DEBUG] Arc Segmentation: %d segment(s) found.\n", count);
+
+    if (count <= 0 || segments == NULL) {
+        printf("  -> No segments to display.\n\n");
+        return;
+    }
+
+    printf("  Seg |  Points |    Center (x, y)    | Radius  | Avg Curvature\n");
+    printf("----------------------------------------------------------------\n");
+
+    for (int i = 0; i < count; i++) {
+        ArcSegment s = segments[i];
+        printf("  %3d | %7d | (%7.2f, %7.2f) | %7.2f | %13.5f\n",
+               i, s.count, s.circle.cx, s.circle.cy, s.circle.r, s.avgCurvature);
+    }
+
+    printf("----------------------------------------------------------------\n");
+    printf("[DEBUG] End of segmentation.\n\n");
+}

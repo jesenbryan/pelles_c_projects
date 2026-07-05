@@ -11,6 +11,9 @@
 #include <stdlib.h>
 
 #include "ui_state.h"   // NEW: needed for BOOL
+#include "geometry.h"   // NEW
+
+
 
 static void runPipelineOnImage(Image* img, const char* sourceLabel, BOOL stretched)
 {
@@ -27,11 +30,18 @@ static void runPipelineOnImage(Image* img, const char* sourceLabel, BOOL stretch
         return;
     }
 
-    setEndpointMarkers(img->width, img->height, sx, sy, ex, ey, stretched); // NEW
+    setEndpointMarkers(img->width, img->height, sx, sy, ex, ey, stretched);
 
     static Point path[10000];
     int numPoints = tracePath(img->bin, img->width, img->height, sx, sy, ex, ey, path, 10000);
     debugPrintPath(path, numPoints);
+
+    static ArcSegment segments[MAX_ARC_SEGMENTS];   // was [64]
+	int segCount = buildSegments(path, numPoints, segments);
+	debugPrintSegments(segments, segCount);
+
+	setSegmentOverlay(segments, segCount, img->width, img->height, stretched);   // NEW
+    debugPrintSegments(segments, segCount);                    // NEW
 
     free(img->data);
     free(img->bin);

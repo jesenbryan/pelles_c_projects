@@ -2,6 +2,8 @@
 
 #include <math.h>
 
+#define MAX_ARC_SEGMENTS 64
+
 typedef struct {
     int x;
     int y;
@@ -36,6 +38,8 @@ typedef struct {
 } ArcSegment;
 
 double curvature(Point a, Point b, Point c);
+
+int fitCircleToPoints(Point* pts, int n, Circle* out);   // NEW
 
 int segmentArcs(Point* path, int n, double tolerance, ArcSegment* segments, int maxSegments);
 

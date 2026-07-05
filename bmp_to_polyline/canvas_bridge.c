@@ -5,6 +5,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#define ARC_PI 3.14159265358979323846
+
 // Inverse of the pixel->world mapping used in canvas.c's mouse handlers.
 // Must use the CURRENT window size/zoom, since a stroke's stored (x,y)
 // is in world space and gets reprojected under whatever zoom is active now.
@@ -115,6 +117,99 @@ static void stampSegment(Image* img, float x0, float y0, float x1, float y1, flo
         float t = (float)i / (float)steps;
         stampDisc(img, x0 + dx * t, y0 + dy * t, r);
     }
+}
+
+static void sampleArcPoints(ArcSegment* seg, Point* outPts, int* outCount, int maxOut)
+{
+    Circle c = seg->circle;
+
+    if (c.r < 1e-3f) {
+        // degenerate/near-straight segment - no meaningful circle, fall back
+        int n = seg->count;
+        if (n > maxOut) n = maxOut;
+        for (int i = 0; i < n; i++) outPts[i] = seg->pts[i];
+        *outCount = n;
+        return;
+    }
+
+    Point p0 = seg->pts[0];
+    Point p1 = seg->pts[seg->count - 1];
+
+    double a0 = atan2(p0.y - c.cy, p0.x - c.cx);
+    double a1 = atan2(p1.y - c.cy, p1.x - c.cx);
+
+    double diff = a1 - a0;
+    while (diff > ARC_PI)  diff -= 2.0 * ARC_PI;
+    while (diff < -ARC_PI) diff += 2.0 * ARC_PI;
+
+    int steps = (maxOut < 24) ? maxOut : 24;
+
+    for (int i = 0; i < steps; i++) {
+        double t = (double)i / (double)(steps - 1);
+        double a = a0 + diff * t;
+        outPts[i].x = (int)(c.cx + c.r * cos(a));
+        outPts[i].y = (int)(c.cy + c.r * sin(a));
+    }
+    *outCount = steps;
+}
+
+void setSegmentOverlay(ArcSegment* segments, int count, int imgW, int imgH, BOOL stretched)
+{
+    int total = 0;
+    int usedSegments = 0;
+
+    for (int s = 0; s < count && s < MAX_ARC_SEGMENTS; s++)
+    {
+        Point arcPts[24];
+        int arcCount = 0;
+        sampleArcPoints(&segments[s], arcPts, &arcCount, 24);
+
+        if (arcCount < 2) continue;
+        if (total + arcCount > MAX_SEGMENT_POINTS) break;
+
+        segmentStarts[usedSegments] = total;
+        segmentCounts[usedSegments] = arcCount;
+
+        // NEW: ghost circle in world space - the FULL circle this arc was cut
+        // from, not just the sampled arc points. Same pixel->world helpers
+        // used for the arc points above, so it lines up exactly with them.
+        Circle c = segments[s].circle;
+        if (c.r > 1e-3f) {
+            float wcx, wcy, wrx, wry;
+            if (stretched) {
+                pixelToWorldStretched(c.cx, c.cy, imgW, imgH, &wcx, &wcy);
+                pixelToWorldStretched(c.cx + c.r, c.cy, imgW, imgH, &wrx, &wry);
+            } else {
+                pixelToWorldExact(c.cx, c.cy, imgW, imgH, &wcx, &wcy);
+                pixelToWorldExact(c.cx + c.r, c.cy, imgW, imgH, &wrx, &wry);
+            }
+            float rdx = wrx - wcx;
+            float rdy = wry - wcy;
+            segmentCircleCenterWorld[usedSegments * 2]     = wcx;
+            segmentCircleCenterWorld[usedSegments * 2 + 1] = wcy;
+            segmentCircleRadiusWorld[usedSegments]         = sqrtf(rdx * rdx + rdy * rdy);
+        } else {
+            segmentCircleRadiusWorld[usedSegments] = 0.0f; // straight/degenerate - no ghost circle
+        }
+
+        for (int i = 0; i < arcCount; i++)
+        {
+            float wx, wy;
+            if (stretched)
+                pixelToWorldStretched((float)arcPts[i].x, (float)arcPts[i].y, imgW, imgH, &wx, &wy);
+            else
+                pixelToWorldExact((float)arcPts[i].x, (float)arcPts[i].y, imgW, imgH, &wx, &wy);
+
+            segmentPointsWorld[total * 2]     = wx;
+            segmentPointsWorld[total * 2 + 1] = wy;
+            total++;
+        }
+
+        usedSegments++;
+    }
+
+    canvas.segmentResultCount = usedSegments;
+    if (hWndGL) InvalidateRect(hWndGL, NULL, FALSE);
 }
 
 Image* canvasToImage(void)

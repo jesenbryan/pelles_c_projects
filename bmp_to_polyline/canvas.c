@@ -7,6 +7,24 @@ int glWindowWidth = 800;
 int glWindowHeight = 600;
 GLuint fontBase = 0;
 
+CanvasState canvas = { .zoom = 1.0f };
+
+float segmentPointsWorld[MAX_SEGMENT_POINTS * 2];   // NEW
+int   segmentStarts[MAX_ARC_SEGMENTS];              // NEW
+int   segmentCounts[MAX_ARC_SEGMENTS];              // NEW
+
+float segmentCircleCenterWorld[MAX_ARC_SEGMENTS * 2]; // NEW: ghost circle centers
+float segmentCircleRadiusWorld[MAX_ARC_SEGMENTS];     // NEW: ghost circle radii
+
+// NEW: which segment (if any) the mouse is currently hovering over.
+// -1 means "none". Declared here (before ResetCanvas) since it's referenced there.
+static int hoveredSegment = -1;
+
+// NEW: state for the "hover top-right corner to reveal the UI panel" behavior
+static BOOL hotZoneHighlighted = FALSE; // cursor is currently inside the corner hot zone
+static BOOL uiShown            = FALSE; // panel is at least partially faded in
+static int  uiAlpha             = 0;    // current fade alpha, 0 (invisible) - 255 (opaque)
+
 void ResetCanvas(void)
 {
     canvas.pointCount = 0;
@@ -16,9 +34,10 @@ void ResetCanvas(void)
     canvas.panX = 0.0f;
     canvas.panY = 0.0f;
     canvas.zoom = 1.0f;
+    canvas.showSegments = FALSE;        // NEW
+    canvas.segmentResultCount = 0;      // NEW
+    hoveredSegment = -1;                // NEW: avoid a stale highlight index
 }
-
-CanvasState canvas = { .zoom = 1.0f };
 
 GLuint canvasTexture = 0;
 
@@ -40,6 +59,19 @@ BOOL drawing = FALSE;
 static HGLRC hRC;
 static HDC hDC;
 
+static void segmentGhostColor(int index, float* r, float* g, float* b)
+{
+    // Cycle through a handful of distinguishable hues per segment
+    static const float palette[6][3] = {
+        {0.85f, 0.20f, 0.20f}, {0.20f, 0.55f, 0.85f}, {0.20f, 0.75f, 0.35f},
+        {0.85f, 0.55f, 0.15f}, {0.60f, 0.30f, 0.80f}, {0.20f, 0.75f, 0.75f}
+    };
+    int i = index % 6;
+    *r = palette[i][0];
+    *g = palette[i][1];
+    *b = palette[i][2];
+}
+
 static void drawMarkerDisc(float cx, float cy, float r, float red, float green, float blue)
 {
     const int segments = 20;
@@ -51,6 +83,60 @@ static void drawMarkerDisc(float cx, float cy, float r, float red, float green, 
         glVertex2f(cx + r * cosf(theta), cy + r * sinf(theta));
     }
     glEnd();
+}
+
+// Distance from a world-space point to a world-space line segment.
+static float distPointToSegment(float px, float py, float ax, float ay, float bx, float by)
+{
+    float dx = bx - ax;
+    float dy = by - ay;
+    float len2 = dx * dx + dy * dy;
+
+    if (len2 < 1e-9f) {
+        float ddx = px - ax, ddy = py - ay;
+        return sqrtf(ddx * ddx + ddy * ddy);
+    }
+
+    float t = ((px - ax) * dx + (py - ay) * dy) / len2;
+    if (t < 0.0f) t = 0.0f;
+    if (t > 1.0f) t = 1.0f;
+
+    float projX = ax + t * dx;
+    float projY = ay + t * dy;
+    float ddx = px - projX, ddy = py - projY;
+    return sqrtf(ddx * ddx + ddy * ddy);
+}
+
+// Finds which segment's drawn arc strip is closest to a world-space point,
+// within a small pick tolerance. Returns -1 if nothing is close enough.
+static int findHoveredSegment(float wx, float wy)
+{
+    float tolerance = 0.05f * canvas.zoom; // pick radius, world units
+    int best = -1;
+    float bestDist = tolerance;
+
+    for (int s = 0; s < canvas.segmentResultCount; s++)
+    {
+        int start = segmentStarts[s];
+        int count = segmentCounts[s];
+        if (count < 2) continue;
+
+        for (int i = 0; i < count - 1; i++)
+        {
+            float ax = segmentPointsWorld[(start + i) * 2];
+            float ay = segmentPointsWorld[(start + i) * 2 + 1];
+            float bx = segmentPointsWorld[(start + i + 1) * 2];
+            float by = segmentPointsWorld[(start + i + 1) * 2 + 1];
+
+            float d = distPointToSegment(wx, wy, ax, ay, bx, by);
+            if (d < bestDist) {
+                bestDist = d;
+                best = s;
+            }
+        }
+    }
+
+    return best;
 }
 
 void UpdateProjection(void)
@@ -65,6 +151,13 @@ void UpdateProjection(void)
     }
     glMatrixMode(GL_MODELVIEW);
 }
+
+// NEW: periodic check for the "hover top-right corner to reveal UI panel" behavior
+#define UI_HOTZONE_TIMER_ID 1001
+#define UI_HOTZONE_INTERVAL_MS 16    // ~60Hz - also drives the fade animation smoothness
+#define UI_HOTZONE_WIDTH  48
+#define UI_HOTZONE_HEIGHT 48
+#define UI_FADE_STEP 18              // alpha change per tick (~14 ticks, ~230ms, to fully fade)
 
 LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
@@ -97,6 +190,96 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
         UpdateProjection();
         glLoadIdentity();
+
+        SetTimer(hWnd, UI_HOTZONE_TIMER_ID, UI_HOTZONE_INTERVAL_MS, NULL); // NEW
+        return 0;
+    }
+    case WM_TIMER:
+    {
+        // NEW: reveal the UI panel when hovering the GL window's top-right
+        // corner, or when the panel is already up and the cursor is over it
+        // (so you don't lose it mid-click); hide it otherwise. Fades smoothly
+        // instead of popping instantly.
+        if (wParam == UI_HOTZONE_TIMER_ID && hWndUI)
+        {
+            POINT pt;
+            GetCursorPos(&pt);
+
+            // NEW: use the CLIENT area's top-right corner, not the full
+            // window rect - GetWindowRect() includes the title bar, which
+            // would (a) make the hot zone drift up into the title bar
+            // instead of matching where the indicator is actually drawn,
+            // and (b) place the panel over the title bar, covering the
+            // close button.
+            RECT glClientRect;
+            GetClientRect(hWnd, &glClientRect);
+            POINT clientTopRight = { glClientRect.right, glClientRect.top };
+            ClientToScreen(hWnd, &clientTopRight);
+
+            RECT hotZone;
+            hotZone.right  = clientTopRight.x;
+            hotZone.left   = clientTopRight.x - UI_HOTZONE_WIDTH;
+            hotZone.top    = clientTopRight.y;
+            hotZone.bottom = clientTopRight.y + UI_HOTZONE_HEIGHT;
+
+            BOOL inHotZone = PtInRect(&hotZone, pt);
+
+            if (inHotZone != hotZoneHighlighted)
+            {
+                hotZoneHighlighted = inHotZone;   // NEW: drives the corner indicator's look
+                InvalidateRect(hWnd, NULL, FALSE);
+            }
+
+            BOOL inUIWindow = FALSE;
+            if (uiShown)
+            {
+                RECT uiRect;
+                GetWindowRect(hWndUI, &uiRect);
+                inUIWindow = PtInRect(&uiRect, pt);
+            }
+
+            BOOL wantVisible = inHotZone || inUIWindow;
+
+            if (wantVisible && !uiShown)
+            {
+                // Just entered the hot zone: position it flush against the
+                // client area's top-right corner (below the title bar) and
+                // start fully transparent, then fade in below.
+                RECT uiRectCur;
+                GetWindowRect(hWndUI, &uiRectCur);
+                int uiW = uiRectCur.right - uiRectCur.left;
+
+                uiAlpha = 0;
+                SetLayeredWindowAttributes(hWndUI, 0, (BYTE)uiAlpha, LWA_ALPHA);
+                SetWindowPos(hWndUI, HWND_TOPMOST,
+                             clientTopRight.x - uiW, clientTopRight.y,
+                             0, 0, SWP_NOSIZE | SWP_SHOWWINDOW | SWP_NOACTIVATE);
+                uiShown = TRUE;
+            }
+
+            if (uiShown)
+            {
+                int target = wantVisible ? 255 : 0;
+
+                if (uiAlpha != target)
+                {
+                    if (uiAlpha < target) {
+                        uiAlpha += UI_FADE_STEP;
+                        if (uiAlpha > target) uiAlpha = target;
+                    } else {
+                        uiAlpha -= UI_FADE_STEP;
+                        if (uiAlpha < target) uiAlpha = target;
+                    }
+                    SetLayeredWindowAttributes(hWndUI, 0, (BYTE)uiAlpha, LWA_ALPHA);
+                }
+
+                if (!wantVisible && uiAlpha <= 0)
+                {
+                    ShowWindow(hWndUI, SW_HIDE);
+                    uiShown = FALSE;
+                }
+            }
+        }
         return 0;
     }
     case WM_SIZE:
@@ -199,7 +382,48 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	        return 0;
 	    }
 
-	    if (!drawing || !(wParam & MK_LBUTTON)) return 0;
+	    if (!drawing || !(wParam & MK_LBUTTON))
+	    {
+	        // NEW: hover detection over the segment overlay when not
+	        // actively drawing or panning
+	        if (canvas.showSegments && canvas.segmentResultCount > 0)
+	        {
+	            float hx = (float)LOWORD(lParam);
+	            float hy = (float)HIWORD(lParam);
+	            float hAspect = (float)glWindowWidth / (float)glWindowHeight;
+	            float hwx, hwy;
+	            if (hAspect >= 1.0f) {
+	                hwx = ((2.0f * hx / glWindowWidth) - 1.0f) * hAspect * canvas.zoom;
+	                hwy = (1.0f - (2.0f * hy / glWindowHeight)) * canvas.zoom;
+	            } else {
+	                hwx = ((2.0f * hx / glWindowWidth) - 1.0f) * canvas.zoom;
+	                hwy = (1.0f - (2.0f * hy / glWindowHeight)) * (1.0f / hAspect) * canvas.zoom;
+	            }
+	            hwx += canvas.panX;
+	            hwy += canvas.panY;
+
+	            int newHover = findHoveredSegment(hwx, hwy);
+	            if (newHover != hoveredSegment)
+	            {
+	                hoveredSegment = newHover;
+	                InvalidateRect(hWnd, NULL, FALSE);
+	            }
+
+	            // Needed to actually receive WM_MOUSELEAVE below
+	            TRACKMOUSEEVENT tme = {0};
+	            tme.cbSize = sizeof(tme);
+	            tme.dwFlags = TME_LEAVE;
+	            tme.hwndTrack = hWnd;
+	            TrackMouseEvent(&tme);
+	        }
+	        else if (hoveredSegment != -1)
+	        {
+	            hoveredSegment = -1;
+	            InvalidateRect(hWnd, NULL, FALSE);
+	        }
+
+	        return 0;
+	    }
 
 	    float x = (float)LOWORD(lParam);
 	    float y = (float)HIWORD(lParam);
@@ -218,6 +442,15 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	    if (canvas.pointCount < MAX_POINTS - 1) {
 	        points[canvas.pointCount++] = nx;
 	        points[canvas.pointCount++] = ny;
+	        InvalidateRect(hWnd, NULL, FALSE);
+	    }
+	    return 0;
+	}
+	case WM_MOUSELEAVE:
+	{
+	    if (hoveredSegment != -1)
+	    {
+	        hoveredSegment = -1;
 	        InvalidateRect(hWnd, NULL, FALSE);
 	    }
 	    return 0;
@@ -300,6 +533,105 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         }
         glDisable(GL_BLEND);
 
+		if (canvas.showSegments && canvas.segmentResultCount > 0)
+		{
+		    glEnable(GL_BLEND);
+		    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+		    float ghostHalfW = 0.01f * canvas.zoom;
+		    float ghostAlpha = 0.35f;   // "ghost" = translucent, tweak to taste
+
+		    for (int s = 0; s < canvas.segmentResultCount; s++)
+		    {
+		        int start = segmentStarts[s];
+		        int count = segmentCounts[s];
+		        if (count < 2) continue;
+
+		        BOOL isHovered = (s == hoveredSegment);   // NEW
+
+		        float r, g, b;
+		        segmentGhostColor(s, &r, &g, &b);
+		        glColor4f(r, g, b, isHovered ? 0.9f : ghostAlpha);   // NEW: brighten on hover
+
+		        float halfW = isHovered ? ghostHalfW * 1.8f : ghostHalfW;   // NEW: thicken on hover
+
+		        glBegin(GL_TRIANGLE_STRIP);
+		        for (int i = 0; i < count; i++)
+		        {
+		            float x = segmentPointsWorld[(start + i) * 2];
+		            float y = segmentPointsWorld[(start + i) * 2 + 1];
+		            float dx = 0.0f, dy = 0.0f;
+
+		            if (i == 0) {
+		                dx = segmentPointsWorld[(start + i + 1) * 2] - x;
+		                dy = segmentPointsWorld[(start + i + 1) * 2 + 1] - y;
+		            } else if (i == count - 1) {
+		                dx = x - segmentPointsWorld[(start + i - 1) * 2];
+		                dy = y - segmentPointsWorld[(start + i - 1) * 2 + 1];
+		            } else {
+		                dx = segmentPointsWorld[(start + i + 1) * 2] - segmentPointsWorld[(start + i - 1) * 2];
+		                dy = segmentPointsWorld[(start + i + 1) * 2 + 1] - segmentPointsWorld[(start + i - 1) * 2 + 1];
+		            }
+
+		            float len = sqrtf(dx * dx + dy * dy);
+		            if (len == 0.0f) len = 1.0f;
+		            float nx = -dy / len;
+		            float ny = dx / len;
+
+		            glVertex2f(x + nx * halfW, y + ny * halfW);
+		            glVertex2f(x - nx * halfW, y - ny * halfW);
+		        }
+		        glEnd();
+		    }
+
+		    glDisable(GL_BLEND);
+		}
+
+		// NEW: ghost circles - the FULL circle each arc segment was cut from
+		if (canvas.showSegments && canvas.segmentResultCount > 0)
+		{
+		    glEnable(GL_BLEND);
+		    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+		    const int circleSteps = 64;
+
+		    for (int s = 0; s < canvas.segmentResultCount; s++)
+		    {
+		        float r = segmentCircleRadiusWorld[s];
+		        if (r <= 0.0f) continue; // straight/degenerate segment - no circle to show
+
+		        float cx = segmentCircleCenterWorld[s * 2];
+		        float cy = segmentCircleCenterWorld[s * 2 + 1];
+
+		        BOOL isHovered = (s == hoveredSegment);   // NEW
+
+		        float gr, gg, gb;
+		        segmentGhostColor(s, &gr, &gg, &gb);
+
+		        if (isHovered) {
+		            glDisable(GL_LINE_STIPPLE);          // solid outline when hovered
+		            glLineWidth(2.5f);
+		            glColor4f(gr, gg, gb, 1.0f);
+		        } else {
+		            glEnable(GL_LINE_STIPPLE);
+		            glLineStipple(1, 0x00FF);            // dotted outline otherwise
+		            glLineWidth(1.0f);
+		            glColor4f(gr, gg, gb, 0.6f);
+		        }
+
+		        glBegin(GL_LINE_LOOP);
+		        for (int i = 0; i < circleSteps; i++) {
+		            float theta = (2.0f * 3.14159265f * i) / circleSteps;
+		            glVertex2f(cx + r * cosf(theta), cy + r * sinf(theta));
+		        }
+		        glEnd();
+		    }
+
+		    glLineWidth(1.0f);
+		    glDisable(GL_LINE_STIPPLE);
+		    glDisable(GL_BLEND);
+		}
+
 	    if (canvas.hasEndpointMarkers)
 	    {
 	        float markerRadius = 0.02f * canvas.zoom;
@@ -317,6 +649,51 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         glOrtho(0, glWindowWidth, 0, glWindowHeight, -1, 1);
         glMatrixMode(GL_MODELVIEW);
         glPushMatrix(); glLoadIdentity();
+
+        // NEW: corner hover indicator - shows exactly where to hover to
+        // reveal the UI panel, and brightens while you're hovering it.
+        {
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+            float tabLeft   = (float)(glWindowWidth - UI_HOTZONE_WIDTH);
+            float tabRight  = (float)glWindowWidth;
+            float tabBottom = (float)(glWindowHeight - UI_HOTZONE_HEIGHT);
+            float tabTop    = (float)glWindowHeight;
+
+            float fillA = hotZoneHighlighted ? 0.30f : 0.10f;
+            if (hotZoneHighlighted)
+                glColor4f(0.25f, 0.55f, 0.95f, fillA);
+            else
+                glColor4f(0.4f, 0.4f, 0.4f, fillA);
+
+            glBegin(GL_QUADS);
+                glVertex2f(tabLeft,  tabBottom);
+                glVertex2f(tabRight, tabBottom);
+                glVertex2f(tabRight, tabTop);
+                glVertex2f(tabLeft,  tabTop);
+            glEnd();
+
+            // Small drawer-handle icon: three short horizontal bars
+            float shade = hotZoneHighlighted ? 0.95f : 0.55f;
+            glColor4f(shade, shade, shade, 0.9f);
+            float cx = (tabLeft + tabRight) * 0.5f;
+            float cy = (tabBottom + tabTop) * 0.5f;
+            float barHalfW = (float)UI_HOTZONE_WIDTH * 0.22f;
+            for (int i = -1; i <= 1; i++)
+            {
+                float by = cy + i * 7.0f;
+                glBegin(GL_QUADS);
+                    glVertex2f(cx - barHalfW, by - 1.5f);
+                    glVertex2f(cx + barHalfW, by - 1.5f);
+                    glVertex2f(cx + barHalfW, by + 1.5f);
+                    glVertex2f(cx - barHalfW, by + 1.5f);
+                glEnd();
+            }
+
+            glDisable(GL_BLEND);
+        }
+
         glColor3f(0.3f, 0.3f, 0.3f);
         glRasterPos2i(glWindowWidth - 90, 20);
         glPushAttrib(GL_LIST_BIT);
@@ -331,7 +708,7 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         return 0;
     }
     case WM_ERASEBKGND: return 1;
-    case WM_DESTROY: PostQuitMessage(0); return 0;
+    case WM_DESTROY: KillTimer(hWnd, UI_HOTZONE_TIMER_ID); PostQuitMessage(0); return 0;
     }
     return DefWindowProc(hWnd, msg, wParam, lParam);
 }

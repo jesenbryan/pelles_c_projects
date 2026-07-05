@@ -17,16 +17,21 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmd, int nShow)
     wc.lpszClassName = L"GLWindow";
     RegisterClass(&wc);
 
-    WNDCLASS ui = {0};
-    ui.lpfnWndProc = WndProcUI;
-    ui.hInstance = hInst;
-    ui.lpszClassName = L"UIWindow";
-    RegisterClass(&ui);
+	WNDCLASS ui = {0};
+	ui.lpfnWndProc = WndProcUI;
+	ui.hInstance = hInst;
+	ui.lpszClassName = L"UIWindow";
+	ui.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
+	RegisterClass(&ui);
 
     hWndGL = CreateWindow(L"GLWindow", L"Canvas", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
                            100, 100, 800, 600, NULL, NULL, hInst, NULL);
-    hWndUI = CreateWindow(L"UIWindow", L"Control", WS_OVERLAPPED | WS_VISIBLE,
-                           920, 100, 360, 210, NULL, NULL, hInst, NULL);
+    // NEW: created hidden (no WS_VISIBLE) and WS_EX_LAYERED (so its alpha can
+    // be animated) - canvas.c's WM_TIMER hover check in WndProcGL fades this
+    // window in/out and repositions it as the cursor moves over the GL
+    // window's top-right corner.
+    hWndUI = CreateWindowEx(WS_EX_LAYERED | WS_EX_TOOLWINDOW, L"UIWindow", L"Control", WS_POPUP,
+                       920, 100, 220, 210, NULL, NULL, hInst, NULL);
 
     MSG msg;
     while (GetMessage(&msg, NULL, 0, 0))

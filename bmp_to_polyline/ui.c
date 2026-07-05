@@ -12,7 +12,9 @@ static HWND hColorBtn;
 static HWND hTraceBtn;
 static HWND hUploadBtn;      // NEW
 static HWND hThicknessLabel;
-static int controlCount = 6; // was 5
+static HWND hViewSegBtn;   // NEW
+static int controlCount = 7; // was 6
+
 
 static int GetRequiredUIHeight(void)
 {
@@ -24,7 +26,7 @@ static int GetRequiredUIHeight(void)
 
 static void AutoResizeUI(HWND hWnd)
 {
-    int newClientW = 360;
+    int newClientW = 220;
     int newClientH = GetRequiredUIHeight();
     RECT r = {0, 0, newClientW, newClientH};
     AdjustWindowRect(&r, GetWindowLong(hWnd, GWL_STYLE), FALSE);
@@ -36,7 +38,7 @@ static void LayoutUI(HWND hWnd)
     RECT r;
     GetClientRect(hWnd, &r);
     int width = r.right;
-    int btnW = 300;
+    int btnW = 180;
     int btnH = 30;
     int spacing = 10;
     int centerX = (width - btnW) / 2;
@@ -54,6 +56,8 @@ static void LayoutUI(HWND hWnd)
 	MoveWindow(hTraceBtn, centerX, y, btnW, btnH, TRUE);
 	y += btnH + spacing;
 	MoveWindow(hUploadBtn, centerX, y, btnW, btnH, TRUE);
+	y += btnH + spacing;
+	MoveWindow(hViewSegBtn, centerX, y, btnW, btnH, TRUE);
 }
 
 LRESULT CALLBACK WndProcUI(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
@@ -77,6 +81,10 @@ LRESULT CALLBACK WndProcUI(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		hUploadBtn = CreateWindowEx(0, L"BUTTON", L"Upload BMP...", WS_CHILD | WS_VISIBLE,
 		                             20, 210, 300, 30, hWnd, (HMENU)ID_UPLOAD,
 		                             GetModuleHandle(NULL), NULL);
+
+		hViewSegBtn = CreateWindowEx(0, L"BUTTON", L"View Segments", WS_CHILD | WS_VISIBLE,
+		                              20, 250, 300, 30, hWnd, (HMENU)ID_VIEW_SEGMENTS,
+		                              GetModuleHandle(NULL), NULL);
 
         SendMessage(hSlider, TBM_SETRANGE, TRUE, MAKELPARAM(1, 20));
         SendMessage(hSlider, TBM_SETPOS, TRUE, (LPARAM)thickness);
@@ -129,6 +137,11 @@ LRESULT CALLBACK WndProcUI(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		else if (LOWORD(wParam) == ID_UPLOAD)
 		{
 		    RunUploadPipeline();
+		}
+		else if (LOWORD(wParam) == ID_VIEW_SEGMENTS)
+		{
+		    canvas.showSegments = !canvas.showSegments;
+		    if (hWndGL) InvalidateRect(hWndGL, NULL, FALSE);
 		}
         return 0;   
     }

@@ -3,6 +3,7 @@
 #define _UNICODE
 #include <windows.h>
 #include <gl/GL.h>
+#include "geometry.h"
 
 // Constants
 #define MAX_POINTS 200000
@@ -11,6 +12,24 @@
 #define ID_COLOR  2
 #define ID_TRACE  3
 #define ID_UPLOAD 4   
+#define ID_VIEW_SEGMENTS 5
+
+// Canvas state that should always reset together (see ResetCanvas)
+typedef struct {
+    int   pointCount;
+    int   strokeCount;
+    BOOL  hasBackgroundImage;
+    BOOL  hasEndpointMarkers;
+    float panX;
+    float panY;
+    float zoom;
+	BOOL  showSegments;         // NEW
+    int   segmentResultCount;   // NEW
+} CanvasState;
+
+extern CanvasState canvas;
+
+void ResetCanvas(void);
 
 // Global state shared across modules
 extern HWND hWndGL;
@@ -39,17 +58,13 @@ extern float bgLeft, bgRight, bgBottom, bgTop;
 extern float markerStartX, markerStartY;
 extern float markerEndX, markerEndY;
 
-// Canvas state that should always reset together (see ResetCanvas)
-typedef struct {
-    int   pointCount;
-    int   strokeCount;
-    BOOL  hasBackgroundImage;
-    BOOL  hasEndpointMarkers;
-    float panX;
-    float panY;
-    float zoom;
-} CanvasState;
+#define MAX_SEGMENT_POINTS 10000
+extern float segmentPointsWorld[MAX_SEGMENT_POINTS * 2];
+extern int   segmentStarts[MAX_ARC_SEGMENTS];
+extern int   segmentCounts[MAX_ARC_SEGMENTS];
 
-extern CanvasState canvas;
-
-void ResetCanvas(void);
+// NEW: the FULL circle each arc segment was cut from, in world space -
+// drawn as a faint "ghost circle" outline when canvas.showSegments is on.
+// radius <= 0 means "this segment is a straight line, no ghost circle".
+extern float segmentCircleCenterWorld[MAX_ARC_SEGMENTS * 2];
+extern float segmentCircleRadiusWorld[MAX_ARC_SEGMENTS];
