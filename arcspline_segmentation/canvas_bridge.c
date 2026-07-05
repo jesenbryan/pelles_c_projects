@@ -119,7 +119,11 @@ static void stampSegment(Image* img, float x0, float y0, float x1, float y1, flo
     }
 }
 
-static void sampleArcPoints(ArcSegment* seg, Point* outPts, int* outCount, int maxOut)
+// Sub-pixel arc sample point - deliberately NOT the int-based Point type used
+// for traced pixel paths. See note below.
+typedef struct { float x, y; } PointF;
+
+static void sampleArcPoints(ArcSegment* seg, PointF* outPts, int* outCount, int maxOut)
 {
     Circle c = seg->circle;
 
@@ -127,7 +131,10 @@ static void sampleArcPoints(ArcSegment* seg, Point* outPts, int* outCount, int m
         // degenerate/near-straight segment - no meaningful circle, fall back
         int n = seg->count;
         if (n > maxOut) n = maxOut;
-        for (int i = 0; i < n; i++) outPts[i] = seg->pts[i];
+        for (int i = 0; i < n; i++) {
+            outPts[i].x = (float)seg->pts[i].x;
+            outPts[i].y = (float)seg->pts[i].y;
+        }
         *outCount = n;
         return;
     }
@@ -147,8 +154,16 @@ static void sampleArcPoints(ArcSegment* seg, Point* outPts, int* outCount, int m
     for (int i = 0; i < steps; i++) {
         double t = (double)i / (double)(steps - 1);
         double a = a0 + diff * t;
-        outPts[i].x = (int)(c.cx + c.r * cos(a));
-        outPts[i].y = (int)(c.cy + c.r * sin(a));
+        // NEW: keep sub-pixel precision here - these come from an analytic
+        // circle fit (float cx/cy/r), not from the traced pixel grid, so
+        // there's no reason to snap them to whole source-image pixels.
+        // Doing so used to be invisible for hand-drawn strokes (traced at
+        // full window resolution, so 1px error is negligible) but very
+        // visible for uploaded BMPs, where the curve can occupy only a
+        // few dozen source pixels before being stretched to fill the
+        // window - the same 1px snap becomes a visible staircase.
+        outPts[i].x = (float)(c.cx + c.r * cos(a));
+        outPts[i].y = (float)(c.cy + c.r * sin(a));
     }
     *outCount = steps;
 }
@@ -160,7 +175,7 @@ void setSegmentOverlay(ArcSegment* segments, int count, int imgW, int imgH, BOOL
 
     for (int s = 0; s < count && s < MAX_ARC_SEGMENTS; s++)
     {
-        Point arcPts[24];
+        PointF arcPts[24];
         int arcCount = 0;
         sampleArcPoints(&segments[s], arcPts, &arcCount, 24);
 
@@ -173,23 +188,38 @@ void setSegmentOverlay(ArcSegment* segments, int count, int imgW, int imgH, BOOL
         // NEW: ghost circle in world space - the FULL circle this arc was cut
         // from, not just the sampled arc points. Same pixel->world helpers
         // used for the arc points above, so it lines up exactly with them.
+        //
+        // NOTE: in "stretched" mode the background image is scaled by
+        // different factors along x and y to fill the window (see
+        // pixelToWorldStretched), so a pixel-space circle maps to an
+        // ELLIPSE in world space, not a circle. Sample an offset point
+        // along each axis separately and keep two radii - using a single
+        // radius for both axes (the old behavior) made the ghost circle
+        // drift away from the actual arc except where it happened to touch
+        // the x-offset sample point.
         Circle c = segments[s].circle;
         if (c.r > 1e-3f) {
-            float wcx, wcy, wrx, wry;
+            float wcx, wcy, wrx, wry, wrxY, wryY;
             if (stretched) {
                 pixelToWorldStretched(c.cx, c.cy, imgW, imgH, &wcx, &wcy);
                 pixelToWorldStretched(c.cx + c.r, c.cy, imgW, imgH, &wrx, &wry);
+                pixelToWorldStretched(c.cx, c.cy + c.r, imgW, imgH, &wrxY, &wryY);
             } else {
                 pixelToWorldExact(c.cx, c.cy, imgW, imgH, &wcx, &wcy);
                 pixelToWorldExact(c.cx + c.r, c.cy, imgW, imgH, &wrx, &wry);
+                pixelToWorldExact(c.cx, c.cy + c.r, imgW, imgH, &wrxY, &wryY);
             }
             float rdx = wrx - wcx;
             float rdy = wry - wcy;
+            float rdxY = wrxY - wcx;
+            float rdyY = wryY - wcy;
             segmentCircleCenterWorld[usedSegments * 2]     = wcx;
             segmentCircleCenterWorld[usedSegments * 2 + 1] = wcy;
             segmentCircleRadiusWorld[usedSegments]         = sqrtf(rdx * rdx + rdy * rdy);
+            segmentCircleRadiusWorldY[usedSegments]        = sqrtf(rdxY * rdxY + rdyY * rdyY);
         } else {
-            segmentCircleRadiusWorld[usedSegments] = 0.0f; // straight/degenerate - no ghost circle
+            segmentCircleRadiusWorld[usedSegments]  = 0.0f; // straight/degenerate - no ghost circle
+            segmentCircleRadiusWorldY[usedSegments] = 0.0f;
         }
 
         for (int i = 0; i < arcCount; i++)

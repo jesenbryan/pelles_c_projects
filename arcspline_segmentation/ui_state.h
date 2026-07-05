@@ -67,4 +67,7 @@ extern int   segmentCounts[MAX_ARC_SEGMENTS];
 // drawn as a faint "ghost circle" outline when canvas.showSegments is on.
 // radius <= 0 means "this segment is a straight line, no ghost circle".
 extern float segmentCircleCenterWorld[MAX_ARC_SEGMENTS * 2];
-extern float segmentCircleRadiusWorld[MAX_ARC_SEGMENTS];
+extern float segmentCircleRadiusWorld[MAX_ARC_SEGMENTS];   // world X radius
+extern float segmentCircleRadiusWorldY[MAX_ARC_SEGMENTS];  // world Y radius (differs from X
+                                                             // when the background is stretched
+                                                             // non-uniformly to fill the window)

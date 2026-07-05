@@ -14,7 +14,11 @@ int   segmentStarts[MAX_ARC_SEGMENTS];              // NEW
 int   segmentCounts[MAX_ARC_SEGMENTS];              // NEW
 
 float segmentCircleCenterWorld[MAX_ARC_SEGMENTS * 2]; // NEW: ghost circle centers
-float segmentCircleRadiusWorld[MAX_ARC_SEGMENTS];     // NEW: ghost circle radii
+float segmentCircleRadiusWorld[MAX_ARC_SEGMENTS];     // NEW: ghost circle radii (world X axis)
+float segmentCircleRadiusWorldY[MAX_ARC_SEGMENTS];    // NEW: ghost circle radii (world Y axis) -
+                                                       // needed because "stretched" (BMP) mode scales
+                                                       // x/y independently, so the ghost circle is
+                                                       // really an ellipse in world space
 
 // NEW: which segment (if any) the mouse is currently hovering over.
 // -1 means "none". Declared here (before ResetCanvas) since it's referenced there.
@@ -598,8 +602,9 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
 		    for (int s = 0; s < canvas.segmentResultCount; s++)
 		    {
-		        float r = segmentCircleRadiusWorld[s];
-		        if (r <= 0.0f) continue; // straight/degenerate segment - no circle to show
+		        float rx = segmentCircleRadiusWorld[s];
+		        float ry = segmentCircleRadiusWorldY[s];
+		        if (rx <= 0.0f || ry <= 0.0f) continue; // straight/degenerate segment - no circle to show
 
 		        float cx = segmentCircleCenterWorld[s * 2];
 		        float cy = segmentCircleCenterWorld[s * 2 + 1];
@@ -623,7 +628,7 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		        glBegin(GL_LINE_LOOP);
 		        for (int i = 0; i < circleSteps; i++) {
 		            float theta = (2.0f * 3.14159265f * i) / circleSteps;
-		            glVertex2f(cx + r * cosf(theta), cy + r * sinf(theta));
+		            glVertex2f(cx + rx * cosf(theta), cy + ry * sinf(theta));
 		        }
 		        glEnd();
 		    }

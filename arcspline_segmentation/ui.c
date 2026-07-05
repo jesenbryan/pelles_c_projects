@@ -82,7 +82,11 @@ LRESULT CALLBACK WndProcUI(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		                             20, 210, 300, 30, hWnd, (HMENU)ID_UPLOAD,
 		                             GetModuleHandle(NULL), NULL);
 
-		hViewSegBtn = CreateWindowEx(0, L"BUTTON", L"View Segments", WS_CHILD | WS_VISIBLE,
+		// BS_AUTOCHECKBOX | BS_PUSHLIKE: a checkbox drawn/behaving like a button
+		// that stays visually pressed while checked - gives "View Segments" a
+		// native on/off toggle look instead of a plain momentary click.
+		hViewSegBtn = CreateWindowEx(0, L"BUTTON", L"View Segments",
+		                              WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX | BS_PUSHLIKE,
 		                              20, 250, 300, 30, hWnd, (HMENU)ID_VIEW_SEGMENTS,
 		                              GetModuleHandle(NULL), NULL);
 
@@ -117,6 +121,7 @@ LRESULT CALLBACK WndProcUI(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         if (LOWORD(wParam) == ID_CLEAR)
 		{
 		    ResetCanvas();
+		    SendMessage(hViewSegBtn, BM_SETCHECK, BST_UNCHECKED, 0);   // NEW: keep toggle in sync
 		    if (hWndGL) InvalidateRect(hWndGL, NULL, TRUE);
 		}
         else if (LOWORD(wParam) == ID_COLOR)
@@ -137,10 +142,21 @@ LRESULT CALLBACK WndProcUI(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		else if (LOWORD(wParam) == ID_UPLOAD)
 		{
 		    RunUploadPipeline();
+		    SendMessage(hViewSegBtn, BM_SETCHECK, BST_UNCHECKED, 0);   // NEW: new image needs its own trace
 		}
 		else if (LOWORD(wParam) == ID_VIEW_SEGMENTS)
 		{
-		    canvas.showSegments = !canvas.showSegments;
+		    // BS_AUTOCHECKBOX already flipped its own check state before this
+		    // notification fires, so read it back rather than tracking a
+		    // separate bool - the button IS the toggle state.
+		    BOOL nowChecked = (SendMessage(hViewSegBtn, BM_GETCHECK, 0, 0) == BST_CHECKED);
+
+		    if (nowChecked)
+		    {
+		        RunPendingUploadTrace();   // trace/segment the uploaded BMP on demand,
+		                                   // no-op if already traced or nothing was uploaded
+		    }
+		    canvas.showSegments = nowChecked;
 		    if (hWndGL) InvalidateRect(hWndGL, NULL, FALSE);
 		}
         return 0;   
