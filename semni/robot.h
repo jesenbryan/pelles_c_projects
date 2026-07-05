@@ -1,31 +1,14 @@
 ﻿// robot.h
-#ifndef ROBOT_H
-#define ROBOT_H
+#pragma once
 
 #include "geometry.h"
 #include "app.h"
 
-typedef enum {
-    SEG_BEZIER,
-    SEG_ARC
-} SegmentType;
-
-typedef struct {
-    SegmentType type;
-
-    Point vertices[256];
-    int vertexCount;
-
-    Point position;
-    float rotation;
-} RobotSegment;
-
-typedef struct {
-    RobotSegment segments[4];
-
-    int parent[4];   // connection tree
-} RobotModel;
-
 Point getCenter(Semni b);
 
-#endif
+// Prints the current robot pose to the console as a series of
+// "app->robotScene.robot.field = value;" assignments, matching the style
+// used in app_init.c. Meant for shaping the robot by hand with the
+// handles, then copying this output straight into initAppState() as the
+// new starting pose.
+void printRobotAsInit(Semni b);

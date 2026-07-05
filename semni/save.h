@@ -1,10 +1,12 @@
-﻿#ifndef SAVE_H
-#define SAVE_H
+﻿#pragma once
 
+#include <windows.h>
 #include "app.h"
 
-void saveRobot(const char* filename, AppState* app);
-
-int loadRobot(const char* path, AppState* app);
-
-#endif
+// Renders "app" into the back buffer without the draggable handles, reads
+// that back, and writes it out as an uncompressed 24-bit BMP -- so the
+// exported image shows the robot/paint/environment content only, not the
+// editor's handle overlay. "hwnd" is just used to get the canvas size.
+// Returns 1 on success, 0 on failure (bad window size, can't open the
+// file, etc). What's currently displayed on screen is left untouched.
+int saveCanvasAsBMP(const char* filename, HWND hwnd, AppState* app);

@@ -37,6 +37,7 @@ void ResetCanvas(void)
     canvas.showSegments = FALSE;        // NEW
     canvas.segmentResultCount = 0;      // NEW
     hoveredSegment = -1;                // NEW: avoid a stale highlight index
+	UpdateProjection();
 }
 
 GLuint canvasTexture = 0;

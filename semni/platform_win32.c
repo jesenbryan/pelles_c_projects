@@ -37,16 +37,21 @@ void platformInitCommonControls(void)
 HWND platformCreateMainWindow(HINSTANCE hInst, int nShowCmd, WNDPROC wndProc)
 {
     WNDCLASS wc = {0};
-    wc.lpfnWndProc = wndProc; 
+    wc.lpfnWndProc = wndProc;
     wc.hInstance = hInst;
     wc.lpszClassName = L"Semni";
 
     RegisterClass(&wc);
 
+    // WS_CLIPCHILDREN keeps the OpenGL SwapBuffers calls (which repaint
+    // the whole client rect every frame in the render loop) from being
+    // drawn on top of child controls like the Save button -- without it,
+    // the button's HWND exists and is WS_VISIBLE, but the constant GL
+    // repaint of the parent's client area covers it and it never appears.
     HWND hwnd = CreateWindow(
         L"Semni",
         L"Semni",
-        WS_OVERLAPPEDWINDOW,
+        WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
         CW_USEDEFAULT, CW_USEDEFAULT,
         800, 600,
         NULL, NULL,
@@ -54,28 +59,5 @@ HWND platformCreateMainWindow(HINSTANCE hInst, int nShowCmd, WNDPROC wndProc)
     );
 
     ShowWindow(hwnd, nShowCmd);
-    return hwnd;
-}
-
-HWND platformCreateSliderWindow(HINSTANCE hInst, WNDPROC wndProc)
-{
-    WNDCLASS wcSlider = {0};
-    wcSlider.lpfnWndProc = wndProc;
-    wcSlider.hInstance = hInst;
-    wcSlider.lpszClassName = L"SliderWin";
-
-    RegisterClass(&wcSlider);
-
-    HWND hwnd = CreateWindow(
-        L"SliderWin",
-        L"Controls",
-        WS_OVERLAPPEDWINDOW,
-        850, 100,
-        400, 350,
-        NULL, NULL,
-        hInst, NULL
-    );
-
-    ShowWindow(hwnd, SW_SHOW);
     return hwnd;
 }

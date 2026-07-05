@@ -1,13 +1,30 @@
-﻿#ifndef CONFIG_H
-#define CONFIG_H
+﻿#pragma once
 
 #define MIN_R 0.05f
 #define MAX_R 0.35f
 
-#define HANDLE_RADIUS 0.06f
-#define INNER_HANDLE_RADIUS 0.03f
+// all draggable handles are drawn semi-transparent so they read as
+// lightweight overlays instead of solid shapes sitting on top of the robot
+#define HANDLE_ALPHA 0.45f
 
-#define BREAK_POINT_X 999999.0f
-#define BREAK_POINT_Y 999999.0f
+// handle sizes taper down the leg (hip > knee > ankle) and along each limb
+// (thigh bulge handles > shin bulge handles), echoing the limb getting
+// thinner toward the foot. topCtrl/bottomCtrl aren't part of the leg, so
+// they get their own mid-sized radius.
+#define TOP_BOTTOM_HANDLE_RADIUS 0.018f
 
-#endif
+#define HIP_HANDLE_RADIUS   0.020f
+#define KNEE_HANDLE_RADIUS  0.016f
+#define ANKLE_HANDLE_RADIUS 0.012f
+
+// scroll handle sitting at the center of the head/butt circles, used to
+// resize them (same radius for both -- they're the same kind of part)
+#define HEAD_BUTT_HANDLE_RADIUS 0.018f
+
+#define THIGH_HANDLE_RADIUS 0.014f
+#define SHIN_HANDLE_RADIUS  0.010f
+
+// minimum thigh/shin length, so dragging the knee or ankle circle along
+// its constrained axis can't collapse the limb to zero or flip it
+// through the pivot
+#define MIN_LIMB_LENGTH 0.1f

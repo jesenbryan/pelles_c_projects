@@ -13,13 +13,10 @@
 // ---------------- PROJECT CORE ----------------
 #include "app.h"
 #include "config.h"
-#include "mode.h"
 #include "geometry.h"
 
 // ---------------- SIMULATION / DOMAIN ----------------
 #include "robot.h"
-#include "environment.h"
-#include "paint.h"
 
 // ---------------- RENDER / PLATFORM ----------------
 #include "graphics.h"
@@ -28,7 +25,6 @@
 
 // ---------------- INPUT / UI ----------------
 #include "input.h"
-#include "ui_controls.h"
 
 // ---------------- APP LIFECYCLE ----------------
 #include "app_init.h"
@@ -54,11 +50,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
     return handleInput(hwnd, msg, wParam, lParam, &app);
 }
 
-//LRESULT CALLBACK SliderWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
-//{
-    //return handleInput(hwnd, msg, wParam, lParam, &app);
-//}
-
 // ---------------- MAIN ----------------
 
 int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmdLine, int nShowCmd)
@@ -75,10 +66,6 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmdLine, int nShowC
 	app.hwndMain = platformCreateMainWindow(hInst, nShowCmd, WndProc);
 
     setupOpenGL(app.hwndMain);
-
-	app.hwndUI = platformCreateSliderWindow(hInst, WndProc);
-
-    uiCreateControls(app.hwndUI, hInst, &app);
 
     MSG msg;
 

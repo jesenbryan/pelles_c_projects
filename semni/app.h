@@ -1,22 +1,19 @@
-﻿#ifndef APP_H
-#define APP_H
+﻿#pragma once
 
 #include <windows.h>
 
 #include "geometry.h"
-#include "mode.h"
-
-#define MAX_POINTS 200000
 
 #define ID_SAVE_BUTTON 1001
-#define ID_LOAD_BUTTON 1002
+
+// ---- robot model (the "Semni") ----
 
 typedef struct {
-    float leftX, rightX;
+    float headX, buttX;
     float y;
 
-    float leftRadius;
-    float rightRadius;
+    float headRadius;
+    float buttRadius;
 
     Point topCtrl;
     Point bottomCtrl;
@@ -24,64 +21,86 @@ typedef struct {
     Point innerCircle;
     float innerRadius;
 
-    float angle;
+    // second joint circle + the two side-arc handles connecting it back
+    // to innerCircle, forming a thigh-like limb (like innerCircle is the
+    // hip, kneeCircle is the knee)
+    Point kneeCircle;
+    float kneeRadius;
+
+    Point thighCtrl1;
+    Point thighCtrl2;
+
+    // continues the leg past the knee: ankleCircle is the next joint,
+    // connected back to kneeCircle by two arcs, same pattern as the thigh
+    Point ankleCircle;
+    float ankleRadius;
+
+    Point shinCtrl1;
+    Point shinCtrl2;
+
+    float angle;      // whole-body rotation
+
+    // hip joint rotation: rotates the whole leg chain (kneeCircle,
+    // thighCtrl1/2, ankleCircle, shinCtrl1/2) around innerCircle,
+    // independent of the whole-body angle above
+    float hipAngle;
+
+    // knee joint rotation: rotates just the shin (ankleCircle,
+    // shinCtrl1/2) around kneeCircle, independent of hipAngle/angle
+    float kneeAngle;
 } Semni;
 
 typedef struct {
     Semni robot;
 } RobotScene;
 
-typedef struct {
-    int dummy;
-} EnvironmentScene;
+// ---- UI ----
 
 typedef struct {
-    HWND sliderLeft;
-    HWND sliderRight;
-	HWND labelLeft;
-	HWND labelRight;
-
-	HWND hSaveButton;
-	HWND hLoadButton;
+    HWND hSaveButton;
 } UIState;
 
+// ---- application state ----
+
 typedef struct {
-	HWND hwndMain;          // main robot window
-    HWND hwndUI;            // UI window (SliderWindow)
-
+    // window + scene
+    HWND hwndMain;
     RobotScene robotScene;
-    EnvironmentScene envScene;
+    UIState ui;
 
-	UIState ui;
-
-    Mode mode;
-
+    // handle interaction: which handle is active, which are being
+    // dragged, and which are merely being hovered over
     int activeHandle;
+
     int draggingTop;
     int draggingBottom;
     int draggingInner;
+    int draggingKnee;
+    int draggingThigh1;
+    int draggingThigh2;
+    int draggingAnkle;
+    int draggingShin1;
+    int draggingShin2;
 
-    int sliderDraggingLeft;
-    int sliderDraggingRight;
+    // true while the mouse is merely hovering near a joint circle handle
+    // (hip/knee/ankle/head/butt) -- separate from the "dragging" flags
+    // above, so those handles can flash yellow just from a hover, while
+    // the arc bulge handles keep their old dragging-only highlight
+    int hoverHip;
+    int hoverKnee;
+    int hoverAnkle;
+    int hoverHead;
+    int hoverButt;
 
-	//int showRobot;
-    //int showEnvironment;
+    // captured once, when a knee drag starts: ankleCircle/shinCtrl1/2's
+    // fixed offset from kneeCircle at that moment. Re-applied fresh every
+    // WM_MOUSEMOVE (kneeCircle + offset) instead of nudging them frame by
+    // frame, so the shin's length/shape can't drift over a long drag --
+    // it's pinned to exactly what it was when the drag began.
+    Point kneeDragAnkleOffset;
+    Point kneeDragShinCtrl1Offset;
+    Point kneeDragShinCtrl2Offset;
 
     Point mouseGL;
-    Point wallStart;
-    int drawingWall;
-
-	int isDrawingWall;
-
-	float paintPoints[MAX_POINTS];
-	int paintCount;
-	int painting;
-
-	int strokeBreaks[MAX_POINTS];
-	int newStroke;
-
-	DWORD lastLogTime;
-
+    DWORD lastLogTime;
 } AppState;
-
-#endif

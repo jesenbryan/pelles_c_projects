@@ -1,8 +1,5 @@
-﻿#ifndef APP_INIT_H
-#define APP_INIT_H
+﻿#pragma once
 
 #include "app.h"
 
 void initAppState(AppState* app);
-
-#endif

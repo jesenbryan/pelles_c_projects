@@ -43,6 +43,11 @@ void setupOpenGL(HWND hwnd)
     glOrtho(-1.5, 1.5, -1.5, 1.5, -1, 1);
 
     glClearColor(1,1,1,1);
+
+    // needed so the semi-transparent handles (drawn with glColor4f alpha)
+    // actually blend with what's underneath instead of being fully opaque
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 }
 
 void graphicsOnResize(int w, int h)
