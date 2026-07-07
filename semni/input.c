@@ -192,23 +192,62 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
 
             Point localMouse = inverseRotate(mouse, center, angle);
 
+            Point headLocal = { app->robotScene.robot.headX, app->robotScene.robot.y };
+            Point buttLocal = { app->robotScene.robot.buttX, app->robotScene.robot.y };
+
             // the seam attach angle is just the polar angle of the mouse
             // around the head circle's own center, in local space -- since
             // the handle sits exactly at circleEdge(head, headRadius,
             // angle), this tracks the cursor exactly, unlike the old
-            // radius-driven handle
+            // radius-driven handle. Clamped on TWO sides: the far side
+            // (via filletSafeAngleRange) stops it from flattening into a
+            // line, and the near side keeps it away from centerDeg itself
+            // -- a second, different degenerate point where the arc's
+            // bulge collapses flat against the head-butt axis and flips to
+            // the opposite side. Each handle is locked to its own side of
+            // centerDeg (top stays negative-delta, bottom stays
+            // positive-delta) so they can never cross into each other's
+            // territory.
             if (app->draggingTopArc)
             {
-                float dx = localMouse.x - app->robotScene.robot.headX;
-                float dy = localMouse.y - app->robotScene.robot.y;
-                app->robotScene.robot.topArcAngle = atan2f(dy, dx) * 180.0f / 3.1415926f;
+                float dx = localMouse.x - headLocal.x;
+                float dy = localMouse.y - headLocal.y;
+                float raw = atan2f(dy, dx) * 180.0f / 3.1415926f;
+                SafeAngleRange range = filletSafeAngleRange(headLocal, app->robotScene.robot.headRadius, buttLocal, app->robotScene.robot.buttRadius, MAX_ARC_R);
+
+                float delta = raw - range.centerDeg;
+                while (delta > 180.0f) delta -= 360.0f;
+                while (delta < -180.0f) delta += 360.0f;
+
+                float maxDelta = range.halfWidthDeg - ARC_ANGLE_MARGIN_DEG;
+                if (maxDelta < ARC_SIDE_MARGIN_DEG) maxDelta = ARC_SIDE_MARGIN_DEG;
+
+                if (delta > -ARC_SIDE_MARGIN_DEG) delta = -ARC_SIDE_MARGIN_DEG;
+                if (delta < -maxDelta) delta = -maxDelta;
+
+                app->robotScene.robot.topArcAngle = range.centerDeg + delta;
             }
 
             if (app->draggingBottomArc)
             {
-                float dx = localMouse.x - app->robotScene.robot.headX;
-                float dy = localMouse.y - app->robotScene.robot.y;
-                app->robotScene.robot.bottomArcAngle = atan2f(dy, dx) * 180.0f / 3.1415926f;
+                float dx = localMouse.x - headLocal.x;
+                float dy = localMouse.y - headLocal.y;
+                float raw = atan2f(dy, dx) * 180.0f / 3.1415926f;
+                SafeAngleRange range = filletSafeAngleRange(headLocal, app->robotScene.robot.headRadius, buttLocal, app->robotScene.robot.buttRadius, MAX_ARC_R);
+
+                float delta = raw - range.centerDeg;
+                while (delta > 180.0f) delta -= 360.0f;
+                while (delta < -180.0f) delta += 360.0f;
+
+                float maxDelta = range.halfWidthDeg - ARC_ANGLE_MARGIN_DEG;
+                if (maxDelta < ARC_SIDE_MARGIN_DEG) maxDelta = ARC_SIDE_MARGIN_DEG;
+
+                // mirror image of the top arc's clamp -- locked to the
+                // opposite (positive-delta) side of centerDeg
+                if (delta < ARC_SIDE_MARGIN_DEG) delta = ARC_SIDE_MARGIN_DEG;
+                if (delta > maxDelta) delta = maxDelta;
+
+                app->robotScene.robot.bottomArcAngle = range.centerDeg + delta;
             }
 
             if (app->draggingInner)

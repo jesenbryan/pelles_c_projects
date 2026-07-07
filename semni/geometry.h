@@ -88,3 +88,25 @@ typedef struct {
 // when clamped -- only the tangency to c2 becomes approximate in that
 // case, never c1.
 Fillet filletFromAttachAngle(Point c1, float r1, Point c2, float r2, float angleDeg, float minRadius, float maxRadius);
+
+typedef struct {
+    float centerDeg;    // angle (around c1) of the point on c1 farthest from c2 -- the "safest" attach point, always valid
+    float halfWidthDeg; // the safe range extends this far to either side of centerDeg
+} SafeAngleRange;
+
+// Computes the range of attach angles (around c1, same convention as
+// circleEdge/filletFromAttachAngle) for which filletFromAttachAngle(c1, r1,
+// c2, r2, angle, ..., maxRadius) stays EXACTLY tangent to both circles --
+// i.e. its unclamped radius never needs to exceed maxRadius. Two things can
+// break that: the radius blowing all the way up to infinity (the true
+// common-tangent LINE angle, then flipping to the wrong side past it), or --
+// usually the tighter bound -- the radius simply exceeding maxRadius.
+// Clamping the DRAG ANGLE into this range (instead of just letting the
+// radius get clamped after the fact) is what stops the seam handle from
+// ever being dragged far enough to flatten the arc into a line or flip it
+// to the other side.
+SafeAngleRange filletSafeAngleRange(Point c1, float r1, Point c2, float r2, float maxRadius);
+
+// Clamps angleDeg into the given safe range, pulled in by marginDeg extra
+// on each side for numerical headroom right at the boundary.
+float clampToSafeAngleRange(float angleDeg, SafeAngleRange range, float marginDeg);

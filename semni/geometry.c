@@ -189,6 +189,72 @@ Fillet filletFromAttachAngle(Point c1, float r1, Point c2, float r2, float angle
     return result;
 }
 
+SafeAngleRange filletSafeAngleRange(Point c1, float r1, Point c2, float r2, float maxRadius)
+{
+    Point V = { c1.x - c2.x, c1.y - c2.y };
+    float dist = sqrtf(V.x * V.x + V.y * V.y);
+
+    SafeAngleRange range;
+
+    if (dist < 1e-6f)
+    {
+        // degenerate -- circles share a center, every angle is equally
+        // (in)valid. Report the whole circle as safe rather than divide
+        // by zero.
+        range.centerDeg = 0.0f;
+        range.halfWidthDeg = 180.0f;
+        return range;
+    }
+
+    range.centerDeg = atan2f(V.y, V.x) * 180.0f / 3.1415926f;
+
+    // boundary 1: where the fillet radius would blow up to infinity (the
+    // true common tangent LINE between c1 and c2) -- same condition as the
+    // |denom| < eps check in filletFromAttachAngle
+    float ratioSing = (r2 - r1) / dist;
+    if (ratioSing < -1.0f) ratioSing = -1.0f;
+    if (ratioSing > 1.0f) ratioSing = 1.0f;
+    float half = acosf(ratioSing) * 180.0f / 3.1415926f;
+
+    // boundary 2 (usually the tighter one): where the radius would exactly
+    // equal maxRadius. Same closed-form as filletFromAttachAngle, just
+    // solved for the angle instead of the radius -- plug R = maxRadius in
+    // for k, then back out what cos(angle - centerDeg) would have to be.
+    float k0 = r1 - maxRadius;
+    if (fabsf(k0) > 1e-6f)
+    {
+        float VmagSq = dist * dist;
+        float rhs = ((r1 - r2) * (r1 - r2) - VmagSq) / (2.0f * k0) - (r1 - r2);
+        float ratioCap = rhs / dist;
+
+        if (ratioCap >= -1.0f && ratioCap <= 1.0f)
+        {
+            float halfCap = acosf(ratioCap) * 180.0f / 3.1415926f;
+            if (halfCap < half)
+                half = halfCap;
+        }
+    }
+
+    range.halfWidthDeg = half;
+    return range;
+}
+
+float clampToSafeAngleRange(float angleDeg, SafeAngleRange range, float marginDeg)
+{
+    float delta = angleDeg - range.centerDeg;
+
+    while (delta > 180.0f) delta -= 360.0f;
+    while (delta < -180.0f) delta += 360.0f;
+
+    float maxDelta = range.halfWidthDeg - marginDeg;
+    if (maxDelta < 0.0f) maxDelta = 0.0f;
+
+    if (delta > maxDelta) delta = maxDelta;
+    if (delta < -maxDelta) delta = -maxDelta;
+
+    return range.centerDeg + delta;
+}
+
 // Finds the circle that passes through all three points.
 // Used to draw an arc through p0, p1, p2 instead of a bezier curve.
 Circle circumcircle(Point p0, Point p1, Point p2)
