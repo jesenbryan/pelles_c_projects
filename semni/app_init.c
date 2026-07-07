@@ -9,11 +9,12 @@ void initAppState(AppState* app)
     app->robotScene.robot.headRadius = 0.101000f;
     app->robotScene.robot.buttRadius = 0.288500f;
 
-    app->robotScene.robot.topCtrl.x = 0.000000f;
-    app->robotScene.robot.topCtrl.y = 0.298469f;
-
-    app->robotScene.robot.bottomCtrl.x = 0.000000f;
-    app->robotScene.robot.bottomCtrl.y = -0.300992f;
+    // arbitrary starting attach angles (mirrored top/bottom) -- verified
+    // by hand to land well within the valid, non-degenerate range for
+    // this head/butt layout (gives a fillet radius around 0.93). Drag the
+    // seam handles from here.
+    app->robotScene.robot.topArcAngle = 150.000000f;
+    app->robotScene.robot.bottomArcAngle = -150.000000f;
 
     app->robotScene.robot.innerCircle.x = 0.000000f;
     app->robotScene.robot.innerCircle.y = 0.000000f;

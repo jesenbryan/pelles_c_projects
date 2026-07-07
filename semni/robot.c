@@ -19,11 +19,8 @@ void printRobotAsInit(Semni b)
     printf("app->robotScene.robot.headRadius = %.6ff;\n", b.headRadius);
     printf("app->robotScene.robot.buttRadius = %.6ff;\n\n", b.buttRadius);
 
-    printf("app->robotScene.robot.topCtrl.x = %.6ff;\n", b.topCtrl.x);
-    printf("app->robotScene.robot.topCtrl.y = %.6ff;\n\n", b.topCtrl.y);
-
-    printf("app->robotScene.robot.bottomCtrl.x = %.6ff;\n", b.bottomCtrl.x);
-    printf("app->robotScene.robot.bottomCtrl.y = %.6ff;\n\n", b.bottomCtrl.y);
+    printf("app->robotScene.robot.topArcAngle = %.6ff;\n", b.topArcAngle);
+    printf("app->robotScene.robot.bottomArcAngle = %.6ff;\n\n", b.bottomArcAngle);
 
     printf("app->robotScene.robot.innerCircle.x = %.6ff;\n", b.innerCircle.x);
     printf("app->robotScene.robot.innerCircle.y = %.6ff;\n\n", b.innerCircle.y);

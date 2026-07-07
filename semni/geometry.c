@@ -116,6 +116,79 @@ int isNear(Point a, Point b, float radius)
     return (dx*dx + dy*dy) < (radius * radius);
 }
 
+Point circleTowardPoint(Point center, float radius, Point target)
+{
+    Point d = { target.x - center.x, target.y - center.y };
+    float dist = sqrtf(d.x * d.x + d.y * d.y);
+
+    if (dist < 1e-6f)
+        return (Point){ center.x + radius, center.y }; // degenerate -- target sits on the center, direction is arbitrary
+
+    Point u = { d.x / dist, d.y / dist };
+    return (Point){ center.x + u.x * radius, center.y + u.y * radius };
+}
+
+Point internalTangentPoint(Point c1, float r1, Point c2, float r2)
+{
+    // whichever circle has the bigger radius is the one "containing" the
+    // other -- the tangent point sits on the containing circle's boundary,
+    // in the direction of the smaller circle's center
+    if (r1 >= r2)
+        return circleTowardPoint(c1, r1, c2);
+    else
+        return circleTowardPoint(c2, r2, c1);
+}
+
+Fillet filletFromAttachAngle(Point c1, float r1, Point c2, float r2, float angleDeg, float minRadius, float maxRadius)
+{
+    float a = angleDeg * 3.1415926f / 180.0f;
+    Point u = { cosf(a), sinf(a) };
+
+    // Derivation: the fillet's center C must lie on the line through c1
+    // in direction u (since C, c1, and the c1-tangent-point are always
+    // colinear for tangent circles), i.e. C = c1 + k*u for some scalar k,
+    // where k = r1 - R (this single relation satisfies both
+    // |C - c1| == |R - r1| and the tangent point itself falling exactly
+    // at c1 + r1*u, for any R -- it's just the definition of "tangent to
+    // c1 at this angle"). Plugging that into the second tangency
+    // constraint |C - c2| == |R - r2| and expanding, the R^2 terms cancel
+    // and what's left is linear in k -- no quadratic, no iteration.
+    Point V = { c1.x - c2.x, c1.y - c2.y };
+    float VdotU = V.x * u.x + V.y * u.y;
+    float VmagSq = V.x * V.x + V.y * V.y;
+
+    float denom = 2.0f * (VdotU + (r1 - r2));
+
+    float radius;
+
+    if (fabsf(denom) < 1e-4f)
+    {
+        // this attach angle points straight at the exact common tangent
+        // LINE between c1 and c2 -- the fillet that would pass through
+        // here has infinite radius. Clamp instead of dividing by ~0.
+        radius = maxRadius;
+    }
+    else
+    {
+        float k = ((r1 - r2) * (r1 - r2) - VmagSq) / denom;
+        radius = r1 - k;
+    }
+
+    if (radius < minRadius) radius = minRadius;
+    if (radius > maxRadius) radius = maxRadius;
+
+    // recompute k from the (possibly clamped) radius, so the returned
+    // circle is always exactly tangent to c1 at angleDeg -- even past the
+    // edge of the valid range, where tangency to c2 becomes approximate
+    // instead
+    float k = r1 - radius;
+
+    Fillet result;
+    result.center = (Point){ c1.x + k * u.x, c1.y + k * u.y };
+    result.radius = radius;
+    return result;
+}
+
 // Finds the circle that passes through all three points.
 // Used to draw an arc through p0, p1, p2 instead of a bezier curve.
 Circle circumcircle(Point p0, Point p1, Point p2)

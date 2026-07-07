@@ -1,27 +1,23 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <settings version="1.0">
-	<category name="main.c" />
-	<category name="mode.h" />
-	<category name="geometry.h" />
-	<category name="environment.h" />
-	<category name="environment.c" />
-	<category name="app.h" />
-	<category name="graphics.c" />
-	<category name="input.c" />
-	<category name="renderer.c" />
-	<category name="robot.h" />
-	<category name="robot.c" />
-	<category name="geometry.c" />
-	<category name="ui_controls.h" />
-	<category name="ui_controls.c" />
-	<category name="app_init.c" />
-	<category name="save.c" />
-	<category name="input.h" />
-	<category name="platform_win32.c" />
-	<category name="save.h" />
-	<category name="renderer.h" />
-	<category name="platform_win32.h" />
-	<category name="graphics.h" />
-	<category name="config.h" />
-	<category name="app_init.h" />
+	<category name="save.c">
+		<category name="Window">
+			<property name="Left" type="integer">4294967288</property>
+			<property name="Top" type="integer">4294967265</property>
+			<property name="Right" type="integer">1463</property>
+			<property name="Bottom" type="integer">699</property>
+			<property name="Maximized" type="integer">1</property>
+			<property name="Active" type="integer">1</property>
+		</category>
+	</category>
+	<category name="input.c">
+		<category name="Window">
+			<property name="Left" type="integer">26</property>
+			<property name="Top" type="integer">26</property>
+			<property name="Right" type="integer">1117</property>
+			<property name="Bottom" type="integer">544</property>
+			<property name="Maximized" type="integer">0</property>
+			<property name="Active" type="integer">0</property>
+		</category>
+	</category>
 </settings>

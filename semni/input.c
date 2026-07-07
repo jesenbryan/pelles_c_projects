@@ -1,6 +1,7 @@
 ﻿#include <stdio.h>
 #include <windows.h>
 #include <commctrl.h>
+#include <math.h>
 
 #include "app.h"
 #include "input.h"
@@ -22,8 +23,8 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
 
             screenToGL(hwnd, mx, my, &app->mouseGL.x, &app->mouseGL.y);
 
-            app->draggingTop = 0;
-            app->draggingBottom = 0;
+            app->draggingTopArc = 0;
+            app->draggingBottomArc = 0;
             app->draggingInner = 0;
             app->draggingKnee = 0;
             app->draggingThigh1 = 0;
@@ -36,8 +37,13 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
 
             Point mouse = app->mouseGL;
 
-            Point topHandle = rotatePoint(app->robotScene.robot.topCtrl, center, app->robotScene.robot.angle);
-            Point bottomHandle = rotatePoint(app->robotScene.robot.bottomCtrl, center, app->robotScene.robot.angle);
+            // seam attach handles: sit exactly at the tangent point on the
+            // head circle, so this is a plain circleEdge -- no derived
+            // fillet math needed just to hit-test them
+            Point headLocal = { app->robotScene.robot.headX, app->robotScene.robot.y };
+
+            Point topHandleWorld = rotatePoint(circleEdge(headLocal, app->robotScene.robot.headRadius, app->robotScene.robot.topArcAngle), center, app->robotScene.robot.angle);
+            Point bottomHandleWorld = rotatePoint(circleEdge(headLocal, app->robotScene.robot.headRadius, app->robotScene.robot.bottomArcAngle), center, app->robotScene.robot.angle);
 
             Point innerWorld = rotatePoint(app->robotScene.robot.innerCircle, center, app->robotScene.robot.angle);
 
@@ -61,14 +67,14 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             Point shin1World = nestedJointToWorld(app->robotScene.robot.shinCtrl1, kneePivot, kneeAngle, hipPivot, hipAngle, center, app->robotScene.robot.angle);
             Point shin2World = nestedJointToWorld(app->robotScene.robot.shinCtrl2, kneePivot, kneeAngle, hipPivot, hipAngle, center, app->robotScene.robot.angle);
 
-            if (isNear(mouse, topHandle, TOP_BOTTOM_HANDLE_RADIUS))
+            if (isNear(mouse, topHandleWorld, ARC_HANDLE_RADIUS))
             {
-                app->draggingTop = 1;
+                app->draggingTopArc = 1;
                 app->activeHandle = 1;
             }
-            else if (isNear(mouse, bottomHandle, TOP_BOTTOM_HANDLE_RADIUS))
+            else if (isNear(mouse, bottomHandleWorld, ARC_HANDLE_RADIUS))
             {
-                app->draggingBottom = 1;
+                app->draggingBottomArc = 1;
                 app->activeHandle = 2;
             }
             else if (isNear(mouse, innerWorld, HIP_HANDLE_RADIUS))
@@ -125,8 +131,8 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
 
         case WM_LBUTTONUP:
         {
-            app->draggingTop = 0;
-            app->draggingBottom = 0;
+            app->draggingTopArc = 0;
+            app->draggingBottomArc = 0;
             app->draggingInner = 0;
             app->draggingKnee = 0;
             app->draggingThigh1 = 0;
@@ -178,23 +184,31 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             app->hoverHead  = isNear(mouse, headWorld, HEAD_BUTT_HANDLE_RADIUS);
             app->hoverButt  = isNear(mouse, buttWorld, HEAD_BUTT_HANDLE_RADIUS);
 
-            if (!app->draggingTop && !app->draggingBottom && !app->draggingInner &&
+            if (!app->draggingTopArc && !app->draggingBottomArc &&
+                !app->draggingInner &&
                 !app->draggingKnee && !app->draggingThigh1 && !app->draggingThigh2 &&
                 !app->draggingAnkle && !app->draggingShin1 && !app->draggingShin2)
                 break;
 
             Point localMouse = inverseRotate(mouse, center, angle);
 
-            if (app->draggingTop)
+            // the seam attach angle is just the polar angle of the mouse
+            // around the head circle's own center, in local space -- since
+            // the handle sits exactly at circleEdge(head, headRadius,
+            // angle), this tracks the cursor exactly, unlike the old
+            // radius-driven handle
+            if (app->draggingTopArc)
             {
-                app->robotScene.robot.topCtrl.x = 0.0f;
-                app->robotScene.robot.topCtrl.y = localMouse.y;
+                float dx = localMouse.x - app->robotScene.robot.headX;
+                float dy = localMouse.y - app->robotScene.robot.y;
+                app->robotScene.robot.topArcAngle = atan2f(dy, dx) * 180.0f / 3.1415926f;
             }
 
-            if (app->draggingBottom)
+            if (app->draggingBottomArc)
             {
-                app->robotScene.robot.bottomCtrl.x = 0.0f;
-                app->robotScene.robot.bottomCtrl.y = localMouse.y;
+                float dx = localMouse.x - app->robotScene.robot.headX;
+                float dy = localMouse.y - app->robotScene.robot.y;
+                app->robotScene.robot.bottomArcAngle = atan2f(dy, dx) * 180.0f / 3.1415926f;
             }
 
             if (app->draggingInner)
@@ -403,15 +417,15 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
         case WM_CREATE:
         {
              app->ui.hSaveButton = CreateWindow(
-                "BUTTON",
-                "Save",
-                WS_VISIBLE | WS_CHILD,
-                10, 10, 80, 30,
-                hwnd,
-                (HMENU)ID_SAVE_BUTTON,
-                NULL,
-                NULL
-            );
+			    L"BUTTON",           // Add L prefix
+			    L"Save",             // Add L prefix
+			    WS_VISIBLE | WS_CHILD,
+			    10, 10, 80, 30,
+			    hwnd,
+			    (HMENU)ID_SAVE_BUTTON,
+			    NULL,
+			    NULL
+			);
         }
         break;
 

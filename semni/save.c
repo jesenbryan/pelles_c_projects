@@ -2,6 +2,7 @@
 #include <GL/gl.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <wchar.h>
 
 #include "save.h"
 #include "renderer.h"
@@ -85,8 +86,13 @@ int saveCanvasAsBMP(const char* filename, HWND hwnd, AppState* app)
     fclose(f);
     free(pixels);
 
+    // explicitly the ANSI (narrow) API, regardless of whether the project
+    // defines UNICODE -- keeps this a plain char* end to end, matching
+    // filename's type and plain printf's %s, instead of the wchar_t/char*
+    // mismatch that came from GetCurrentDirectory's TCHAR macro silently
+    // picking the wide version
     char path[MAX_PATH];
-    GetCurrentDirectory(MAX_PATH, path);
+    GetCurrentDirectoryA(MAX_PATH, path);
     printf("Saved canvas as 24-bit BMP in: %s\\%s\n", path, filename);
 
     return 1;

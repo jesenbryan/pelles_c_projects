@@ -5,8 +5,8 @@
 
 typedef struct {
     int activeHandle;
-    int draggingTop;
-    int draggingBottom;
+    int draggingTopArc;
+    int draggingBottomArc;
     int draggingInner;
     int draggingKnee;
     int draggingThigh1;

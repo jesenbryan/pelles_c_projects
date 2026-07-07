@@ -15,8 +15,20 @@ typedef struct {
     float headRadius;
     float buttRadius;
 
-    Point topCtrl;
-    Point bottomCtrl;
+    // top/bottom seams, each a circular arc internally tangent to both
+    // the head and butt circles (distance between centers == radius
+    // difference) -- crease-free by construction instead of by manual
+    // placement. Each is parameterized by the ANGLE where it attaches to
+    // the head circle (same convention as circleEdge) -- the fillet's
+    // radius, center, and its other tangent point on the butt circle are
+    // all derived from that angle via a closed-form solve every frame
+    // (see geometry.h's filletFromAttachAngle()/internalTangentPoint()).
+    // Driving this by the attach angle instead of the radius directly
+    // means the drag handle sits exactly at circleEdge(head, headRadius,
+    // angle) -- the point IS the parameter, so it tracks the mouse
+    // exactly with no drift.
+    float topArcAngle;
+    float bottomArcAngle;
 
     Point innerCircle;
     float innerRadius;
@@ -72,8 +84,8 @@ typedef struct {
     // dragged, and which are merely being hovered over
     int activeHandle;
 
-    int draggingTop;
-    int draggingBottom;
+    int draggingTopArc;
+    int draggingBottomArc;
     int draggingInner;
     int draggingKnee;
     int draggingThigh1;
@@ -85,7 +97,8 @@ typedef struct {
     // true while the mouse is merely hovering near a joint circle handle
     // (hip/knee/ankle/head/butt) -- separate from the "dragging" flags
     // above, so those handles can flash yellow just from a hover, while
-    // the arc bulge handles keep their old dragging-only highlight
+    // drag-only handles (thigh/shin bulges, seam attach points) keep
+    // their dragging-only highlight
     int hoverHip;
     int hoverKnee;
     int hoverAnkle;

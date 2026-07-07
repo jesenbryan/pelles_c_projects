@@ -138,19 +138,44 @@ void drawSemniBody(Semni b, RenderState* rs)
     setColor(rs->draggingInner, 0.2f, 0.4f, 1.0f);
     drawCircle(inner, b.innerRadius);
 
-    Point topP0 = circleEdge(headCenter, b.headRadius, angle + 90);
-    Point topP2 = circleEdge(buttCenter, b.buttRadius, angle + 90);
-    Point topP1 = rotatePoint(b.topCtrl, center, angle);
+    // top/bottom seams: each is a circular arc internally tangent to both
+    // the head and butt circles, parameterized by the angle where it
+    // attaches to the head circle (topArcAngle/bottomArcAngle) -- the
+    // fillet's radius, center, and its other tangent point (on butt) all
+    // fall out of a closed-form solve. Done in local (unrotated) space,
+    // then rotated into world space at the end, same pattern used
+    // elsewhere for local-frame points.
+    Point headLocal = { b.headX, b.y };
+    Point buttLocal = { b.buttX, b.y };
+    Point bodyMidLocal = { (headLocal.x + buttLocal.x) * 0.5f, (headLocal.y + buttLocal.y) * 0.5f };
 
-    Point botP0 = circleEdge(headCenter, b.headRadius, angle - 90);
-    Point botP2 = circleEdge(buttCenter, b.buttRadius, angle - 90);
-    Point botP1 = rotatePoint(b.bottomCtrl, center, angle);
+    Fillet topFillet = filletFromAttachAngle(headLocal, b.headRadius, buttLocal, b.buttRadius, b.topArcAngle, MIN_ARC_R, MAX_ARC_R);
+    Point topHeadTangentLocal = circleEdge(headLocal, b.headRadius, b.topArcAngle); // exact, by definition of the attach angle
+    Point topButtTangentLocal = internalTangentPoint(topFillet.center, topFillet.radius, buttLocal, b.buttRadius);
+    // hint point for drawArc: the point on the fillet circle nearest the
+    // body's midline, so it sweeps the near/visible arc instead of the
+    // far side of a possibly-huge circle
+    Point topNearLocal = circleTowardPoint(topFillet.center, topFillet.radius, bodyMidLocal);
 
-	setColor(rs->draggingTop, 0.2f, 0.4f, 1.0f);
-    drawArc(topP0, topP1, topP2);
+    Fillet bottomFillet = filletFromAttachAngle(headLocal, b.headRadius, buttLocal, b.buttRadius, b.bottomArcAngle, MIN_ARC_R, MAX_ARC_R);
+    Point bottomHeadTangentLocal = circleEdge(headLocal, b.headRadius, b.bottomArcAngle);
+    Point bottomButtTangentLocal = internalTangentPoint(bottomFillet.center, bottomFillet.radius, buttLocal, b.buttRadius);
+    Point bottomNearLocal = circleTowardPoint(bottomFillet.center, bottomFillet.radius, bodyMidLocal);
 
-	setColor(rs->draggingBottom, 0.2f, 0.4f, 1.0f);
-    drawArc(botP0, botP1, botP2);
+    // topHeadTangentLocal/topNearLocal/topButtTangentLocal all sit exactly
+    // on the same known circle by construction, so feeding them through
+    // the existing 3-point drawArc reuses its circumcircle + sweep-
+    // direction logic for free -- the near-pole point just tells it which
+    // way (short or long way around) to sweep
+    setColor(rs->draggingTopArc, 0.2f, 0.4f, 1.0f);
+    drawArc(rotatePoint(topHeadTangentLocal, center, angle),
+            rotatePoint(topNearLocal, center, angle),
+            rotatePoint(topButtTangentLocal, center, angle));
+
+    setColor(rs->draggingBottomArc, 0.2f, 0.4f, 1.0f);
+    drawArc(rotatePoint(bottomHeadTangentLocal, center, angle),
+            rotatePoint(bottomNearLocal, center, angle),
+            rotatePoint(bottomButtTangentLocal, center, angle));
 }
 
 // Draws the knee joint and the two arcs connecting it back to the inner
@@ -270,20 +295,19 @@ void drawSemniHandles(Semni b, RenderState* rs)
     Point center = getCenter(b);
     float angle = b.angle;
 
-    Point topHandle    = rotatePoint(b.topCtrl, center, angle);
-    Point bottomHandle = rotatePoint(b.bottomCtrl, center, angle);
     Point inner        = rotatePoint(b.innerCircle, center, angle);
     Point headHandle   = rotatePoint((Point){b.headX, b.y}, center, angle);
     Point buttHandle    = rotatePoint((Point){b.buttX, b.y}, center, angle);
 
-    // arc bulge handles: unchanged, only highlight while actively selected
-    drawHandle(topHandle,
-               rs->activeHandle == 1,
-               TOP_BOTTOM_HANDLE_RADIUS);
+    // seam attach handles: sit exactly at circleEdge(head, headRadius,
+    // topArcAngle/bottomArcAngle) -- the literal tangent point, not a
+    // derived quantity -- so dragging tracks the cursor exactly, with no
+    // drift, unlike the old radius-driven near-pole handle
+    Point topHandle = rotatePoint(circleEdge((Point){b.headX, b.y}, b.headRadius, b.topArcAngle), center, angle);
+    Point bottomHandle = rotatePoint(circleEdge((Point){b.headX, b.y}, b.headRadius, b.bottomArcAngle), center, angle);
 
-    drawHandle(bottomHandle,
-               rs->activeHandle == 2,
-               TOP_BOTTOM_HANDLE_RADIUS);
+    drawHandle(topHandle, rs->draggingTopArc, ARC_HANDLE_RADIUS);
+    drawHandle(bottomHandle, rs->draggingBottomArc, ARC_HANDLE_RADIUS);
 
     // joint circle handles: highlight on hover too, not just while dragging
     drawHandle(inner,
@@ -320,8 +344,8 @@ static void renderRobot(AppState* app, int includeHandles)
     RenderState rs;
 
     rs.activeHandle = app->activeHandle;
-    rs.draggingTop = app->draggingTop;
-    rs.draggingBottom = app->draggingBottom;
+    rs.draggingTopArc = app->draggingTopArc;
+    rs.draggingBottomArc = app->draggingBottomArc;
     rs.draggingInner = app->draggingInner;
     rs.draggingKnee = app->draggingKnee;
     rs.draggingThigh1 = app->draggingThigh1;

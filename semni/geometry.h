@@ -50,3 +50,41 @@ Point circleEdge(Point center, float radius, float angleDeg);
 int isNear(Point a, Point b, float radius);
 
 Circle circumcircle(Point p0, Point p1, Point p2);
+
+// Returns the point on the circle (center, radius) that's nearest to
+// "target" -- i.e. straight out from the center, through target, to the
+// circle's edge. Degenerates to an arbitrary point on the circle if
+// target sits exactly on the center (no well-defined direction).
+Point circleTowardPoint(Point center, float radius, Point target);
+
+// Given two circles that are (at least approximately) internally tangent --
+// i.e. one sits inside the other, touching at exactly one point -- returns
+// that touching point. Works out which circle is the "containing" one
+// itself (whichever radius is bigger), so it doesn't matter which order
+// the two circles are passed in.
+Point internalTangentPoint(Point c1, float r1, Point c2, float r2);
+
+typedef struct {
+    Point center;
+    float radius;
+} Fillet;
+
+// Solves for the circle that's internally tangent to c1 AT EXACTLY the
+// point given by "angleDeg" (an angle around c1's own center -- the same
+// convention as circleEdge), and also internally tangent to c2 somewhere.
+// This is the inverse of the old "pick a radius, derive the tangent
+// points" approach: here you pick WHERE it touches c1 and the radius +
+// center + the other tangent point all fall out of a closed-form solve
+// (no iteration, no ambiguity) -- which means a handle placed at that
+// exact point on c1 tracks the mouse exactly, with no drift, since the
+// point IS the parameter instead of something derived from it.
+//
+// Not every angle has a sane solution (some angles imply a radius of
+// infinity -- the exact attachment point of the true common tangent LINE
+// between c1 and c2 -- and just past that the math wants a negative
+// radius). The result's radius is clamped to [minRadius, maxRadius], and
+// the center is recomputed from the clamped radius so the circle stays
+// self-consistent and exactly tangent to c1 at the requested angle even
+// when clamped -- only the tangency to c2 becomes approximate in that
+// case, never c1.
+Fillet filletFromAttachAngle(Point c1, float r1, Point c2, float r2, float angleDeg, float minRadius, float maxRadius);

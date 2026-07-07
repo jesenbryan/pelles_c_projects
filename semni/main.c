@@ -67,6 +67,17 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmdLine, int nShowC
 
     setupOpenGL(app.hwndMain);
 
+    // setupOpenGL() leaves the projection at a fixed square ortho
+    // (-1.5..1.5 on both axes). The window is 800x600, not square, and
+    // that mismatch was only ever getting corrected by WM_SIZE -- which
+    // doesn't fire for the window's initial size, only on an actual
+    // resize afterward (e.g. maximizing). Until then, what's drawn and
+    // where screenToGL thinks the mouse is disagree. Fix it up once here
+    // so the very first frame already matches the real window shape.
+    RECT initialRect;
+    GetClientRect(app.hwndMain, &initialRect);
+    graphicsOnResize(initialRect.right, initialRect.bottom);
+
     MSG msg;
 
     while (1)
