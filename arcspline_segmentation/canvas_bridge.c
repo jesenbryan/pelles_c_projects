@@ -129,13 +129,16 @@ static void sampleArcPoints(ArcSegment* seg, PointF* outPts, int* outCount, int 
 
     if (c.r < 1e-3f) {
         // degenerate/near-straight segment - no meaningful circle, fall back
+        // FIXED: sample evenly across the ENTIRE segment, not just the first N points
         int n = seg->count;
-        if (n > maxOut) n = maxOut;
-        for (int i = 0; i < n; i++) {
-            outPts[i].x = (float)seg->pts[i].x;
-            outPts[i].y = (float)seg->pts[i].y;
+        int sampleCount = (n > maxOut) ? maxOut : n;
+        
+        for (int i = 0; i < sampleCount; i++) {
+            int idx = (n > 1) ? (i * (n - 1)) / (sampleCount - 1) : 0;
+            outPts[i].x = (float)seg->pts[idx].x;
+            outPts[i].y = (float)seg->pts[idx].y;
         }
-        *outCount = n;
+        *outCount = sampleCount;
         return;
     }
 
@@ -321,8 +324,8 @@ void displayImageOnCanvas(Image* img)
 
     if (canvasTexture == 0) glGenTextures(1, &canvasTexture);
     glBindTexture(GL_TEXTURE_2D, canvasTexture);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, w, h, 0, GL_RGB, GL_UNSIGNED_BYTE, rgb);
     free(rgb);
 

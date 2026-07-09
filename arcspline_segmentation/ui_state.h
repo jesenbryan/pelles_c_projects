@@ -13,6 +13,7 @@
 #define ID_TRACE  3
 #define ID_UPLOAD 4   
 #define ID_VIEW_SEGMENTS 5
+#define ID_SAVE   6
 
 // Canvas state that should always reset together (see ResetCanvas)
 typedef struct {

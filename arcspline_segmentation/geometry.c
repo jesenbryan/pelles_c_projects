@@ -61,8 +61,8 @@ int resamplePath(Point* in, int n, Point* out, double step)
             double t = (target - accDist) / segLen;
 
             Point q;
-            q.x = (int)(p0.x + t * (p1.x - p0.x));
-			q.y = (int)(p0.y + t * (p1.y - p0.y));
+            q.x = (int)round(p0.x + t * (p1.x - p0.x));
+            q.y = (int)round(p0.y + t * (p1.y - p0.y));
 
             out[m++] = q;
 
@@ -301,6 +301,48 @@ int buildSegments(Point* path, int n, ArcSegment* out)
 {
     int segCount = 0;
     recursiveArcFit(path, n, out, MAX_ARC_SEGMENTS, &segCount);
+
+    // NEW: recursiveArcFit's bisection can chop one long straight run into
+    // several small consecutive line segments - each individually correct
+    // (they really are straight), just no longer combined into one. Since
+    // consecutive entries in out[] are always in path order (recursiveArcFit
+    // recurses left-half-then-right-half), any run of back-to-back straight
+    // segments can simply be spliced into a single line segment spanning the
+    // whole run. "Straight" is circle.r == 0.0f - the existing convention
+    // pushLineSegment() already uses for "no meaningful circle here" (see
+    // sampleArcPoints() in canvas_bridge.c) - so this never touches or
+    // reinterprets any segment that was actually curve-fit; it only merges
+    // segments the fitter already agreed were straight lines.
+    int mergedCount = 0;
+    for (int i = 0; i < segCount; )
+    {
+        if (out[i].circle.r == 0.0f)
+        {
+            int j = i;
+            while (j + 1 < segCount && out[j + 1].circle.r == 0.0f) j++;
+
+            if (j > i)
+            {
+                Point* mergedPts   = out[i].pts;
+                int    mergedPtCount = (int)(out[j].pts - out[i].pts) + out[j].count;
+
+                out[mergedCount].pts          = mergedPts;
+                out[mergedCount].count        = mergedPtCount;
+                out[mergedCount].circle.cx    = 0.0f;
+                out[mergedCount].circle.cy    = 0.0f;
+                out[mergedCount].circle.r     = 0.0f;
+                out[mergedCount].avgCurvature = 0.0;
+                mergedCount++;
+                i = j + 1;
+                continue;
+            }
+        }
+
+        if (mergedCount != i) out[mergedCount] = out[i];
+        mergedCount++;
+        i++;
+    }
+    segCount = mergedCount;
 
     for (int i = 0; i < segCount; i++)
     {

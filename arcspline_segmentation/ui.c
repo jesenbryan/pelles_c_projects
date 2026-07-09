@@ -1,5 +1,7 @@
 ﻿#include "ui.h"
 #include "pipeline.h"      // NEW
+#include "canvas_bridge.h" // NEW: for canvasToImage()
+#include "bmp_ui.h"        // NEW: for saveBMP_UI() and BMP_RGB
 #include <commctrl.h>
 
 HWND hWndUI = NULL;
@@ -13,7 +15,8 @@ static HWND hTraceBtn;
 static HWND hUploadBtn;      // NEW
 static HWND hThicknessLabel;
 static HWND hViewSegBtn;   // NEW
-static int controlCount = 7; // was 6
+static HWND hSaveBtn;      // NEW
+static int controlCount = 8; // was 7
 
 
 static int GetRequiredUIHeight(void)
@@ -58,6 +61,8 @@ static void LayoutUI(HWND hWnd)
 	MoveWindow(hViewSegBtn, centerX, y, btnW, btnH, TRUE);
 	y += btnH + spacing;
 	MoveWindow(hUploadBtn, centerX, y, btnW, btnH, TRUE);
+	y += btnH + spacing;
+	MoveWindow(hSaveBtn, centerX, y, btnW, btnH, TRUE);
 }
 
 LRESULT CALLBACK WndProcUI(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
@@ -89,6 +94,10 @@ LRESULT CALLBACK WndProcUI(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		hUploadBtn = CreateWindowEx(0, L"BUTTON", L"Upload BMP...", WS_CHILD | WS_VISIBLE,
 		                             20, 210, 300, 30, hWnd, (HMENU)ID_UPLOAD,
 		                             GetModuleHandle(NULL), NULL);
+
+		hSaveBtn = CreateWindowEx(0, L"BUTTON", L"Save BMP...", WS_CHILD | WS_VISIBLE,
+		                           20, 290, 300, 30, hWnd, (HMENU)ID_SAVE,
+		                           GetModuleHandle(NULL), NULL);
 
         SendMessage(hSlider, TBM_SETRANGE, TRUE, MAKELPARAM(1, 20));
         SendMessage(hSlider, TBM_SETPOS, TRUE, (LPARAM)thickness);
@@ -159,6 +168,21 @@ LRESULT CALLBACK WndProcUI(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		    }
 		    canvas.showSegments = nowChecked;
 		    if (hWndGL) InvalidateRect(hWndGL, NULL, FALSE);
+		}
+		else if (LOWORD(wParam) == ID_SAVE)
+		{
+		    Image* img = canvasToImage();
+		    if (img)
+		    {
+		        saveBMP_UI("", img, img->bin, BMP_RGB);
+		        free(img->data);
+		        free(img->bin);
+		        free(img);
+		    }
+		    else
+		    {
+		        MessageBox(hWnd, L"Canvas is empty. Draw something first.", L"Save Error", MB_OK | MB_ICONWARNING);
+		    }
 		}
         return 0;   
     }

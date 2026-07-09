@@ -7,7 +7,6 @@
 #include "path_trace.h"
 #include "debug.h"
 #include "bmp.h"
-#include "skeleton_graph.h"   // NEW: for traceClosedLoop
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -117,75 +116,17 @@ static void runPipelineOnImage(Image* img, const char* sourceLabel, BOOL stretch
 
             int sx, sy, ex, ey;
             int found = find_start_end_pixels(compBin, w, h, &sx, &sy, &ex, &ey);
-            
+            if (found != 2) continue;   // closed loop or a noise speck - not an open curve, skip it
+
+            if (!haveMarkers) {
+                setEndpointMarkers(w, h, sx, sy, ex, ey, stretched);
+                haveMarkers = TRUE;
+            }
+
             Point* path = (Point*)malloc(sizeof(Point) * 10000);
-            int numPoints = 0;
-            
-            if (found == 2) {
-                // Check if endpoints are very close (small gap = nearly-closed loop)
-                int dx = sx - ex;
-                int dy = sy - ey;
-                int distSq = dx*dx + dy*dy;
-                
-                if (distSq < 100) {
-                    // Nearly-closed loop with small gap - trace in both directions
-                    // Trace from start to end
-                    Point* path1 = (Point*)malloc(sizeof(Point) * 5000);
-                    int n1 = tracePath(compBin, w, h, sx, sy, ex, ey, path1, 5000);
-                    
-                    // Trace from end back to start (opposite direction)
-                    Point* path2 = (Point*)malloc(sizeof(Point) * 5000);
-                    int n2 = tracePath(compBin, w, h, ex, ey, sx, sy, path2, 5000);
-                    
-                    // Combine both paths for complete circle
-                    numPoints = 0;
-                    for (int i = 0; i < n1 && numPoints < 10000; i++) {
-                        path[numPoints++] = path1[i];
-                    }
-                    // Add path2 in reverse (skip first point to avoid duplicate)
-                    for (int i = n2 - 1; i > 0 && numPoints < 10000; i--) {
-                        path[numPoints++] = path2[i];
-                    }
-                    
-                    free(path1);
-                    free(path2);
-                    
-                    if (!haveMarkers) {
-                        setEndpointMarkers(w, h, sx, sy, ex, ey, stretched);
-                        haveMarkers = TRUE;
-                    }
-                } else {
-                    // Normal open curve with distant endpoints
-                    setEndpointMarkers(w, h, sx, sy, ex, ey, stretched);
-                    haveMarkers = TRUE;
-                    
-                    numPoints = tracePath(compBin, w, h, sx, sy, ex, ey, path, 10000);
-                }
-            } 
-            else if (found == 0) {
-                // No endpoints found - might be a closed loop (circle/ring)
-                numPoints = traceClosedLoop(compBin, w, h, path, 10000);
-                
-                if (numPoints >= 3) {
-                    // For closed loops, set endpoint markers at the start point
-                    if (!haveMarkers) {
-                        setEndpointMarkers(w, h, path[0].x, path[0].y, path[0].x, path[0].y, stretched);
-                        haveMarkers = TRUE;
-                    }
-                }
-            }
-            else {
-                // Multiple components or noise - skip
-                free(path);
-                continue;
-            }
-            
-            if (numPoints < 2) {
-                free(path);
-                continue;
-            }
-            
             componentPaths[componentPathCount++] = path;
+
+            int numPoints = tracePath(compBin, w, h, sx, sy, ex, ey, path, 10000);
             debugPrintPath(path, numPoints);
 
             ArcSegment segs[MAX_ARC_SEGMENTS];
@@ -201,8 +142,8 @@ static void runPipelineOnImage(Image* img, const char* sourceLabel, BOOL stretch
     }
 
     debugPrintSegments(allSegments, totalSegCount);
-    setSegmentOverlay(allSegments, totalSegCount, w, h, stretched);   // NEW
-    debugPrintSegments(allSegments, totalSegCount);                  // NEW
+    setSegmentOverlay(allSegments, totalSegCount, w, h, stretched);
+    debugPrintSegments(allSegments, totalSegCount);
 
     for (int i = 0; i < componentPathCount; i++) free(componentPaths[i]);
     free(remaining);
@@ -215,15 +156,16 @@ static void runPipelineOnImage(Image* img, const char* sourceLabel, BOOL stretch
 
 void RunTracePipeline(void)
 {
-    // If there's a pending uploaded BMP, trace that instead of the canvas
-    if (s_pendingBmpImage) {
-        RunPendingUploadTrace();
+    Image* img = canvasToImage();
+    
+    if (!img) {
+        // No canvas strokes - check if there's a pending uploaded BMP to trace instead
+        if (RunPendingUploadTrace()) {
+            return;  // Just trace, don't auto-show
+        }
+        printf("Canvas is empty - draw a curve or upload a BMP first\n");
         return;
     }
-
-    // Otherwise, trace canvas strokes
-    Image* img = canvasToImage();
-    if (!img) return;
 
     freePendingBmpImage();   // a manual trace supersedes any not-yet-viewed upload
     runPipelineOnImage(img, "canvas drawing", FALSE);  // not stretched

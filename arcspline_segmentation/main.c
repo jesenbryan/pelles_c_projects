@@ -15,6 +15,10 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmd, int nShow)
     wc.lpfnWndProc = WndProcGL;
     wc.hInstance = hInst;
     wc.lpszClassName = L"GLWindow";
+    wc.hCursor = LoadCursor(NULL, IDC_ARROW);   // NEW: without this, WM_SETCURSOR has
+                                                 // nothing to reset to, so a resize
+                                                 // cursor picked up near the window
+                                                 // border can stay stuck over the canvas
     RegisterClass(&wc);
 
 	WNDCLASS ui = {0};
@@ -22,6 +26,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmd, int nShow)
 	ui.hInstance = hInst;
 	ui.lpszClassName = L"UIWindow";
 	ui.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
+	ui.hCursor = LoadCursor(NULL, IDC_ARROW);   // NEW: same fix for the control panel
 	RegisterClass(&ui);
 
     hWndGL = CreateWindow(L"GLWindow", L"Canvas", WS_OVERLAPPEDWINDOW | WS_VISIBLE,

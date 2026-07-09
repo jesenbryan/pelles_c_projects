@@ -55,6 +55,27 @@ float markerEndX   = 0.0f, markerEndY   = 0.0f;
 static BOOL panning = FALSE;
 static int  panLastX = 0, panLastY = 0;
 
+// NEW: shift-line "hold still to snap" state - lets the user snap to a
+// horizontal / vertical / 45-degree diagonal line just by holding the
+// cursor still for a couple of seconds, without needing to also hold Ctrl
+// (see the instant Ctrl+Shift snap in WM_MOUSEMOVE for the immediate
+// version). A truly stationary cursor never generates WM_MOUSEMOVE
+// messages, so the dwell check itself has to live in WM_TIMER, which is
+// what actually notices time passing.
+#define SHIFT_HOLD_SNAP_MS       700    // how long to hold still before it snaps
+#define SHIFT_HOLD_TOLERANCE_DEG 5.0f   // how close to 0/45/90/135 deg counts as "close enough"
+#define SHIFT_HOLD_JITTER_PX     3      // cursor motion below this still counts as "holding still"
+
+static BOOL  shiftHoldActive       = FALSE; // TRUE while a shift-line drag is in progress
+static BOOL  shiftHoldSnapped      = FALSE; // TRUE once the dwell timer has locked the angle
+static int   shiftHoldStrokeStart  = 0;     // points[] index of this stroke's first (x,y)
+static int   shiftHoldPixelX       = 0;     // last raw cursor position (screen px)
+static int   shiftHoldPixelY       = 0;
+static float shiftHoldWorldX       = 0.0f;  // last raw cursor position (world), pre-snap
+static float shiftHoldWorldY       = 0.0f;
+static DWORD shiftHoldLastMoveTick = 0;     // GetTickCount() at the last meaningful cursor move
+static float shiftHoldSnapAngleRad = 0.0f;  // locked angle, valid only if shiftHoldSnapped
+
 float points[MAX_POINTS];
 int strokeStarts[MAX_STROKES];
 float strokeThickness[MAX_STROKES];
@@ -201,6 +222,66 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
     }
     case WM_TIMER:
     {
+        // NEW: shift-line dwell-to-snap. If the cursor has been basically
+        // stationary for SHIFT_HOLD_SNAP_MS while drawing a Shift-line, and
+        // its raw angle from the line's start point is close to horizontal,
+        // vertical, or a 45/135-degree diagonal, lock the line to that exact
+        // angle. Has to live here (not WM_MOUSEMOVE) because a genuinely
+        // still cursor produces no WM_MOUSEMOVE messages at all - this timer
+        // tick, which already runs every 16ms for the UI hot-zone check
+        // below, is what actually notices the elapsed time.
+        //
+        // NEW: once snapped, this block keeps RE-ASSERTING the locked
+        // endpoint every tick (not just once) for as long as the hold is
+        // still active - rather than writing it a single time and trusting
+        // it to survive untouched. This makes it self-healing: if anything
+        // else (a stray/no-op mouse message, etc.) leaves canvas.pointCount
+        // truncated to just the start point, the very next 16ms tick puts
+        // the endpoint straight back rather than leaving the line missing.
+        if (wParam == UI_HOTZONE_TIMER_ID && drawing && shiftHoldActive &&
+            (GetAsyncKeyState(VK_SHIFT) & 0x8000))
+        {
+            if (!shiftHoldSnapped &&
+                (GetTickCount() - shiftHoldLastMoveTick) >= SHIFT_HOLD_SNAP_MS)
+            {
+                float startX = points[shiftHoldStrokeStart];
+                float startY = points[shiftHoldStrokeStart + 1];
+                float relX = shiftHoldWorldX - startX;
+                float relY = shiftHoldWorldY - startY;
+                float len = sqrtf(relX * relX + relY * relY);
+
+                if (len > 1e-4f)
+                {
+                    float deg = atan2f(relY, relX) * (180.0f / 3.14159265f);
+                    float nearest45 = roundf(deg / 45.0f) * 45.0f;
+                    float diff = fabsf(deg - nearest45);
+
+                    if (diff <= SHIFT_HOLD_TOLERANCE_DEG)
+                    {
+                        shiftHoldSnapped      = TRUE;
+                        shiftHoldSnapAngleRad = nearest45 * (3.14159265f / 180.0f);
+                    }
+                }
+            }
+
+            if (shiftHoldSnapped)
+            {
+                float startX = points[shiftHoldStrokeStart];
+                float startY = points[shiftHoldStrokeStart + 1];
+                float dirX = cosf(shiftHoldSnapAngleRad);
+                float dirY = sinf(shiftHoldSnapAngleRad);
+                float relX = shiftHoldWorldX - startX;
+                float relY = shiftHoldWorldY - startY;
+                float proj = relX * dirX + relY * dirY;
+
+                canvas.pointCount = shiftHoldStrokeStart + 4;
+                points[shiftHoldStrokeStart + 2] = startX + dirX * proj;
+                points[shiftHoldStrokeStart + 3] = startY + dirY * proj;
+
+                if (hWndGL) InvalidateRect(hWndGL, NULL, FALSE);
+            }
+        }
+
         // NEW: reveal the UI panel when hovering the GL window's top-right
         // corner, or when the panel is already up and the cursor is over it
         // (so you don't lose it mid-click); hide it otherwise. Fades smoothly
@@ -342,6 +423,8 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
     }
     case WM_LBUTTONUP:
         drawing = FALSE;
+        shiftHoldActive  = FALSE;   // NEW: end any in-progress dwell-snap tracking
+        shiftHoldSnapped = FALSE;   // NEW
         return 0;
 	case WM_MBUTTONDOWN:
 	{
@@ -443,6 +526,95 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	    }
 	    nx += canvas.panX;   // NEW: store true world coords, independent of current pan
 	    ny += canvas.panY;   // NEW
+
+	    // NEW: holding Shift constrains the stroke to a straight line from
+	    // its start point to the current cursor. Re-derived every move
+	    // (truncate + re-append) rather than appended to, so it tracks the
+	    // cursor like a rubber-band preview instead of accumulating a
+	    // freehand trail underneath it. Releasing Shift mid-drag simply
+	    // resumes freehand from wherever the line last snapped to.
+	    //
+	    // NEW: adding Ctrl on top of Shift instantly snaps that line's angle
+	    // to the nearest 45 degrees (horizontal / vertical / diagonal),
+	    // same idea as the axis-lock in most drawing tools.
+	    //
+	    // NEW: holding the cursor still (no Ctrl needed) for
+	    // SHIFT_HOLD_SNAP_MS near one of those same angles snaps it too -
+	    // see the dwell check in WM_TIMER, since a stationary cursor
+	    // generates no WM_MOUSEMOVE messages for that check to run inside.
+	    // This block only tracks raw cursor state and applies the lock once
+	    // WM_TIMER has set shiftHoldSnapped; it never decides to snap itself.
+	    if (wParam & MK_SHIFT)
+	    {
+	        int curStrokeStart = strokeStarts[canvas.strokeCount - 1];
+	        canvas.pointCount = curStrokeStart + 2; // keep only the stroke's first point
+
+	        int mx = LOWORD(lParam);
+	        int my = HIWORD(lParam);
+	        int dxPix = mx - shiftHoldPixelX;
+	        int dyPix = my - shiftHoldPixelY;
+	        BOOL movedSignificantly = !shiftHoldActive ||
+	            (dxPix * dxPix + dyPix * dyPix) > (SHIFT_HOLD_JITTER_PX * SHIFT_HOLD_JITTER_PX);
+
+	        if (movedSignificantly)
+	        {
+	            shiftHoldActive       = TRUE;
+	            shiftHoldStrokeStart  = curStrokeStart;
+	            shiftHoldPixelX       = mx;
+	            shiftHoldPixelY       = my;
+	            shiftHoldLastMoveTick = GetTickCount();
+	            shiftHoldSnapped      = FALSE;   // moving again releases any dwell-lock
+	        }
+	        // Always track the latest raw position (even tiny sub-jitter
+	        // moves), so the WM_TIMER dwell check judges the angle against
+	        // where the cursor actually is right now.
+	        shiftHoldWorldX = nx;
+	        shiftHoldWorldY = ny;
+
+	        if (wParam & MK_CONTROL)
+	        {
+	            // points[curStrokeStart]/[+1] is the stroke's untouched first
+	            // point - only pointCount was rewound above, the underlying
+	            // data is still there, so this is a safe anchor to snap from.
+	            float startX = points[curStrokeStart];
+	            float startY = points[curStrokeStart + 1];
+
+	            float dx = nx - startX;
+	            float dy = ny - startY;
+	            float len = sqrtf(dx * dx + dy * dy);
+
+	            if (len > 1e-6f)
+	            {
+	                const float step = 3.14159265f / 4.0f; // 45 degrees
+	                float angle = atan2f(dy, dx);
+	                float snapped = roundf(angle / step) * step;
+
+	                nx = startX + len * cosf(snapped);
+	                ny = startY + len * sinf(snapped);
+	            }
+	        }
+	        else if (shiftHoldSnapped)
+	        {
+	            // Dwell-locked (set in WM_TIMER): the ANGLE is fixed, but the
+	            // LENGTH stays live - project the raw cursor onto the locked
+	            // ray so the user can still drag the endpoint back and forth.
+	            float startX = points[curStrokeStart];
+	            float startY = points[curStrokeStart + 1];
+	            float dirX = cosf(shiftHoldSnapAngleRad);
+	            float dirY = sinf(shiftHoldSnapAngleRad);
+	            float relX = nx - startX;
+	            float relY = ny - startY;
+	            float proj = relX * dirX + relY * dirY;
+
+	            nx = startX + dirX * proj;
+	            ny = startY + dirY * proj;
+	        }
+	    }
+	    else
+	    {
+	        shiftHoldActive  = FALSE;   // NEW: Shift released - drop any dwell tracking/lock
+	        shiftHoldSnapped = FALSE;
+	    }
 
 	    if (canvas.pointCount < MAX_POINTS - 1) {
 	        points[canvas.pointCount++] = nx;
