@@ -14,6 +14,7 @@
 #define ID_UPLOAD 4   
 #define ID_VIEW_SEGMENTS 5
 #define ID_SAVE   6
+#define ID_COMPARISON 7
 
 // Canvas state that should always reset together (see ResetCanvas)
 typedef struct {
@@ -26,6 +27,7 @@ typedef struct {
     float zoom;
 	BOOL  showSegments;         // NEW
     int   segmentResultCount;   // NEW
+    BOOL  comparisonMode;       // NEW: show original strokes semi-transparent + bright arcs
 } CanvasState;
 
 extern CanvasState canvas;

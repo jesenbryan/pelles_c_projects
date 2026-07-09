@@ -12,11 +12,10 @@ static HWND hClearBtn;
 static HWND hSlider;
 static HWND hColorBtn;
 static HWND hTraceBtn;
-static HWND hUploadBtn;      // NEW
 static HWND hThicknessLabel;
 static HWND hViewSegBtn;   // NEW
-static HWND hSaveBtn;      // NEW
-static int controlCount = 8; // was 7
+static HWND hComparisonBtn;  // NEW: toggle comparison mode
+static int controlCount = 7;
 
 
 static int GetRequiredUIHeight(void)
@@ -60,9 +59,7 @@ static void LayoutUI(HWND hWnd)
 	y += btnH + spacing;
 	MoveWindow(hViewSegBtn, centerX, y, btnW, btnH, TRUE);
 	y += btnH + spacing;
-	MoveWindow(hUploadBtn, centerX, y, btnW, btnH, TRUE);
-	y += btnH + spacing;
-	MoveWindow(hSaveBtn, centerX, y, btnW, btnH, TRUE);
+	MoveWindow(hComparisonBtn, centerX, y, btnW, btnH, TRUE);
 }
 
 LRESULT CALLBACK WndProcUI(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
@@ -91,15 +88,12 @@ LRESULT CALLBACK WndProcUI(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		                              20, 250, 300, 30, hWnd, (HMENU)ID_VIEW_SEGMENTS,
 		                              GetModuleHandle(NULL), NULL);
 
-		hUploadBtn = CreateWindowEx(0, L"BUTTON", L"Upload BMP...", WS_CHILD | WS_VISIBLE,
-		                             20, 210, 300, 30, hWnd, (HMENU)ID_UPLOAD,
-		                             GetModuleHandle(NULL), NULL);
+		hComparisonBtn = CreateWindowEx(0, L"BUTTON", L"Comparison Mode",
+		                                 WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX | BS_PUSHLIKE,
+		                                 20, 290, 300, 30, hWnd, (HMENU)ID_COMPARISON,
+		                                 GetModuleHandle(NULL), NULL);
 
-		hSaveBtn = CreateWindowEx(0, L"BUTTON", L"Save BMP...", WS_CHILD | WS_VISIBLE,
-		                           20, 290, 300, 30, hWnd, (HMENU)ID_SAVE,
-		                           GetModuleHandle(NULL), NULL);
-
-        SendMessage(hSlider, TBM_SETRANGE, TRUE, MAKELPARAM(1, 20));
+        SendMessage(hSlider, TBM_SETRANGE, TRUE, MAKELPARAM(1, 10));
         SendMessage(hSlider, TBM_SETPOS, TRUE, (LPARAM)thickness);
 
         wchar_t buf[32];
@@ -130,7 +124,8 @@ LRESULT CALLBACK WndProcUI(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         if (LOWORD(wParam) == ID_CLEAR)
 		{
 		    ResetCanvas();
-		    SendMessage(hViewSegBtn, BM_SETCHECK, BST_UNCHECKED, 0);   // NEW: keep toggle in sync
+		    SendMessage(hViewSegBtn, BM_SETCHECK, BST_UNCHECKED, 0);
+		    SendMessage(hComparisonBtn, BM_SETCHECK, BST_UNCHECKED, 0);
 		    if (hWndGL) InvalidateRect(hWndGL, NULL, TRUE);
 		}
         else if (LOWORD(wParam) == ID_COLOR)
@@ -149,11 +144,6 @@ LRESULT CALLBACK WndProcUI(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		    RunTracePipeline();
 		    if (hWndGL) InvalidateRect(hWndGL, NULL, FALSE);
 		}
-		else if (LOWORD(wParam) == ID_UPLOAD)
-		{
-		    RunUploadPipeline();
-		    SendMessage(hViewSegBtn, BM_SETCHECK, BST_UNCHECKED, 0);   // NEW: new image needs its own trace
-		}
 		else if (LOWORD(wParam) == ID_VIEW_SEGMENTS)
 		{
 		    // BS_AUTOCHECKBOX already flipped its own check state before this
@@ -169,20 +159,12 @@ LRESULT CALLBACK WndProcUI(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		    canvas.showSegments = nowChecked;
 		    if (hWndGL) InvalidateRect(hWndGL, NULL, FALSE);
 		}
-		else if (LOWORD(wParam) == ID_SAVE)
+		else if (LOWORD(wParam) == ID_COMPARISON)
 		{
-		    Image* img = canvasToImage();
-		    if (img)
-		    {
-		        saveBMP_UI("", img, img->bin, BMP_RGB);
-		        free(img->data);
-		        free(img->bin);
-		        free(img);
-		    }
-		    else
-		    {
-		        MessageBox(hWnd, L"Canvas is empty. Draw something first.", L"Save Error", MB_OK | MB_ICONWARNING);
-		    }
+		    // Toggle between showing original strokes vs. reconstructed arc line
+		    BOOL nowChecked = (SendMessage(hComparisonBtn, BM_GETCHECK, 0, 0) == BST_CHECKED);
+		    canvas.comparisonMode = nowChecked;
+		    if (hWndGL) InvalidateRect(hWndGL, NULL, FALSE);
 		}
         return 0;   
     }

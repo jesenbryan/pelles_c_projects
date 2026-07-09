@@ -9,3 +9,6 @@ void renderSegmentsToBMP(
     ArcSegment* segments,
     int segCount
 );
+
+void renderSegmentsToImage(Image* img, float* segmentPointsWorld, int* segmentStarts, 
+                           int* segmentCounts, int segmentResultCount, int imgW, int imgH);

@@ -1,4 +1,8 @@
 ﻿#include "canvas.h"
+#include "pipeline.h"      // For RunUploadPipeline
+#include "canvas_bridge.h" // For canvasToImage
+#include "bmp_ui.h"        // For saveBMP_UI
+#include "render.h"        // For renderSegmentsToImage
 #include <math.h>
 #include <string.h>
 
@@ -40,6 +44,7 @@ void ResetCanvas(void)
     canvas.zoom = 1.0f;
     canvas.showSegments = FALSE;        // NEW
     canvas.segmentResultCount = 0;      // NEW
+    canvas.comparisonMode = FALSE;      // NEW
     hoveredSegment = -1;                // NEW: avoid a stale highlight index
 	UpdateProjection();
 }
@@ -632,6 +637,57 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	    }
 	    return 0;
 	}
+	case WM_COMMAND:
+	{
+	    if (LOWORD(wParam) == ID_UPLOAD)
+	    {
+	        RunUploadPipeline();
+	        SendMessage(hWndUI, WM_COMMAND, MAKEWPARAM(ID_VIEW_SEGMENTS, BN_CLICKED), 0);
+	        if (hWndGL) InvalidateRect(hWndGL, NULL, FALSE);
+	    }
+	    else if (LOWORD(wParam) == ID_SAVE)
+	    {
+	        // If comparison mode is on and segments exist, save reconstructed drawing
+	        if (canvas.comparisonMode && canvas.showSegments && canvas.segmentResultCount > 0)
+	        {
+	            Image* img = (Image*)malloc(sizeof(Image));
+	            if (img)
+	            {
+	                img->width = glWindowWidth;
+	                img->height = glWindowHeight;
+	                img->data = (uint8_t*)malloc((size_t)img->width * img->height * 3);
+	                img->bin = NULL;
+	                
+	                if (img->data)
+	                {
+	                    renderSegmentsToImage(img, segmentPointsWorld, segmentStarts, segmentCounts, 
+	                                         canvas.segmentResultCount, img->width, img->height);
+	                    saveBMP_UI("", img, NULL, BMP_RGB);
+	                }
+	                
+	                free(img->data);
+	                free(img);
+	            }
+	        }
+	        else
+	        {
+	            // Save original drawing
+	            Image* img = canvasToImage();
+	            if (img)
+	            {
+	                saveBMP_UI("", img, img->bin, BMP_RGB);
+	                free(img->data);
+	                free(img->bin);
+	                free(img);
+	            }
+	            else
+	            {
+	                MessageBox(hWnd, L"Canvas is empty. Draw something first.", L"Save Error", MB_OK | MB_ICONWARNING);
+	            }
+	        }
+	    }
+	    return 0;
+	}
 	case WM_PAINT:
 	{
 	    PAINTSTRUCT ps;
@@ -643,7 +699,10 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	    glLoadIdentity();
 	    glTranslatef(-canvas.panX, -canvas.panY, 0.0f);   // NEW: apply camera pan to everything below
 
-	    if (canvas.hasBackgroundImage)
+	    // Only show background image if NOT in active comparison mode
+	    BOOL isComparisonActive = canvas.comparisonMode && canvas.showSegments && canvas.segmentResultCount > 0;
+	    
+	    if (canvas.hasBackgroundImage && !isComparisonActive)
 	    {
 	        // FIXED bounds (computed once at upload time) — canvas.zoom now
 	        // actually affects this via the ortho projection, same as strokes
@@ -664,49 +723,54 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	    glEnable(GL_BLEND);
 	    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-        for (int s = 0; s < canvas.strokeCount; s++)
+        // Only apply comparison mode (hide/fade strokes) if segments are actually being shown
+        
+        if (!isComparisonActive)
         {
-            int start = strokeStarts[s];
-            int end = (s == canvas.strokeCount - 1) ? canvas.pointCount : strokeStarts[s + 1];
-            int count = (end - start) / 2;
-            if (count < 2) continue;
-
-            COLORREF c = strokeColor[s];
-            glColor3f(GetRValue(c)/255.0f, GetGValue(c)/255.0f, GetBValue(c)/255.0f);
-
-            float halfW = (strokeThickness[s] * canvas.zoom) / (float)glWindowWidth;
-
-            glBegin(GL_TRIANGLE_STRIP);
-            for (int i = 0; i < count; i++)
+            for (int s = 0; s < canvas.strokeCount; s++)
             {
-                float x = points[start + i * 2];
-                float y = points[start + i * 2 + 1];
-                float dx = 0.0f, dy = 0.0f;
+                int start = strokeStarts[s];
+                int end = (s == canvas.strokeCount - 1) ? canvas.pointCount : strokeStarts[s + 1];
+                int count = (end - start) / 2;
+                if (count < 2) continue;
 
-                if (i == 0) {
-                    dx = points[start + (i + 1) * 2] - x;
-                    dy = points[start + (i + 1) * 2 + 1] - y;
-                } else if (i == count - 1) {
-                    dx = x - points[start + (i - 1) * 2];
-                    dy = y - points[start + (i - 1) * 2 + 1];
-                } else {
-                    float dx1 = x - points[start + (i - 1) * 2];
-                    float dy1 = y - points[start + (i - 1) * 2 + 1];
-                    float dx2 = points[start + (i + 1) * 2] - x;
-                    float dy2 = points[start + (i + 1) * 2 + 1] - y;
-                    dx = dx1 + dx2;
-                    dy = dy1 + dy2;
+                COLORREF c = strokeColor[s];
+                glColor3f(GetRValue(c)/255.0f, GetGValue(c)/255.0f, GetBValue(c)/255.0f);
+
+                float halfW = (strokeThickness[s] * canvas.zoom) / (float)glWindowWidth;
+
+                glBegin(GL_TRIANGLE_STRIP);
+                for (int i = 0; i < count; i++)
+                {
+                    float x = points[start + i * 2];
+                    float y = points[start + i * 2 + 1];
+                    float dx = 0.0f, dy = 0.0f;
+
+                    if (i == 0) {
+                        dx = points[start + (i + 1) * 2] - x;
+                        dy = points[start + (i + 1) * 2 + 1] - y;
+                    } else if (i == count - 1) {
+                        dx = x - points[start + (i - 1) * 2];
+                        dy = y - points[start + (i - 1) * 2 + 1];
+                    } else {
+                        float dx1 = x - points[start + (i - 1) * 2];
+                        float dy1 = y - points[start + (i - 1) * 2 + 1];
+                        float dx2 = points[start + (i + 1) * 2] - x;
+                        float dy2 = points[start + (i + 1) * 2 + 1] - y;
+                        dx = dx1 + dx2;
+                        dy = dy1 + dy2;
+                    }
+
+                    float len = sqrtf(dx * dx + dy * dy);
+                    if (len == 0.0f) len = 1.0f;
+                    float nx = -dy / len;
+                    float ny = dx / len;
+
+                    glVertex2f(x + nx * halfW, y + ny * halfW);
+                    glVertex2f(x - nx * halfW, y - ny * halfW);
                 }
-
-                float len = sqrtf(dx * dx + dy * dy);
-                if (len == 0.0f) len = 1.0f;
-                float nx = -dy / len;
-                float ny = dx / len;
-
-                glVertex2f(x + nx * halfW, y + ny * halfW);
-                glVertex2f(x - nx * halfW, y - ny * halfW);
+                glEnd();
             }
-            glEnd();
         }
         glDisable(GL_BLEND);
 
@@ -715,8 +779,9 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		    glEnable(GL_BLEND);
 		    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-		    float ghostHalfW = 0.01f * canvas.zoom;
-		    float ghostAlpha = 0.35f;   // "ghost" = translucent, tweak to taste
+		    BOOL isComparisonActive = canvas.comparisonMode && canvas.segmentResultCount > 0;
+		    float ghostHalfW = (0.01f * canvas.zoom);  // Always use same thickness
+		    float ghostAlpha = isComparisonActive ? 0.95f : 0.35f;
 
 		    for (int s = 0; s < canvas.segmentResultCount; s++)
 		    {
@@ -727,10 +792,17 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		        BOOL isHovered = (s == hoveredSegment);   // NEW
 
 		        float r, g, b;
-		        segmentGhostColor(s, &r, &g, &b);
-		        glColor4f(r, g, b, isHovered ? 0.9f : ghostAlpha);   // NEW: brighten on hover
+		        if (isComparisonActive) {
+		            // Dark grey for comparison mode
+		            r = 0.3f;
+		            g = 0.3f;
+		            b = 0.3f;
+		        } else {
+		            segmentGhostColor(s, &r, &g, &b);
+		        }
+		        glColor4f(r, g, b, isHovered ? 1.0f : ghostAlpha);
 
-		        float halfW = isHovered ? ghostHalfW * 1.8f : ghostHalfW;   // NEW: thicken on hover
+		        float halfW = isHovered ? ghostHalfW * 1.5f : ghostHalfW;
 
 		        glBegin(GL_TRIANGLE_STRIP);
 		        for (int i = 0; i < count; i++)

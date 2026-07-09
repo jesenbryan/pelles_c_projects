@@ -31,6 +31,15 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmd, int nShow)
 
     hWndGL = CreateWindow(L"GLWindow", L"Canvas", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
                            100, 100, 800, 600, NULL, NULL, hInst, NULL);
+    
+    // Create File menu
+    HMENU hMenu = CreateMenu();
+    HMENU hFileMenu = CreatePopupMenu();
+    AppendMenuW(hFileMenu, MF_STRING, ID_UPLOAD, L"Upload BMP...");
+    AppendMenuW(hFileMenu, MF_STRING, ID_SAVE, L"Save BMP...");
+    AppendMenuW(hMenu, MF_POPUP, (UINT_PTR)hFileMenu, L"File");
+    SetMenu(hWndGL, hMenu);
+    
     // NEW: created hidden (no WS_VISIBLE) and WS_EX_LAYERED (so its alpha can
     // be animated) - canvas.c's WM_TIMER hover check in WndProcGL fades this
     // window in/out and repositions it as the cursor moves over the GL
