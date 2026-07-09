@@ -186,4 +186,3 @@ int saveBMP_BIN(const char* filename, uint8_t* bin, int w, int h)
 
     return 1;
 }
-

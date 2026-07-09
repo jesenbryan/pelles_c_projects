@@ -1,11 +1,14 @@
-﻿#include <windows.h>
+﻿#undef UNICODE
+#undef _UNICODE
+
+#include <windows.h>
 #include <commdlg.h>
 #include <stdio.h>
 #include "file_dialogs.h"
 
 int openFileDialog(char *filename, int maxLen, int defaultFilterIndex)
 {
-    OPENFILENAME ofn;
+    OPENFILENAMEA ofn;
     ZeroMemory(&ofn, sizeof(ofn));
     filename[0] = '\0';
 
@@ -23,12 +26,12 @@ int openFileDialog(char *filename, int maxLen, int defaultFilterIndex)
 
     ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
 
-    return GetOpenFileName(&ofn);
+    return GetOpenFileNameA(&ofn);
 }
 
 int saveFileDialog(char *filename, int maxLen, const char *defaultExt, int defaultFilterIndex)
 {
-    OPENFILENAME ofn;
+    OPENFILENAMEA ofn;
     ZeroMemory(&ofn, sizeof(ofn));
     filename[0] = '\0';
 
@@ -48,7 +51,7 @@ int saveFileDialog(char *filename, int maxLen, const char *defaultExt, int defau
 
     ofn.lpstrDefExt = defaultExt;
 
-    return GetSaveFileName(&ofn);
+    return GetSaveFileNameA(&ofn);
 }
 
 void openFileDialogOrExit(char *filename, int maxLen, int defaultFilterIndex)

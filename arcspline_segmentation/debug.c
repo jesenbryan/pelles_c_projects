@@ -23,19 +23,19 @@ void OpenConsole() {
     // "CONIN$" is the system device for console input
     
     // Redirect stdout to console
-    freopen("CONOUT$", "w", stdout);
+    (void)freopen("CONOUT$", "w", stdout);
     
     // Redirect stderr to console
-    freopen("CONOUT$", "w", stderr);
+    (void)freopen("CONOUT$", "w", stderr);
     
     // Redirect stdin to console
-    freopen("CONIN$", "r", stdin);
+    (void)freopen("CONIN$", "r", stdin);
 
     // 3. Disable buffering for immediate output
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
 
-    SetConsoleTitle("Debug Console");
+    SetConsoleTitle(L"Debug Console");
 }
 
 void debugPrintPath(Point* path, int numPoints) {

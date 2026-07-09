@@ -124,6 +124,22 @@ static int walkLoop(uint8_t* bin, int w, int h, int sx, int sy, Point* out, int 
     return count;
 }
 
+// NEW: Public function to trace a closed loop in a component.
+// Returns the number of points in the traced loop (or 0 if no loop found).
+// First and last point will be the same pixel, indicating closure.
+int traceClosedLoop(uint8_t* compBin, int w, int h, Point* outPath, int maxPoints)
+{
+    // Find the first foreground pixel to start the loop trace
+    for (int y = 0; y < h; y++) {
+        for (int x = 0; x < w; x++) {
+            if (compBin[y * w + x]) {
+                return walkLoop(compBin, w, h, x, y, outPath, maxPoints);
+            }
+        }
+    }
+    return 0;
+}
+
 int traceComponentEdges(uint8_t* compBin, int w, int h,
                          Point* outPaths[], int outLengths[],
                          int maxEdges, int maxPointsPerPath)

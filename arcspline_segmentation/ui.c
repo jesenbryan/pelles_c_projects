@@ -55,9 +55,9 @@ static void LayoutUI(HWND hWnd)
 	y += btnH + spacing;
 	MoveWindow(hTraceBtn, centerX, y, btnW, btnH, TRUE);
 	y += btnH + spacing;
-	MoveWindow(hUploadBtn, centerX, y, btnW, btnH, TRUE);
-	y += btnH + spacing;
 	MoveWindow(hViewSegBtn, centerX, y, btnW, btnH, TRUE);
+	y += btnH + spacing;
+	MoveWindow(hUploadBtn, centerX, y, btnW, btnH, TRUE);
 }
 
 LRESULT CALLBACK WndProcUI(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
@@ -78,10 +78,6 @@ LRESULT CALLBACK WndProcUI(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
                             20, 170, 300, 30, hWnd, (HMENU)ID_TRACE,
                             GetModuleHandle(NULL), NULL);
 
-		hUploadBtn = CreateWindowEx(0, L"BUTTON", L"Upload BMP...", WS_CHILD | WS_VISIBLE,
-		                             20, 210, 300, 30, hWnd, (HMENU)ID_UPLOAD,
-		                             GetModuleHandle(NULL), NULL);
-
 		// BS_AUTOCHECKBOX | BS_PUSHLIKE: a checkbox drawn/behaving like a button
 		// that stays visually pressed while checked - gives "View Segments" a
 		// native on/off toggle look instead of a plain momentary click.
@@ -89,6 +85,10 @@ LRESULT CALLBACK WndProcUI(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		                              WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX | BS_PUSHLIKE,
 		                              20, 250, 300, 30, hWnd, (HMENU)ID_VIEW_SEGMENTS,
 		                              GetModuleHandle(NULL), NULL);
+
+		hUploadBtn = CreateWindowEx(0, L"BUTTON", L"Upload BMP...", WS_CHILD | WS_VISIBLE,
+		                             20, 210, 300, 30, hWnd, (HMENU)ID_UPLOAD,
+		                             GetModuleHandle(NULL), NULL);
 
         SendMessage(hSlider, TBM_SETRANGE, TRUE, MAKELPARAM(1, 20));
         SendMessage(hSlider, TBM_SETPOS, TRUE, (LPARAM)thickness);
@@ -138,6 +138,7 @@ LRESULT CALLBACK WndProcUI(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		else if (LOWORD(wParam) == ID_TRACE)
 		{
 		    RunTracePipeline();
+		    if (hWndGL) InvalidateRect(hWndGL, NULL, FALSE);
 		}
 		else if (LOWORD(wParam) == ID_UPLOAD)
 		{

@@ -61,8 +61,8 @@ int resamplePath(Point* in, int n, Point* out, double step)
             double t = (target - accDist) / segLen;
 
             Point q;
-            q.x = p0.x + t * (p1.x - p0.x);
-            q.y = p0.y + t * (p1.y - p0.y);
+            q.x = (int)(p0.x + t * (p1.x - p0.x));
+			q.y = (int)(p0.y + t * (p1.y - p0.y));
 
             out[m++] = q;
 

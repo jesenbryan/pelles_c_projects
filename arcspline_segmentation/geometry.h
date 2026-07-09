@@ -2,7 +2,7 @@
 
 #include <math.h>
 
-#define MAX_ARC_SEGMENTS 64
+#define MAX_ARC_SEGMENTS 256
 
 typedef struct {
     int x;

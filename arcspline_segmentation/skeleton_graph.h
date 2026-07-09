@@ -3,6 +3,11 @@
 #include <stdint.h>
 #include "geometry.h"
 
+// NEW: Traces a closed loop (circle/ring) in a component.
+// Returns number of points traced (0 if no loop found).
+// First and last point are the same pixel, indicating closure.
+int traceClosedLoop(uint8_t* compBin, int w, int h, Point* outPath, int maxPoints);
+
 // Decomposes ONE already-isolated connected skeleton component (compBin -
 // same w*h size as the source image, containing just this component's
 // pixels, see extractComponent() in pipeline.c) into a set of traceable
