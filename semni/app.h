@@ -39,8 +39,20 @@ typedef struct {
     Point kneeCircle;
     float kneeRadius;
 
-    Point thighCtrl1;
-    Point thighCtrl2;
+    // the two thigh seams: same construction as topArcAngle/bottomArcAngle
+    // above, just between innerCircle (hip) and kneeCircle (knee) instead
+    // of head and butt -- each is a circular arc internally tangent to
+    // both joint circles, parameterized by the angle where it attaches to
+    // innerCircle (same convention as circleEdge/filletFromAttachAngle),
+    // with the fillet's radius, center, and other tangent point (on
+    // kneeCircle) all derived from that angle every frame. Unlike
+    // top/bottom, these two aren't kept mirrored -- thighArc1Angle stays
+    // on its own fixed side of the hip-knee axis (see THIGH_ARC_SIDE_
+    // MARGIN_DEG) and thighArc2Angle the opposite side, but each drags
+    // independently instead of updating in lockstep, since the thigh's
+    // two sides aren't meant to bulge symmetrically.
+    float thighArc1Angle;
+    float thighArc2Angle;
 
     // continues the leg past the knee: ankleCircle is the next joint,
     // connected back to kneeCircle by two arcs, same pattern as the thigh
@@ -53,8 +65,11 @@ typedef struct {
     float angle;      // whole-body rotation
 
     // hip joint rotation: rotates the whole leg chain (kneeCircle,
-    // thighCtrl1/2, ankleCircle, shinCtrl1/2) around innerCircle,
-    // independent of the whole-body angle above
+    // ankleCircle, shinCtrl1/2) around innerCircle, independent of the
+    // whole-body angle above. thighArc1Angle/thighArc2Angle don't need
+    // rotating themselves -- they're angles measured in the hip's own
+    // local frame (around innerCircle), so hipAngle rotating that whole
+    // frame at render/hit-test time carries them along automatically.
     float hipAngle;
 
     // knee joint rotation: rotates just the shin (ankleCircle,
@@ -115,15 +130,16 @@ typedef struct {
     Point kneeDragShinCtrl2Offset;
 
     // same idea, but for a hip drag: the whole leg (kneeCircle,
-    // thighCtrl1/2, ankleCircle, shinCtrl1/2) hangs off innerCircle, so
-    // moving the hip needs to carry all of it along as one rigid piece --
-    // each point's fixed offset from innerCircle is captured when the hip
-    // drag starts, then reapplied fresh every WM_MOUSEMOVE (innerCircle +
-    // offset), so the whole leg's shape/pose is preserved exactly instead
-    // of the rest of the leg staying behind while just the hip circle moves.
+    // ankleCircle, shinCtrl1/2) hangs off innerCircle, so moving the hip
+    // needs to carry all of it along as one rigid piece -- each point's
+    // fixed offset from innerCircle is captured when the hip drag starts,
+    // then reapplied fresh every WM_MOUSEMOVE (innerCircle + offset), so
+    // the whole leg's shape/pose is preserved exactly instead of the rest
+    // of the leg staying behind while just the hip circle moves.
+    // thighArc1Angle/thighArc2Angle don't need an offset here -- they're
+    // already hip-frame-relative angles, so a hip drag doesn't change them
+    // at all.
     Point hipDragKneeOffset;
-    Point hipDragThigh1Offset;
-    Point hipDragThigh2Offset;
     Point hipDragAnkleOffset;
     Point hipDragShinCtrl1Offset;
     Point hipDragShinCtrl2Offset;
@@ -137,6 +153,16 @@ typedef struct {
     // bottom share these two fields.
     float arcDragStartMouseY;
     float arcDragStartAngle;
+
+    // same idea as arcDragStartMouseY/arcDragStartAngle, for the thigh
+    // arcs -- except the hip->knee axis isn't fixed horizontal like the
+    // head-butt axis (it rotates with hipAngle and the user can pose it
+    // any direction), so the drag reads the mouse's perpendicular-to-axis
+    // offset (geometry.h's perpOffsetOnAxis) instead of raw screen Y. Only
+    // one of thighArc1Angle/thighArc2Angle can be dragged at a time, so
+    // they share these two fields too.
+    float thighArcDragStartPerp;
+    float thighArcDragStartAngle;
 
     Point mouseGL;
     DWORD lastLogTime;

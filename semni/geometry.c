@@ -75,6 +75,24 @@ Point constrainToAxis(Point pivot, Point axisRef, Point target, float minLength)
     return result;
 }
 
+float perpOffsetOnAxis(Point p, Point axisStart, Point axisEnd)
+{
+    Point dir = { axisEnd.x - axisStart.x, axisEnd.y - axisStart.y };
+    float len = sqrtf(dir.x * dir.x + dir.y * dir.y);
+
+    if (len < 1e-6f)
+        return 0.0f; // degenerate axis -- no sideways direction to measure against
+
+    dir.x /= len;
+    dir.y /= len;
+
+    // rotate dir by 90 degrees to get the sideways direction
+    Point perp = { -dir.y, dir.x };
+
+    Point toP = { p.x - axisStart.x, p.y - axisStart.y };
+    return toP.x * perp.x + toP.y * perp.y;
+}
+
 Point recenterOnAxis(Point p, Point axisStart, Point axisEnd)
 {
     Point dir = { axisEnd.x - axisStart.x, axisEnd.y - axisStart.y };
@@ -86,11 +104,8 @@ Point recenterOnAxis(Point p, Point axisStart, Point axisEnd)
     dir.x /= len;
     dir.y /= len;
 
-    // rotate dir by 90 degrees to get the sideways direction
     Point perp = { -dir.y, dir.x };
-
-    Point toP = { p.x - axisStart.x, p.y - axisStart.y };
-    float perpOffset = toP.x * perp.x + toP.y * perp.y;
+    float perpOffset = perpOffsetOnAxis(p, axisStart, axisEnd);
 
     Point mid = { axisStart.x + dir.x * (len * 0.5f), axisStart.y + dir.y * (len * 0.5f) };
 
@@ -276,6 +291,43 @@ Point circleAtX(Point center, float radius, float targetX, Point preferNear)
     float d2 = (p2.y - preferNear.y) * (p2.y - preferNear.y);
 
     return (d1 <= d2) ? p1 : p2;
+}
+
+Point circleAtAxisMid(Point center, float radius, Point axisStart, Point axisEnd, Point preferNear)
+{
+    Point dir = { axisEnd.x - axisStart.x, axisEnd.y - axisStart.y };
+    float len = sqrtf(dir.x * dir.x + dir.y * dir.y);
+
+    if (len < 1e-6f)
+        return circleTowardPoint(center, radius, preferNear); // degenerate axis -- no line to intersect
+
+    dir.x /= len;
+    dir.y /= len;
+
+    Point perp = { -dir.y, dir.x };
+    Point axisMid = { axisStart.x + dir.x * (len * 0.5f), axisStart.y + dir.y * (len * 0.5f) };
+
+    // solve |axisMid + t*perp - center|^2 == radius^2 for t (perp is a
+    // unit vector, so this is a plain quadratic in t with no cross term
+    // beyond the linear one)
+    Point d = { axisMid.x - center.x, axisMid.y - center.y };
+    float dDotPerp = d.x * perp.x + d.y * perp.y;
+    float dMagSq = d.x * d.x + d.y * d.y;
+
+    float disc = dDotPerp * dDotPerp - (dMagSq - radius * radius);
+    if (disc < 0.0f) disc = 0.0f; // axis-mid line doesn't reach the circle -- fall back to closest approach
+
+    float sq = sqrtf(disc);
+    float t1 = -dDotPerp + sq;
+    float t2 = -dDotPerp - sq;
+
+    Point p1 = { axisMid.x + perp.x * t1, axisMid.y + perp.y * t1 };
+    Point p2 = { axisMid.x + perp.x * t2, axisMid.y + perp.y * t2 };
+
+    float dist1 = (p1.x - preferNear.x) * (p1.x - preferNear.x) + (p1.y - preferNear.y) * (p1.y - preferNear.y);
+    float dist2 = (p2.x - preferNear.x) * (p2.x - preferNear.x) + (p2.y - preferNear.y) * (p2.y - preferNear.y);
+
+    return (dist1 <= dist2) ? p1 : p2;
 }
 
 // Finds the circle that passes through all three points.

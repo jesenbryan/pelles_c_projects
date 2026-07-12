@@ -45,6 +45,17 @@ Point constrainToAxis(Point pivot, Point axisRef, Point target, float minLength)
 // should follow the new midpoint).
 Point recenterOnAxis(Point p, Point axisStart, Point axisEnd);
 
+// The signed perpendicular (sideways) distance of "p" from the
+// axisStart->axisEnd line -- the same "how far to the side" quantity
+// recenterOnAxis computes internally, exposed on its own. Used to turn
+// mouse movement into an incremental drag delta for a handle that's
+// locked to the middle of an axis but otherwise angle-driven (e.g. a
+// tangent-restricted arc between two joint circles whose connecting
+// axis can point any direction, so a plain vertical-Y delta -- fine
+// when the axis is fixed and horizontal, like the head-butt seam --
+// wouldn't track "how far the user dragged sideways" correctly).
+float perpOffsetOnAxis(Point p, Point axisStart, Point axisEnd);
+
 Point circleEdge(Point center, float radius, float angleDeg);
 
 int isNear(Point a, Point b, float radius);
@@ -131,3 +142,18 @@ Point filletBulgePoint(Point c1, float r1, Point c2, float r2, float angleDeg, f
 // of just using filletBulgePoint's "nearest point" (which is close to,
 // but not exactly at, that X).
 Point circleAtX(Point center, float radius, float targetX, Point preferNear);
+
+// Generalization of circleAtX for an axis that isn't fixed horizontal:
+// returns the point on the circle (center, radius) that lies exactly on
+// the line through the axisStart->axisEnd segment's midpoint,
+// perpendicular to that segment -- i.e. "the point on the circle
+// directly out from the true middle of the axis", whichever direction
+// the axis happens to point. circleAtX is the special case where the
+// axis is horizontal (so the perpendicular line is vertical, x ==
+// targetX); this version works for an axis at any angle, which the
+// hip->knee (and knee->ankle) limb axis needs since it rotates with the
+// joint angles. Like circleAtX, degenerates to the closest approach to
+// that line if the line doesn't actually reach the circle, and picks
+// whichever of the two crossing points is nearer "preferNear" so the
+// caller lands on the visible side.
+Point circleAtAxisMid(Point center, float radius, Point axisStart, Point axisEnd, Point preferNear);

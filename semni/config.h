@@ -69,6 +69,34 @@
 #define THIGH_HANDLE_RADIUS 0.014f
 #define SHIN_HANDLE_RADIUS  0.010f
 
+// thigh arcs (between innerCircle/hip and kneeCircle/knee) use the same
+// tangent-restricted-fillet construction as the head/butt seam arcs (see
+// MIN_ARC_R/MAX_ARC_R above), but the hip/knee circles are much smaller
+// and closer together than head/butt, so they get their own clamp/margin/
+// sensitivity constants instead of sharing the head/butt-tuned ones.
+// MAX_THIGH_ARC_R is picked with the same ratio to the hip-knee distance
+// (~0.52 for the default pose) that MAX_ARC_R has to the head-butt
+// distance (~1.2), so the "arc flattens past this size" cap scales with
+// the limb instead of being tuned for a completely different part.
+#define MIN_THIGH_ARC_R 0.05f
+#define MAX_THIGH_ARC_R 2.5f
+
+// same role as ARC_ANGLE_MARGIN_DEG/ARC_SIDE_MARGIN_DEG, kept as separate
+// constants (even though currently equal) so the thigh arcs' feel can be
+// tuned independently of the seam arcs'
+#define THIGH_ARC_ANGLE_MARGIN_DEG 2.0f
+#define THIGH_ARC_SIDE_MARGIN_DEG 1.0f
+
+// same role as ARC_DRAG_SENSITIVITY_DEG_PER_UNIT -- the thigh handle also
+// drags incrementally rather than off an absolute mouse-to-angle solve,
+// for the same reason (bulge height isn't monotonic across the whole
+// angle range). The one difference: since the hip->knee axis isn't fixed
+// horizontal like the head-butt axis, the drag reads the mouse's
+// perpendicular-to-axis movement (geometry.h's perpOffsetOnAxis) instead
+// of raw vertical screen movement, so it feels the same regardless of
+// which way the leg is currently posed/rotated.
+#define THIGH_ARC_DRAG_SENSITIVITY_DEG_PER_UNIT 200.0f
+
 // minimum thigh/shin length, so dragging the knee or ankle circle along
 // its constrained axis can't collapse the limb to zero or flip it
 // through the pivot

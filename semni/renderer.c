@@ -191,11 +191,7 @@ static void drawThigh(Semni b, RenderState* rs)
     Point center = getCenter(b);
     float angle = b.angle;
 
-    Point innerWorld = rotatePoint(b.innerCircle, center, angle);
-    Point kneeWorld   = jointToWorld(b.kneeCircle, b.innerCircle, b.hipAngle, center, angle);
-
-    Point ctrl1World = jointToWorld(b.thighCtrl1, b.innerCircle, b.hipAngle, center, angle);
-    Point ctrl2World = jointToWorld(b.thighCtrl2, b.innerCircle, b.hipAngle, center, angle);
+    Point kneeWorld = jointToWorld(b.kneeCircle, b.innerCircle, b.hipAngle, center, angle);
 
     // the whole thigh (knee circle + both connecting arcs) swings with the
     // hip, so hovering the hip handle highlights it too -- not just while
@@ -203,22 +199,32 @@ static void drawThigh(Semni b, RenderState* rs)
     setColor(rs->draggingKnee || rs->hoverHip, 0.2f, 0.4f, 1.0f);
     drawCircle(kneeWorld, b.kneeRadius);
 
-    // direction from hip to knee decides which side of each circle the
-    // two arcs should leave from (instead of assuming left/right)
-    float limbAngle = atan2f(kneeWorld.y - innerWorld.y,
-                              kneeWorld.x - innerWorld.x) * 180.0f / 3.1415926f;
+    // the two thigh arcs: same tangent-fillet construction as the
+    // head/butt seams, just between innerCircle and kneeCircle -- worked
+    // out in the leg's own local (pre-hipAngle) frame, then rotated into
+    // world space at the end, same pattern drawSemniBody uses for the
+    // head/butt seams (which work in pre-body-angle local space)
+    Point axisMidLocal = { (b.innerCircle.x + b.kneeCircle.x) * 0.5f, (b.innerCircle.y + b.kneeCircle.y) * 0.5f };
 
-    Point side1P0 = circleEdge(innerWorld, b.innerRadius, limbAngle + 90);
-    Point side1P2 = circleEdge(kneeWorld,  b.kneeRadius,  limbAngle + 90);
+    Fillet thigh1Fillet = filletFromAttachAngle(b.innerCircle, b.innerRadius, b.kneeCircle, b.kneeRadius, b.thighArc1Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC_R);
+    Point thigh1InnerTangentLocal = circleEdge(b.innerCircle, b.innerRadius, b.thighArc1Angle);
+    Point thigh1KneeTangentLocal = internalTangentPoint(thigh1Fillet.center, thigh1Fillet.radius, b.kneeCircle, b.kneeRadius);
+    Point thigh1NearLocal = circleTowardPoint(thigh1Fillet.center, thigh1Fillet.radius, axisMidLocal);
 
-    Point side2P0 = circleEdge(innerWorld, b.innerRadius, limbAngle - 90);
-    Point side2P2 = circleEdge(kneeWorld,  b.kneeRadius,  limbAngle - 90);
+    Fillet thigh2Fillet = filletFromAttachAngle(b.innerCircle, b.innerRadius, b.kneeCircle, b.kneeRadius, b.thighArc2Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC_R);
+    Point thigh2InnerTangentLocal = circleEdge(b.innerCircle, b.innerRadius, b.thighArc2Angle);
+    Point thigh2KneeTangentLocal = internalTangentPoint(thigh2Fillet.center, thigh2Fillet.radius, b.kneeCircle, b.kneeRadius);
+    Point thigh2NearLocal = circleTowardPoint(thigh2Fillet.center, thigh2Fillet.radius, axisMidLocal);
 
     setColor(rs->draggingThigh1 || rs->hoverHip, 0.2f, 0.4f, 1.0f);
-    drawArc(side1P0, ctrl1World, side1P2);
+    drawArc(jointToWorld(thigh1InnerTangentLocal, b.innerCircle, b.hipAngle, center, angle),
+            jointToWorld(thigh1NearLocal, b.innerCircle, b.hipAngle, center, angle),
+            jointToWorld(thigh1KneeTangentLocal, b.innerCircle, b.hipAngle, center, angle));
 
     setColor(rs->draggingThigh2 || rs->hoverHip, 0.2f, 0.4f, 1.0f);
-    drawArc(side2P0, ctrl2World, side2P2);
+    drawArc(jointToWorld(thigh2InnerTangentLocal, b.innerCircle, b.hipAngle, center, angle),
+            jointToWorld(thigh2NearLocal, b.innerCircle, b.hipAngle, center, angle),
+            jointToWorld(thigh2KneeTangentLocal, b.innerCircle, b.hipAngle, center, angle));
 }
 
 static void drawThighHandles(Semni b, RenderState* rs)
@@ -226,13 +232,28 @@ static void drawThighHandles(Semni b, RenderState* rs)
     Point center = getCenter(b);
     float angle = b.angle;
 
-    Point kneeWorld   = jointToWorld(b.kneeCircle, b.innerCircle, b.hipAngle, center, angle);
-    Point ctrl1World  = jointToWorld(b.thighCtrl1, b.innerCircle, b.hipAngle, center, angle);
-    Point ctrl2World  = jointToWorld(b.thighCtrl2, b.innerCircle, b.hipAngle, center, angle);
+    Point kneeWorld = jointToWorld(b.kneeCircle, b.innerCircle, b.hipAngle, center, angle);
+
+    // thigh arc handles: pinned to the exact middle of the hip->knee axis
+    // (circleAtAxisMid), same idea as the head/butt seam handles' use of
+    // circleAtX -- except the axis here can point any direction, so the
+    // generalized version is needed instead of pinning to a fixed X
+    Point axisMidLocal = { (b.innerCircle.x + b.kneeCircle.x) * 0.5f, (b.innerCircle.y + b.kneeCircle.y) * 0.5f };
+
+    Fillet thigh1Fillet = filletFromAttachAngle(b.innerCircle, b.innerRadius, b.kneeCircle, b.kneeRadius, b.thighArc1Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC_R);
+    Point thigh1NearLocal = circleTowardPoint(thigh1Fillet.center, thigh1Fillet.radius, axisMidLocal);
+    Point thigh1MidLocal = circleAtAxisMid(thigh1Fillet.center, thigh1Fillet.radius, b.innerCircle, b.kneeCircle, thigh1NearLocal);
+
+    Fillet thigh2Fillet = filletFromAttachAngle(b.innerCircle, b.innerRadius, b.kneeCircle, b.kneeRadius, b.thighArc2Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC_R);
+    Point thigh2NearLocal = circleTowardPoint(thigh2Fillet.center, thigh2Fillet.radius, axisMidLocal);
+    Point thigh2MidLocal = circleAtAxisMid(thigh2Fillet.center, thigh2Fillet.radius, b.innerCircle, b.kneeCircle, thigh2NearLocal);
+
+    Point thigh1World = jointToWorld(thigh1MidLocal, b.innerCircle, b.hipAngle, center, angle);
+    Point thigh2World = jointToWorld(thigh2MidLocal, b.innerCircle, b.hipAngle, center, angle);
 
     drawHandle(kneeWorld, rs->draggingKnee || rs->hoverKnee, KNEE_HANDLE_RADIUS);
-    drawHandle(ctrl1World, rs->draggingThigh1, THIGH_HANDLE_RADIUS);
-    drawHandle(ctrl2World, rs->draggingThigh2, THIGH_HANDLE_RADIUS);
+    drawHandle(thigh1World, rs->draggingThigh1, THIGH_HANDLE_RADIUS);
+    drawHandle(thigh2World, rs->draggingThigh2, THIGH_HANDLE_RADIUS);
 }
 
 // Continues the leg past the knee: draws the ankle joint and the two arcs
