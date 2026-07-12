@@ -5,6 +5,7 @@
 #include "geometry.h"
 
 #define ID_SAVE_BUTTON 1001
+#define ID_MIRROR_LEG_BUTTON 1002
 
 // ---- robot model (the "Semni") ----
 
@@ -102,6 +103,7 @@ typedef struct {
 
 typedef struct {
     HWND hSaveButton;
+    HWND hMirrorButton;
 } UIState;
 
 // ---- application state ----

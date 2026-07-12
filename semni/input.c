@@ -692,9 +692,14 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             int y = (rect.bottom / 2) - (btnHeight / 2);
 
             int xSave = 10;
+            int xMirror = xSave + 80 + 10; // stack to the right of Save, same gap style
 
             SetWindowPos(app->ui.hSaveButton, NULL,
                  xSave, y, 0, 0,
+                 SWP_NOZORDER | SWP_NOSIZE);
+
+            SetWindowPos(app->ui.hMirrorButton, NULL,
+                 xMirror, y, 0, 0,
                  SWP_NOZORDER | SWP_NOSIZE);
         }
         break;
@@ -711,6 +716,17 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
 			    NULL,
 			    NULL
 			);
+
+             app->ui.hMirrorButton = CreateWindow(
+			    L"BUTTON",
+			    L"Mirror Leg",
+			    WS_VISIBLE | WS_CHILD,
+			    100, 10, 100, 30,
+			    hwnd,
+			    (HMENU)ID_MIRROR_LEG_BUTTON,
+			    NULL,
+			    NULL
+			);
         }
         break;
 
@@ -722,6 +738,12 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     // writes it out as an uncompressed 24-bit BMP -- the
                     // on-screen display (with handles) is unaffected
                     saveCanvasAsBMP("robot.bmp", app->hwndMain, app);
+                    break;
+
+                case ID_MIRROR_LEG_BUTTON:
+                    // flips the leg's bend to the other side, in place --
+                    // see robot.c's mirrorHipLeg for the derivation
+                    mirrorHipLeg(&app->robotScene.robot);
                     break;
             }
             break;

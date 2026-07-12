@@ -10,6 +10,60 @@ Point getCenter(Semni b)
     return c;
 }
 
+// Reflects an attach angle (circleEdge's cos/sin convention) the way a
+// point ON A CIRCLE reflects under an x-mirror: circleEdge(c1, r1, a) =
+// c1 + r1*(cos(a), sin(a)), so mirroring c1's own x (as mirrorHipLeg does
+// for innerCircle/kneeCircle) and wanting the point on the circle to
+// mirror too means r1*cos(a) has to negate while r1*sin(a) stays put --
+// i.e. a' = 180 - a (cos(180-a) = -cos(a), sin(180-a) = sin(a)).
+static float mirrorArcAngle(float angleDeg)
+{
+    float mirrored = 180.0f - angleDeg;
+
+    while (mirrored > 180.0f) mirrored -= 360.0f;
+    while (mirrored < -180.0f) mirrored += 360.0f;
+
+    return mirrored;
+}
+
+// The leg's joints (innerCircle, kneeCircle, ankleCircle) are stored as
+// raw local coordinates, in the frame BEFORE hipAngle/kneeAngle rotate
+// them into place (see app.h's comments on those fields) -- so mirroring
+// the leg is a plain x-reflection of each one, about the body's own
+// center line (the headX/buttX midpoint, same reference getCenter uses).
+//
+// A reflection alone would only flip the joints' REST positions though --
+// to also flip the VISIBLE (rotated) pose, hipAngle and kneeAngle, which
+// each compose a rotation on top of those joints, have to negate too:
+// reflecting a point and then rotating it by angle T lands in the same
+// place as rotating it by -T and then reflecting (a standard fact about
+// 2D isometries -- reflection∘rotate(T) == rotate(-T)∘reflection), so
+// negating every rotation angle downstream of a reflected joint is what
+// keeps the whole chain self-consistent as a true mirror image instead of
+// just moving the joints while leaving them bent the original way.
+//
+// The four arc attach angles (thighArc1Angle/thighArc2Angle/
+// shinArc1Angle/shinArc2Angle) aren't rotations being composed, though --
+// they're points parameterized around their own circle (circleEdge), so
+// they mirror via mirrorArcAngle (180 - angle) instead of negation; see
+// its comment.
+void mirrorHipLeg(Semni* b)
+{
+    float centerX = (b->headX + b->buttX) * 0.5f;
+
+    b->innerCircle.x = 2.0f * centerX - b->innerCircle.x;
+    b->kneeCircle.x  = 2.0f * centerX - b->kneeCircle.x;
+    b->ankleCircle.x = 2.0f * centerX - b->ankleCircle.x;
+
+    b->hipAngle  = -b->hipAngle;
+    b->kneeAngle = -b->kneeAngle;
+
+    b->thighArc1Angle = mirrorArcAngle(b->thighArc1Angle);
+    b->thighArc2Angle = mirrorArcAngle(b->thighArc2Angle);
+    b->shinArc1Angle  = mirrorArcAngle(b->shinArc1Angle);
+    b->shinArc2Angle  = mirrorArcAngle(b->shinArc2Angle);
+}
+
 void printRobotAsInit(Semni b)
 {
     printf("app->robotScene.robot.headX = %.6ff;\n", b.headX);
