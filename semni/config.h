@@ -92,11 +92,15 @@
 // axis) rather than outward, so it needs its own radius cap: the concave
 // construction's radius grows toward infinity much faster as the attach
 // angle nears its own singularity than the convex one does for the same
-// hip/knee layout (verified numerically -- the concave safe half-width
-// for this cap is ~72 degrees around its own center, vs a ~85.6 degree
-// singularity bound), so reusing MAX_THIGH_ARC_R here would let it swing
-// almost all the way to that singularity before clamping kicks in. Reuses
-// MIN_THIGH_ARC_R/THIGH_ARC_ANGLE_MARGIN_DEG/
+// hip/knee layout (the singularity itself is a fixed ~85.6 degrees from
+// this cap's center, set by hip/knee geometry alone), so reusing
+// MAX_THIGH_ARC_R here would let it swing almost all the way to that
+// singularity before clamping kicks in. Kept deliberately tight (~51
+// degree safe half-width, vs the ~85.6 degree singularity) so the pinch
+// stays shallow and well clear of the point where the math breaks down --
+// verified numerically that the default thighArc2Angle (-130, a 40
+// degree offset from this cap's center) still lands comfortably inside.
+// Reuses MIN_THIGH_ARC_R/THIGH_ARC_ANGLE_MARGIN_DEG/
 // THIGH_ARC_DRAG_SENSITIVITY_DEG_PER_UNIT for everything else -- thigh
 // arc 2 doesn't need its own SIDE_MARGIN either, since its concave range
 // sits on the opposite side of the hip circle from thigh arc 1's convex
@@ -126,6 +130,17 @@
 #define SHIN_ARC_ANGLE_MARGIN_DEG 2.0f
 #define SHIN_ARC_SIDE_MARGIN_DEG 1.0f
 #define SHIN_ARC_DRAG_SENSITIVITY_DEG_PER_UNIT 200.0f
+
+// same role as MAX_THIGH_ARC2_CONCAVE_R above, for shin arc 2 -- it's
+// also built with filletFromAttachAngleConcave instead of the usual
+// filletFromAttachAngle, bulging inward toward the knee-ankle axis
+// instead of outward. Verified numerically: 0.5 gives a ~69 degree safe
+// half-width around its own center, comfortably clear of the singularity
+// for this knee/ankle layout. Reuses MIN_SHIN_ARC_R/
+// SHIN_ARC_ANGLE_MARGIN_DEG/SHIN_ARC_DRAG_SENSITIVITY_DEG_PER_UNIT for
+// everything else -- no separate SIDE_MARGIN needed, same reasoning as
+// thigh arc 2 (its concave range doesn't overlap shin arc 1's convex one).
+#define MAX_SHIN_ARC2_CONCAVE_R 0.5f
 
 // minimum thigh/shin length, so dragging the knee or ankle circle along
 // its constrained axis can't collapse the limb to zero or flip it

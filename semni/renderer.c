@@ -302,9 +302,16 @@ static void drawShin(Semni b, RenderState* rs)
     Point shin1AnkleTangentLocal = internalTangentPoint(shin1Fillet.center, shin1Fillet.radius, b.ankleCircle, b.ankleRadius);
     Point shin1NearLocal = circleTowardPoint(shin1Fillet.center, shin1Fillet.radius, axisMidLocal);
 
-    Fillet shin2Fillet = filletFromAttachAngle(b.kneeCircle, b.kneeRadius, b.ankleCircle, b.ankleRadius, b.shinArc2Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC_R);
+    // shinArc2Angle uses the concave construction (bulges inward instead
+    // of outward -- see app.h's comment), same as thighArc2Angle. The
+    // ankle-side tangent point for an externally-tangent fillet is just
+    // circleTowardPoint(fillet, ankleCircle) instead of
+    // internalTangentPoint -- externally tangent circles touch exactly on
+    // the line between their centers, which is exactly what
+    // circleTowardPoint finds.
+    Fillet shin2Fillet = filletFromAttachAngleConcave(b.kneeCircle, b.kneeRadius, b.ankleCircle, b.ankleRadius, b.shinArc2Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC2_CONCAVE_R);
     Point shin2KneeTangentLocal = circleEdge(b.kneeCircle, b.kneeRadius, b.shinArc2Angle);
-    Point shin2AnkleTangentLocal = internalTangentPoint(shin2Fillet.center, shin2Fillet.radius, b.ankleCircle, b.ankleRadius);
+    Point shin2AnkleTangentLocal = circleTowardPoint(shin2Fillet.center, shin2Fillet.radius, b.ankleCircle);
     Point shin2NearLocal = circleTowardPoint(shin2Fillet.center, shin2Fillet.radius, axisMidLocal);
 
     setColor(rs->draggingShin1 || shinAffected, 0.2f, 0.4f, 1.0f);
@@ -333,7 +340,7 @@ static void drawShinHandles(Semni b, RenderState* rs)
     Point shin1NearLocal = circleTowardPoint(shin1Fillet.center, shin1Fillet.radius, axisMidLocal);
     Point shin1MidLocal = circleAtAxisMid(shin1Fillet.center, shin1Fillet.radius, b.kneeCircle, b.ankleCircle, shin1NearLocal);
 
-    Fillet shin2Fillet = filletFromAttachAngle(b.kneeCircle, b.kneeRadius, b.ankleCircle, b.ankleRadius, b.shinArc2Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC_R);
+    Fillet shin2Fillet = filletFromAttachAngleConcave(b.kneeCircle, b.kneeRadius, b.ankleCircle, b.ankleRadius, b.shinArc2Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC2_CONCAVE_R);
     Point shin2NearLocal = circleTowardPoint(shin2Fillet.center, shin2Fillet.radius, axisMidLocal);
     Point shin2MidLocal = circleAtAxisMid(shin2Fillet.center, shin2Fillet.radius, b.kneeCircle, b.ankleCircle, shin2NearLocal);
 

@@ -122,9 +122,12 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             Point shin1NearLocal = circleTowardPoint(shin1Fillet.center, shin1Fillet.radius, shinAxisMidLocal);
             Point shin1MidLocal = circleAtAxisMid(shin1Fillet.center, shin1Fillet.radius, app->robotScene.robot.kneeCircle, app->robotScene.robot.ankleCircle, shin1NearLocal);
 
-            Fillet shin2Fillet = filletFromAttachAngle(app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeRadius,
-                                                        app->robotScene.robot.ankleCircle, app->robotScene.robot.ankleRadius,
-                                                        app->robotScene.robot.shinArc2Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC_R);
+            // shinArc2Angle uses the concave construction (bulges inward
+            // instead of outward -- see app.h's comment), same as
+            // thighArc2Angle
+            Fillet shin2Fillet = filletFromAttachAngleConcave(app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeRadius,
+                                                               app->robotScene.robot.ankleCircle, app->robotScene.robot.ankleRadius,
+                                                               app->robotScene.robot.shinArc2Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC2_CONCAVE_R);
             Point shin2NearLocal = circleTowardPoint(shin2Fillet.center, shin2Fillet.radius, shinAxisMidLocal);
             Point shin2MidLocal = circleAtAxisMid(shin2Fillet.center, shin2Fillet.radius, app->robotScene.robot.kneeCircle, app->robotScene.robot.ankleCircle, shin2NearLocal);
 
@@ -518,9 +521,12 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             // axis movement relative to the knee->ankle axis instead of
             // hip->knee (shinLocalMouse already has kneeAngle undone, same
             // way legLocalMouse has hipAngle undone for the thigh).
-            // shinArc1Angle stays locked to the negative-delta side of
-            // centerDeg and shinArc2Angle to the positive side, and like
-            // the thigh pair, dragging one does NOT mirror the other.
+            // shinArc1Angle (convex) stays locked to the negative-delta
+            // side of ITS centerDeg, same "stay off the degenerate center"
+            // safety top/bottom and thighArc1Angle use. shinArc2Angle
+            // (concave) drags against a totally different, disjoint safe
+            // range (see its own block below) so it doesn't need that
+            // same one-sided lock. Dragging one never mirrors the other.
             // Nothing needs recentering on a knee/ankle move -- the angle
             // is already fully relative to kneeCircle/ankleCircle, so the
             // fillet solve just adapts automatically every frame.
@@ -545,13 +551,20 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 app->robotScene.robot.shinArc1Angle = range.centerDeg + delta;
             }
 
+            // shinArc2Angle drags the same incremental, perpendicular-
+            // offset way as shinArc1Angle, but against its own concave
+            // safe range (filletSafeAngleRangeConcave) -- centered on the
+            // opposite side of kneeCircle, facing ankleCircle. No
+            // side-lock needed: shinArc1Angle's range and this one don't
+            // share a degenerate center, so this just clamps symmetrically
+            // to whichever side of ITS OWN center the drag reaches.
             if (app->draggingShin2)
             {
-                SafeAngleRange range = filletSafeAngleRange(app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeRadius,
-                                                             app->robotScene.robot.ankleCircle, app->robotScene.robot.ankleRadius,
-                                                             MAX_SHIN_ARC_R);
+                SafeAngleRange range = filletSafeAngleRangeConcave(app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeRadius,
+                                                                    app->robotScene.robot.ankleCircle, app->robotScene.robot.ankleRadius,
+                                                                    MAX_SHIN_ARC2_CONCAVE_R);
                 float maxDelta = range.halfWidthDeg - SHIN_ARC_ANGLE_MARGIN_DEG;
-                if (maxDelta < SHIN_ARC_SIDE_MARGIN_DEG) maxDelta = SHIN_ARC_SIDE_MARGIN_DEG;
+                if (maxDelta < 0.0f) maxDelta = 0.0f;
 
                 float perpNow = perpOffsetOnAxis(shinLocalMouse, app->robotScene.robot.kneeCircle, app->robotScene.robot.ankleCircle);
                 float raw = app->shinArcDragStartAngle + (perpNow - app->shinArcDragStartPerp) * SHIN_ARC_DRAG_SENSITIVITY_DEG_PER_UNIT;
@@ -560,10 +573,8 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 while (delta > 180.0f) delta -= 360.0f;
                 while (delta < -180.0f) delta += 360.0f;
 
-                // mirror image of shin1's clamp -- locked to the opposite
-                // (positive-delta) side of centerDeg
-                if (delta < SHIN_ARC_SIDE_MARGIN_DEG) delta = SHIN_ARC_SIDE_MARGIN_DEG;
                 if (delta > maxDelta) delta = maxDelta;
+                if (delta < -maxDelta) delta = -maxDelta;
 
                 app->robotScene.robot.shinArc2Angle = range.centerDeg + delta;
             }

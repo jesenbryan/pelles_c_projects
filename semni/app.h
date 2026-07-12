@@ -62,14 +62,19 @@ typedef struct {
     Point ankleCircle;
     float ankleRadius;
 
-    // the two shin seams: same tangent-restricted-fillet construction as
-    // thighArc1Angle/thighArc2Angle above, just between kneeCircle (knee)
-    // and ankleCircle (ankle) instead of hip and knee -- each is the angle
-    // where it attaches to kneeCircle (same circleEdge/filletFromAttachAngle
-    // convention), with the fillet's radius, center, and other tangent
-    // point (on ankleCircle) derived from that angle every frame. Like the
-    // thigh pair, these two aren't mirrored -- each stays on its own fixed
-    // side of the knee-ankle axis and drags independently.
+    // the two shin seams, both parameterized by the angle where they
+    // attach to kneeCircle (same circleEdge/filletFromAttachAngle
+    // convention as the thigh pair above), with the fillet's radius,
+    // center, and other tangent point (on ankleCircle) derived from that
+    // angle every frame. Same convex/concave split as thighArc1Angle/
+    // thighArc2Angle: shinArc1Angle uses the usual convex construction
+    // (filletFromAttachAngle) and bulges outward, away from the
+    // knee-ankle axis. shinArc2Angle uses the concave construction
+    // (filletFromAttachAngleConcave) instead and pinches inward, toward
+    // the knee-ankle axis -- its safe range sits on the opposite side of
+    // kneeCircle from shinArc1Angle's, so the two don't share a
+    // degenerate point to stay clear of and drag independently with no
+    // side-locking needed between them.
     float shinArc1Angle;
     float shinArc2Angle;
 
