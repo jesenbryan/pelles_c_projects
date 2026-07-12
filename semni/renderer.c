@@ -299,12 +299,27 @@ void drawSemniHandles(Semni b, RenderState* rs)
     Point headHandle   = rotatePoint((Point){b.headX, b.y}, center, angle);
     Point buttHandle    = rotatePoint((Point){b.buttX, b.y}, center, angle);
 
-    // seam attach handles: sit exactly at circleEdge(head, headRadius,
-    // topArcAngle/bottomArcAngle) -- the literal tangent point, not a
-    // derived quantity -- so dragging tracks the cursor exactly, with no
-    // drift, unlike the old radius-driven near-pole handle
-    Point topHandle = rotatePoint(circleEdge((Point){b.headX, b.y}, b.headRadius, b.topArcAngle), center, angle);
-    Point bottomHandle = rotatePoint(circleEdge((Point){b.headX, b.y}, b.headRadius, b.bottomArcAngle), center, angle);
+    // seam attach handles: pinned to the exact midpoint between head and
+    // butt on X, with Y solved from the arc's actual fillet circle at
+    // that exact X (circleAtX) so the handle sits genuinely ON the
+    // visible curve AND in the true middle -- filletBulgePoint alone only
+    // gives the closest point to the midline, which is usually close but
+    // not exactly at bodyMid.x
+    Point headLocal = { b.headX, b.y };
+    Point buttLocal = { b.buttX, b.y };
+    Point bodyMidLocal = { (headLocal.x + buttLocal.x) * 0.5f, (headLocal.y + buttLocal.y) * 0.5f };
+
+    Fillet topSeamFillet = filletFromAttachAngle(headLocal, b.headRadius, buttLocal, b.buttRadius, b.topArcAngle, MIN_ARC_R, MAX_ARC_R);
+    Fillet bottomSeamFillet = filletFromAttachAngle(headLocal, b.headRadius, buttLocal, b.buttRadius, b.bottomArcAngle, MIN_ARC_R, MAX_ARC_R);
+
+    Point topNearLocal = circleTowardPoint(topSeamFillet.center, topSeamFillet.radius, bodyMidLocal);
+    Point bottomNearLocal = circleTowardPoint(bottomSeamFillet.center, bottomSeamFillet.radius, bodyMidLocal);
+
+    Point topMidLocal = circleAtX(topSeamFillet.center, topSeamFillet.radius, bodyMidLocal.x, topNearLocal);
+    Point bottomMidLocal = circleAtX(bottomSeamFillet.center, bottomSeamFillet.radius, bodyMidLocal.x, bottomNearLocal);
+
+    Point topHandle = rotatePoint(topMidLocal, center, angle);
+    Point bottomHandle = rotatePoint(bottomMidLocal, center, angle);
 
     drawHandle(topHandle, rs->draggingTopArc, ARC_HANDLE_RADIUS);
     drawHandle(bottomHandle, rs->draggingBottomArc, ARC_HANDLE_RADIUS);

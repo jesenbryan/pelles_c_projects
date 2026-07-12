@@ -110,3 +110,24 @@ SafeAngleRange filletSafeAngleRange(Point c1, float r1, Point c2, float r2, floa
 // Clamps angleDeg into the given safe range, pulled in by marginDeg extra
 // on each side for numerical headroom right at the boundary.
 float clampToSafeAngleRange(float angleDeg, SafeAngleRange range, float marginDeg);
+
+// The point on the fillet circle (from filletFromAttachAngle(c1, r1, c2,
+// r2, angleDeg, ...)) nearest to "target" -- i.e. the arc's visible
+// "bulge"/middle point. Combines filletFromAttachAngle + circleTowardPoint,
+// since callers always want this pairing together. Note: this is only an
+// approximation of "the middle of the arc" -- it's the closest point to
+// target, which generally does NOT land at target's own X coordinate
+// (see circleAtX below for a handle that needs to sit at an exact X).
+Point filletBulgePoint(Point c1, float r1, Point c2, float r2, float angleDeg, float minRadius, float maxRadius, Point target);
+
+// The point where the circle (center, radius) crosses the vertical line
+// x == targetX -- there are generally two such points (above and below
+// center), and this returns whichever one is closer to "preferNear", so
+// the caller lands on the correct (visible) side instead of the far side
+// of the circle. Degenerates to the circle's closest approach to that
+// line if targetX is outside the circle's horizontal reach entirely.
+// Used to pin a handle's display position to an exact X (e.g. the
+// head-butt midpoint) while keeping it genuinely ON the circle, instead
+// of just using filletBulgePoint's "nearest point" (which is close to,
+// but not exactly at, that X).
+Point circleAtX(Point center, float radius, float targetX, Point preferNear);

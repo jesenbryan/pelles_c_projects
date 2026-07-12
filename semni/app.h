@@ -128,6 +128,16 @@ typedef struct {
     Point hipDragShinCtrl1Offset;
     Point hipDragShinCtrl2Offset;
 
+    // captured once, when a seam arc drag starts: the mouse's local Y and
+    // the arc's angle at that moment. Each WM_MOUSEMOVE then sets the
+    // angle to (start angle + scaled Y delta since the drag began)
+    // instead of solving for an exact angle from the absolute mouse
+    // position -- see ARC_DRAG_SENSITIVITY_DEG_PER_UNIT's comment in
+    // config.h for why. Only one arc can be dragged at a time, so top and
+    // bottom share these two fields.
+    float arcDragStartMouseY;
+    float arcDragStartAngle;
+
     Point mouseGL;
     DWORD lastLogTime;
 } AppState;

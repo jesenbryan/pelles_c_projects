@@ -255,6 +255,29 @@ float clampToSafeAngleRange(float angleDeg, SafeAngleRange range, float marginDe
     return range.centerDeg + delta;
 }
 
+Point filletBulgePoint(Point c1, float r1, Point c2, float r2, float angleDeg, float minRadius, float maxRadius, Point target)
+{
+    Fillet f = filletFromAttachAngle(c1, r1, c2, r2, angleDeg, minRadius, maxRadius);
+    return circleTowardPoint(f.center, f.radius, target);
+}
+
+Point circleAtX(Point center, float radius, float targetX, Point preferNear)
+{
+    float dx = targetX - center.x;
+    float remSq = radius * radius - dx * dx;
+    if (remSq < 0.0f) remSq = 0.0f; // targetX is outside the circle's horizontal reach -- fall back to the closest approach
+
+    float dy = sqrtf(remSq);
+
+    Point p1 = { targetX, center.y + dy };
+    Point p2 = { targetX, center.y - dy };
+
+    float d1 = (p1.y - preferNear.y) * (p1.y - preferNear.y);
+    float d2 = (p2.y - preferNear.y) * (p2.y - preferNear.y);
+
+    return (d1 <= d2) ? p1 : p2;
+}
+
 // Finds the circle that passes through all three points.
 // Used to draw an arc through p0, p1, p2 instead of a bezier curve.
 Circle circumcircle(Point p0, Point p1, Point p2)

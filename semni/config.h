@@ -44,6 +44,21 @@
 // into the other one's territory.
 #define ARC_SIDE_MARGIN_DEG 10.0f
 
+// the seam handle now sits at the arc's visible middle/bulge point rather
+// than the head-circle tangent point, so dragging can no longer read the
+// attach angle directly off the mouse's polar angle around the head
+// circle (the handle isn't on that circle anymore). Instead it drags
+// incrementally along one axis (vertical mouse movement): angle = (angle
+// when the drag started) + (Y moved since then) * this sensitivity.
+// Bulge height isn't a monotonic function of angle across the whole
+// range (it peaks partway through, then falls back toward zero near
+// SafeAngleRange's centerDeg), so an absolute mouse-position-to-angle
+// solve can snap on click or feel non-linear near the edges --
+// incremental dragging sidesteps that entirely, since it only ever asks
+// "which way and how far did the mouse move", never "what angle does
+// this exact position correspond to".
+#define ARC_DRAG_SENSITIVITY_DEG_PER_UNIT 200.0f
+
 // scroll handle sitting at the center of the head/butt circles, used to
 // resize them (same radius for both -- they're the same kind of part)
 #define HEAD_BUTT_HANDLE_RADIUS 0.018f

@@ -37,13 +37,26 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
 
             Point mouse = app->mouseGL;
 
-            // seam attach handles: sit exactly at the tangent point on the
-            // head circle, so this is a plain circleEdge -- no derived
-            // fillet math needed just to hit-test them
+            // seam attach handles: pinned to the exact midpoint between
+            // head and butt on X, with Y solved from the arc's actual
+            // fillet circle at that exact X (circleAtX) -- same
+            // construction as drawSemniHandles, so the hit-test matches
+            // exactly where the handle is actually drawn
             Point headLocal = { app->robotScene.robot.headX, app->robotScene.robot.y };
+            Point buttLocal = { app->robotScene.robot.buttX, app->robotScene.robot.y };
+            Point bodyMidLocal = { (headLocal.x + buttLocal.x) * 0.5f, (headLocal.y + buttLocal.y) * 0.5f };
 
-            Point topHandleWorld = rotatePoint(circleEdge(headLocal, app->robotScene.robot.headRadius, app->robotScene.robot.topArcAngle), center, app->robotScene.robot.angle);
-            Point bottomHandleWorld = rotatePoint(circleEdge(headLocal, app->robotScene.robot.headRadius, app->robotScene.robot.bottomArcAngle), center, app->robotScene.robot.angle);
+            Fillet topSeamFillet = filletFromAttachAngle(headLocal, app->robotScene.robot.headRadius, buttLocal, app->robotScene.robot.buttRadius, app->robotScene.robot.topArcAngle, MIN_ARC_R, MAX_ARC_R);
+            Fillet bottomSeamFillet = filletFromAttachAngle(headLocal, app->robotScene.robot.headRadius, buttLocal, app->robotScene.robot.buttRadius, app->robotScene.robot.bottomArcAngle, MIN_ARC_R, MAX_ARC_R);
+
+            Point topNearLocal = circleTowardPoint(topSeamFillet.center, topSeamFillet.radius, bodyMidLocal);
+            Point bottomNearLocal = circleTowardPoint(bottomSeamFillet.center, bottomSeamFillet.radius, bodyMidLocal);
+
+            Point topMidLocal = circleAtX(topSeamFillet.center, topSeamFillet.radius, bodyMidLocal.x, topNearLocal);
+            Point bottomMidLocal = circleAtX(bottomSeamFillet.center, bottomSeamFillet.radius, bodyMidLocal.x, bottomNearLocal);
+
+            Point topHandleWorld = rotatePoint(topMidLocal, center, app->robotScene.robot.angle);
+            Point bottomHandleWorld = rotatePoint(bottomMidLocal, center, app->robotScene.robot.angle);
 
             Point innerWorld = rotatePoint(app->robotScene.robot.innerCircle, center, app->robotScene.robot.angle);
 
@@ -71,11 +84,20 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             {
                 app->draggingTopArc = 1;
                 app->activeHandle = 1;
+
+                // remember where the drag started (mouse Y + current
+                // angle) so WM_MOUSEMOVE can nudge the angle incrementally
+                // from here instead of solving an absolute position
+                app->arcDragStartMouseY = inverseRotate(mouse, center, app->robotScene.robot.angle).y;
+                app->arcDragStartAngle = app->robotScene.robot.topArcAngle;
             }
             else if (isNear(mouse, bottomHandleWorld, ARC_HANDLE_RADIUS))
             {
                 app->draggingBottomArc = 1;
                 app->activeHandle = 2;
+
+                app->arcDragStartMouseY = inverseRotate(mouse, center, app->robotScene.robot.angle).y;
+                app->arcDragStartAngle = app->robotScene.robot.bottomArcAngle;
             }
             else if (isNear(mouse, innerWorld, HIP_HANDLE_RADIUS))
             {
@@ -218,32 +240,35 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             Point headLocal = { app->robotScene.robot.headX, app->robotScene.robot.y };
             Point buttLocal = { app->robotScene.robot.buttX, app->robotScene.robot.y };
 
-            // the seam attach angle is just the polar angle of the mouse
-            // around the head circle's own center, in local space -- since
-            // the handle sits exactly at circleEdge(head, headRadius,
-            // angle), this tracks the cursor exactly, unlike the old
-            // radius-driven handle. Clamped on TWO sides: the far side
-            // (via filletSafeAngleRange) stops it from flattening into a
-            // line, and the near side keeps it away from centerDeg itself
-            // -- a second, different degenerate point where the arc's
-            // bulge collapses flat against the head-butt axis and flips to
-            // the opposite side. Each handle is locked to its own side of
+            // the seam handle now sits at the arc's visible middle/bulge
+            // point rather than the head-circle tangent point, so the
+            // attach angle can no longer be read directly off the mouse's
+            // polar angle around the head circle -- the handle isn't ON
+            // that circle anymore. Instead it drags along ONE axis only
+            // (vertical mouse movement), incrementally: angle = (angle
+            // when the drag started) + (Y moved since then) * a
+            // sensitivity constant -- see ARC_DRAG_SENSITIVITY_DEG_PER_UNIT
+            // in config.h for why. Clamped on TWO sides: the far side (via
+            // filletSafeAngleRange) stops it from flattening into a line,
+            // and the near side keeps it away from centerDeg itself -- a
+            // second, different degenerate point where the arc's bulge
+            // collapses flat against the head-butt axis and flips to the
+            // opposite side. Each handle is locked to its own side of
             // centerDeg (top stays negative-delta, bottom stays
             // positive-delta) so they can never cross into each other's
             // territory.
             if (app->draggingTopArc)
             {
-                float dx = localMouse.x - headLocal.x;
-                float dy = localMouse.y - headLocal.y;
-                float raw = atan2f(dy, dx) * 180.0f / 3.1415926f;
                 SafeAngleRange range = filletSafeAngleRange(headLocal, app->robotScene.robot.headRadius, buttLocal, app->robotScene.robot.buttRadius, MAX_ARC_R);
+                float maxDelta = range.halfWidthDeg - ARC_ANGLE_MARGIN_DEG;
+                if (maxDelta < ARC_SIDE_MARGIN_DEG) maxDelta = ARC_SIDE_MARGIN_DEG;
+
+                float deltaY = localMouse.y - app->arcDragStartMouseY;
+                float raw = app->arcDragStartAngle + deltaY * ARC_DRAG_SENSITIVITY_DEG_PER_UNIT;
 
                 float delta = raw - range.centerDeg;
                 while (delta > 180.0f) delta -= 360.0f;
                 while (delta < -180.0f) delta += 360.0f;
-
-                float maxDelta = range.halfWidthDeg - ARC_ANGLE_MARGIN_DEG;
-                if (maxDelta < ARC_SIDE_MARGIN_DEG) maxDelta = ARC_SIDE_MARGIN_DEG;
 
                 if (delta > -ARC_SIDE_MARGIN_DEG) delta = -ARC_SIDE_MARGIN_DEG;
                 if (delta < -maxDelta) delta = -maxDelta;
@@ -253,17 +278,16 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
 
             if (app->draggingBottomArc)
             {
-                float dx = localMouse.x - headLocal.x;
-                float dy = localMouse.y - headLocal.y;
-                float raw = atan2f(dy, dx) * 180.0f / 3.1415926f;
                 SafeAngleRange range = filletSafeAngleRange(headLocal, app->robotScene.robot.headRadius, buttLocal, app->robotScene.robot.buttRadius, MAX_ARC_R);
+                float maxDelta = range.halfWidthDeg - ARC_ANGLE_MARGIN_DEG;
+                if (maxDelta < ARC_SIDE_MARGIN_DEG) maxDelta = ARC_SIDE_MARGIN_DEG;
+
+                float deltaY = localMouse.y - app->arcDragStartMouseY;
+                float raw = app->arcDragStartAngle + deltaY * ARC_DRAG_SENSITIVITY_DEG_PER_UNIT;
 
                 float delta = raw - range.centerDeg;
                 while (delta > 180.0f) delta -= 360.0f;
                 while (delta < -180.0f) delta += 360.0f;
-
-                float maxDelta = range.halfWidthDeg - ARC_ANGLE_MARGIN_DEG;
-                if (maxDelta < ARC_SIDE_MARGIN_DEG) maxDelta = ARC_SIDE_MARGIN_DEG;
 
                 // mirror image of the top arc's clamp -- locked to the
                 // opposite (positive-delta) side of centerDeg
