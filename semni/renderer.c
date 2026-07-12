@@ -137,7 +137,14 @@ void drawSemniBody(Semni b, RenderState* rs)
     // same "compute into a named local first" pattern seamActive uses
     // below, rather than inlining the OR directly into the setColor call
     //int innerActive = rs->draggingInner || rs->hoverHip;
-    setColor(rs->draggingInner || rs->hoverHip, 0.2f, 0.4f, 1.0f);
+    //
+    // hoverHip WHILE HOLDING SHIFT is excluded here -- shift arms the
+    // hip-rotate scroll, which swings the whole leg rather than the hip
+    // itself, so that combo highlights the leg instead (drawThigh/
+    // drawShin's hipRotateHint) and leaves the hip circle unhighlighted.
+    // A plain hover (no shift) still means "scroll resizes this circle",
+    // so it keeps the highlight.
+    setColor(rs->draggingInner || (rs->hoverHip && !rs->shiftHeld), 0.2f, 0.4f, 1.0f);
     drawCircle(inner, b.innerRadius);
 
     // top/bottom seams: each is a circular arc internally tangent to both
@@ -234,10 +241,28 @@ static void drawThigh(Semni b, RenderState* rs)
     // hip, so hovering the hip handle WHILE HOLDING SHIFT previews that
     // reach in blue -- shift is what actually arms the hip-rotate scroll
     // (see WM_MOUSEWHEEL), so the preview is scoped to match: a plain
-    // hover (no shift) only highlights the hip's own handle
-    int hipRotateHint = rs->hoverHip && rs->shiftHeld;
+    // hover (no shift) only highlights the hip's own handle.
+    // Actively dragging the hip (draggingInner) also carries the whole leg
+    // along rigidly (see WM_MOUSEMOVE's hipDragKneeOffset/hipDragAnkleOffset
+    // handling), so that gets the same blue highlight, unconditionally.
+    int hipRotateHint = (rs->hoverHip && rs->shiftHeld) || rs->draggingInner;
 
-    setColor(rs->draggingKnee || hipRotateHint, 0.2f, 0.4f, 1.0f);
+    // knee's own highlight mirrors the hip circle's rule in drawSemniBody:
+    // hoverKnee WHILE HOLDING SHIFT arms the knee-rotate scroll (see
+    // WM_MOUSEWHEEL), which swings the shin/ankle rather than the knee
+    // itself, so that combo is excluded here -- it highlights the shin
+    // instead (drawShin's shinAffected already includes hoverKnee && shift).
+    // A plain hover (no shift) keeps the highlight.
+    //
+    // draggingKnee is deliberately left out here too: actively dragging the
+    // knee stretches the thigh arcs (they're what visibly reacts -- see the
+    // draggingKnee highlight added below), not the knee circle itself, so
+    // the circle stays unhighlighted for the duration of that drag. The
+    // hoverKnee term also needs !draggingKnee -- the cursor is still
+    // sitting on the handle for the whole drag (that's what started it),
+    // so without this the hover term alone would keep re-lighting the
+    // circle every frame regardless of the exclusion above.
+    setColor(hipRotateHint || (rs->hoverKnee && !rs->shiftHeld && !rs->draggingKnee), 0.2f, 0.4f, 1.0f);
     drawCircle(kneeWorld, b.kneeRadius);
 
     // the two thigh arcs: same tangent-fillet construction as the
@@ -263,12 +288,17 @@ static void drawThigh(Semni b, RenderState* rs)
     Point thigh2KneeTangentLocal = circleTowardPoint(thigh2Fillet.center, thigh2Fillet.radius, b.kneeCircle);
     Point thigh2NearLocal = circleTowardPoint(thigh2Fillet.center, thigh2Fillet.radius, axisMidLocal);
 
-    setColor(rs->draggingThigh1 || hipRotateHint, 0.2f, 0.4f, 1.0f);
+    // dragging the knee circle also stretches/shrinks both thigh arcs
+    // (they attach to kneeCircle, which just moved along the hip->knee
+    // axis -- see WM_MOUSEMOVE's draggingKnee/constrainToAxis handling),
+    // so that gets the same blue highlight as actually dragging an arc's
+    // own handle, same "carries other parts along" idea as hipRotateHint
+    setColor(rs->draggingThigh1 || rs->draggingKnee || hipRotateHint, 0.2f, 0.4f, 1.0f);
     drawArc(jointToWorld(thigh1InnerTangentLocal, b.innerCircle, b.hipAngle, center, angle),
             jointToWorld(thigh1NearLocal, b.innerCircle, b.hipAngle, center, angle),
             jointToWorld(thigh1KneeTangentLocal, b.innerCircle, b.hipAngle, center, angle));
 
-    setColor(rs->draggingThigh2 || hipRotateHint, 0.2f, 0.4f, 1.0f);
+    setColor(rs->draggingThigh2 || rs->draggingKnee || hipRotateHint, 0.2f, 0.4f, 1.0f);
     drawArc(jointToWorld(thigh2InnerTangentLocal, b.innerCircle, b.hipAngle, center, angle),
             jointToWorld(thigh2NearLocal, b.innerCircle, b.hipAngle, center, angle),
             jointToWorld(thigh2KneeTangentLocal, b.innerCircle, b.hipAngle, center, angle));
@@ -322,10 +352,30 @@ static void drawShin(Semni b, RenderState* rs)
     // either the hip OR the knee rotates -- both of those rotations are
     // now Shift-gated scrolls (see WM_MOUSEWHEEL), so the preview matches:
     // hovering either handle WHILE HOLDING SHIFT highlights the shin/foot,
-    // same idea as drawThigh's hipRotateHint
-    int shinAffected = (rs->hoverKnee || rs->hoverHip) && rs->shiftHeld;
+    // same idea as drawThigh's hipRotateHint.
+    // Actively dragging the hip (draggingInner) carries the ankle/foot
+    // along too (hipDragAnkleOffset), so it gets the same highlight,
+    // unconditionally, same as drawThigh's hipRotateHint.
+    int shinAffected = ((rs->hoverKnee || rs->hoverHip) && rs->shiftHeld) || rs->draggingInner;
 
-    setColor(rs->draggingAnkle || shinAffected, 0.2f, 0.4f, 1.0f);
+    // draggingAnkle is deliberately left out here, same reasoning as
+    // draggingKnee being left out of the knee circle's own highlight in
+    // drawThigh: actively dragging the ankle stretches the shin arcs
+    // (they're what visibly reacts -- see the draggingAnkle highlight
+    // added below), not the ankle/foot circle itself, so the circle stays
+    // unhighlighted for the duration of that drag.
+    //
+    // hoverAnkle previews the plain-scroll resize (see WM_MOUSEWHEEL's
+    // ankleWorld branch) -- no shift check needed here, unlike hoverHip/
+    // hoverKnee's "&& !shiftHeld" terms, since the ankle has no Shift-
+    // gated rotate action to disambiguate from (same as head/butt's
+    // unconditional hover highlight in drawSemniBody). It does still need
+    // "&& !draggingAnkle" though, same reasoning as the knee circle's
+    // hoverKnee term above: the cursor sits on the handle for the whole
+    // drag, so without the exclusion the hover term alone would keep
+    // re-lighting the circle every frame despite draggingAnkle being left
+    // out on purpose.
+    setColor(shinAffected || (rs->hoverAnkle && !rs->draggingAnkle), 0.2f, 0.4f, 1.0f);
     drawCircle(ankleWorld, b.ankleRadius);
 
     // worked out in the shin's own local (pre-kneeAngle) frame, then
@@ -350,12 +400,17 @@ static void drawShin(Semni b, RenderState* rs)
     Point shin2AnkleTangentLocal = circleTowardPoint(shin2Fillet.center, shin2Fillet.radius, b.ankleCircle);
     Point shin2NearLocal = circleTowardPoint(shin2Fillet.center, shin2Fillet.radius, axisMidLocal);
 
-    setColor(rs->draggingShin1 || shinAffected, 0.2f, 0.4f, 1.0f);
+    // dragging the ankle circle also stretches/shrinks both shin arcs
+    // (they attach to ankleCircle, which just moved along the knee->ankle
+    // axis -- see WM_MOUSEMOVE's draggingAnkle/constrainToAxis handling),
+    // same "carries the other visibly-reacting parts along" idea as
+    // draggingKnee getting added to the thigh arcs in drawThigh
+    setColor(rs->draggingShin1 || rs->draggingAnkle || shinAffected, 0.2f, 0.4f, 1.0f);
     drawArc(nestedJointToWorld(shin1KneeTangentLocal, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle),
             nestedJointToWorld(shin1NearLocal, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle),
             nestedJointToWorld(shin1AnkleTangentLocal, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle));
 
-    setColor(rs->draggingShin2 || shinAffected, 0.2f, 0.4f, 1.0f);
+    setColor(rs->draggingShin2 || rs->draggingAnkle || shinAffected, 0.2f, 0.4f, 1.0f);
     drawArc(nestedJointToWorld(shin2KneeTangentLocal, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle),
             nestedJointToWorld(shin2NearLocal, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle),
             nestedJointToWorld(shin2AnkleTangentLocal, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle));

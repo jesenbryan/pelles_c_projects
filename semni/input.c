@@ -601,6 +601,7 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             Point center = getCenter(app->robotScene.robot);
             Point innerWorld = rotatePoint(app->robotScene.robot.innerCircle, center, app->robotScene.robot.angle);
             Point kneeWorld = jointToWorld(app->robotScene.robot.kneeCircle, app->robotScene.robot.innerCircle, app->robotScene.robot.hipAngle, center, app->robotScene.robot.angle);
+            Point ankleWorld = nestedJointToWorld(app->robotScene.robot.ankleCircle, app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeAngle, app->robotScene.robot.innerCircle, app->robotScene.robot.hipAngle, center, app->robotScene.robot.angle);
             Point headWorld = rotatePoint((Point){app->robotScene.robot.headX, app->robotScene.robot.y}, center, app->robotScene.robot.angle);
             Point buttWorld = rotatePoint((Point){app->robotScene.robot.buttX, app->robotScene.robot.y}, center, app->robotScene.robot.angle);
 
@@ -653,6 +654,39 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     app->robotScene.robot.kneeAngle += step;
                 else
                     app->robotScene.robot.kneeAngle -= step;
+            }
+            else if (isNear(mouse, kneeWorld, KNEE_HANDLE_RADIUS))
+            {
+                // plain scroll (no Shift) on the knee handle resizes the
+                // knee circle itself instead of rotating -- same idea as
+                // the hip handle above
+                if (wheelDelta > 0)
+                    app->robotScene.robot.kneeRadius += radiusStep;
+                else
+                    app->robotScene.robot.kneeRadius -= radiusStep;
+
+                if (app->robotScene.robot.kneeRadius < MIN_R)
+                    app->robotScene.robot.kneeRadius = MIN_R;
+                if (app->robotScene.robot.kneeRadius > MAX_R)
+                    app->robotScene.robot.kneeRadius = MAX_R;
+            }
+            else if (isNear(mouse, ankleWorld, ANKLE_HANDLE_RADIUS))
+            {
+                // plain scroll on the ankle/foot handle resizes it -- no
+                // Shift-gated rotate branch needed here, unlike the hip and
+                // knee above: the ankle is the last joint in the chain, so
+                // there's nothing further down for a rotation to carry
+                // along, and it can just always resize on scroll like the
+                // head/butt handles below
+                if (wheelDelta > 0)
+                    app->robotScene.robot.ankleRadius += radiusStep;
+                else
+                    app->robotScene.robot.ankleRadius -= radiusStep;
+
+                if (app->robotScene.robot.ankleRadius < MIN_R)
+                    app->robotScene.robot.ankleRadius = MIN_R;
+                if (app->robotScene.robot.ankleRadius > MAX_R)
+                    app->robotScene.robot.ankleRadius = MAX_R;
             }
             else if (isNear(mouse, headWorld, HEAD_BUTT_HANDLE_RADIUS))
             {
@@ -773,6 +807,17 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
 			);
         }
         break;
+
+        // no WM_DESTROY handler existed before, so clicking the window's
+        // close button destroyed the window but never told the message
+        // loop to stop -- WinMain's PeekMessage loop kept spinning
+        // (rendering to a now-dead HDC) and the process, and the console
+        // AllocConsole opened alongside it, never exited. PostQuitMessage
+        // queues WM_QUIT, which main.c's loop explicitly checks for and
+        // returns 0 on, ending the process (and with it, the console).
+        case WM_DESTROY:
+            PostQuitMessage(0);
+            break;
 
         case WM_COMMAND:
             switch (LOWORD(wParam))
