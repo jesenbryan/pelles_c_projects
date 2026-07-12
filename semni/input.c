@@ -625,11 +625,13 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 else
                     app->robotScene.robot.hipAngle -= step;
             }
-            else if (isNear(mouse, kneeWorld, KNEE_HANDLE_RADIUS))
+            else if (isNear(mouse, kneeWorld, KNEE_HANDLE_RADIUS) && shiftHeld)
             {
                 // rotate just the knee joint (and the shin/ankle hanging
                 // off of it), leaving the hip and the rest of the body
-                // untouched
+                // untouched. Gated behind Shift for the same reason as the
+                // hip above -- a plain scroll while hovering the knee
+                // handle falls through to the ordinary view-zoom instead.
                 if (wheelDelta > 0)
                     app->robotScene.robot.kneeAngle += step;
                 else

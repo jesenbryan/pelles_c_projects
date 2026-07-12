@@ -289,11 +289,11 @@ static void drawShin(Semni b, RenderState* rs)
     Point ankleWorld = nestedJointToWorld(b.ankleCircle, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle);
 
     // the shin (ankle/foot circle + both connecting arcs) swings whenever
-    // either the hip OR the knee rotates, so hovering the knee handle
-    // highlights it, same as hovering the hip WHILE HOLDING SHIFT does
-    // (shift is what arms the hip-rotate scroll -- see drawThigh's
-    // hipRotateHint for why the hip side of this is shift-gated)
-    int shinAffected = rs->hoverKnee || (rs->hoverHip && rs->shiftHeld);
+    // either the hip OR the knee rotates -- both of those rotations are
+    // now Shift-gated scrolls (see WM_MOUSEWHEEL), so the preview matches:
+    // hovering either handle WHILE HOLDING SHIFT highlights the shin/foot,
+    // same idea as drawThigh's hipRotateHint
+    int shinAffected = (rs->hoverKnee || rs->hoverHip) && rs->shiftHeld;
 
     setColor(rs->draggingAnkle || shinAffected, 0.2f, 0.4f, 1.0f);
     drawCircle(ankleWorld, b.ankleRadius);
