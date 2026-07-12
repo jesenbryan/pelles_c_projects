@@ -201,9 +201,10 @@ static void drawThigh(Semni b, RenderState* rs)
     Point kneeWorld = jointToWorld(b.kneeCircle, b.innerCircle, b.hipAngle, center, angle);
 
     // the whole thigh (knee circle + both connecting arcs) swings with the
-    // hip, so hovering the hip handle highlights it too -- not just while
+    // hip, so hovering the hip handle while holding Shift (the combo that
+    // actually rotates it on scroll) highlights it too -- not just while
     // it's actually being dragged
-    setColor(rs->draggingKnee || rs->hoverHip, 0.2f, 0.4f, 1.0f);
+    setColor(rs->draggingKnee || rs->hoverHipRotate, 0.2f, 0.4f, 1.0f);
     drawCircle(kneeWorld, b.kneeRadius);
 
     // the two thigh arcs: same tangent-fillet construction as the
@@ -229,12 +230,12 @@ static void drawThigh(Semni b, RenderState* rs)
     Point thigh2KneeTangentLocal = circleTowardPoint(thigh2Fillet.center, thigh2Fillet.radius, b.kneeCircle);
     Point thigh2NearLocal = circleTowardPoint(thigh2Fillet.center, thigh2Fillet.radius, axisMidLocal);
 
-    setColor(rs->draggingThigh1 || rs->hoverHip, 0.2f, 0.4f, 1.0f);
+    setColor(rs->draggingThigh1 || rs->hoverHipRotate, 0.2f, 0.4f, 1.0f);
     drawArc(jointToWorld(thigh1InnerTangentLocal, b.innerCircle, b.hipAngle, center, angle),
             jointToWorld(thigh1NearLocal, b.innerCircle, b.hipAngle, center, angle),
             jointToWorld(thigh1KneeTangentLocal, b.innerCircle, b.hipAngle, center, angle));
 
-    setColor(rs->draggingThigh2 || rs->hoverHip, 0.2f, 0.4f, 1.0f);
+    setColor(rs->draggingThigh2 || rs->hoverHipRotate, 0.2f, 0.4f, 1.0f);
     drawArc(jointToWorld(thigh2InnerTangentLocal, b.innerCircle, b.hipAngle, center, angle),
             jointToWorld(thigh2NearLocal, b.innerCircle, b.hipAngle, center, angle),
             jointToWorld(thigh2KneeTangentLocal, b.innerCircle, b.hipAngle, center, angle));
@@ -285,9 +286,10 @@ static void drawShin(Semni b, RenderState* rs)
     Point ankleWorld = nestedJointToWorld(b.ankleCircle, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle);
 
     // the shin (ankle circle + both connecting arcs) swings whenever
-    // either the hip OR the knee rotates, so hovering either handle
-    // highlights it -- but the thigh only cares about the hip (see above)
-    int shinAffected = rs->hoverHip || rs->hoverKnee;
+    // either the hip OR the knee rotates, so hovering either handle while
+    // holding Shift highlights it -- but the thigh only cares about the
+    // hip (see above)
+    int shinAffected = rs->hoverHipRotate || rs->hoverKneeRotate;
 
     setColor(rs->draggingAnkle || shinAffected, 0.2f, 0.4f, 1.0f);
     drawCircle(ankleWorld, b.ankleRadius);
@@ -436,6 +438,16 @@ static void renderRobot(AppState* app, int includeHandles)
     rs.hoverAnkle = app->hoverAnkle;
     rs.hoverHead = app->hoverHead;
     rs.hoverButt = app->hoverButt;
+
+    // recomputed fresh here from live Shift state rather than trusting
+    // app->hoverHipRotate/hoverKneeRotate -- those are only refreshed on
+    // WM_MOUSEMOVE, so if the mouse sits still over a handle and the user
+    // just presses/releases Shift, no mousemove fires and the cached
+    // values go stale, leaving the highlight stuck off (or on) even
+    // though scrolling right now would (or wouldn't) rotate the joint
+    BOOL shiftHeldNow = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+    rs.hoverHipRotate = app->hoverHip && shiftHeldNow;
+    rs.hoverKneeRotate = app->hoverKnee && shiftHeldNow;
 
     drawSemni(app->robotScene.robot, &rs, includeHandles);
 }

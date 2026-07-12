@@ -139,6 +139,14 @@ typedef struct {
     int hoverHead;
     int hoverButt;
 
+    // true only while hovering the hip/knee handle AND Shift is held --
+    // i.e. exactly when a scroll would actually rotate that joint. Drives
+    // the "rotating part" (thigh/shin) preview highlight, kept separate
+    // from hoverHip/hoverKnee above so the handle's own drag-affordance
+    // highlight still lights up on a plain hover, without Shift
+    int hoverHipRotate;
+    int hoverKneeRotate;
+
     // captured once, when a knee drag starts: ankleCircle's fixed offset
     // from kneeCircle at that moment. Re-applied fresh every WM_MOUSEMOVE
     // (kneeCircle + offset) instead of nudging it frame by frame, so the

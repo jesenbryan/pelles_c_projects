@@ -12,6 +12,41 @@
 #include "graphics.h"
 #include "save.h"
 
+// recomputes the joint-handle hover flags (and the Shift-gated
+// "rotating part" preview flags) from the last known mouse position --
+// factored out of WM_MOUSEMOVE so it can also be called on WM_KEYDOWN/
+// WM_KEYUP for Shift, letting the preview highlight update immediately
+// when Shift is pressed or released while the mouse sits still over a
+// handle, instead of waiting for the next bit of mouse movement
+static void updateHoverState(AppState* app)
+{
+    Point mouse = app->mouseGL;
+
+    Point center = getCenter(app->robotScene.robot);
+    float angle = app->robotScene.robot.angle;
+
+    Point innerWorld = rotatePoint(app->robotScene.robot.innerCircle, center, angle);
+    Point kneeWorld  = jointToWorld(app->robotScene.robot.kneeCircle, app->robotScene.robot.innerCircle, app->robotScene.robot.hipAngle, center, angle);
+    Point ankleWorld = nestedJointToWorld(app->robotScene.robot.ankleCircle, app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeAngle, app->robotScene.robot.innerCircle, app->robotScene.robot.hipAngle, center, angle);
+    Point headWorld  = rotatePoint((Point){app->robotScene.robot.headX, app->robotScene.robot.y}, center, angle);
+    Point buttWorld  = rotatePoint((Point){app->robotScene.robot.buttX, app->robotScene.robot.y}, center, angle);
+
+    app->hoverHip   = isNear(mouse, innerWorld, HIP_HANDLE_RADIUS);
+    app->hoverKnee  = isNear(mouse, kneeWorld, KNEE_HANDLE_RADIUS);
+    app->hoverAnkle = isNear(mouse, ankleWorld, ANKLE_HANDLE_RADIUS);
+    app->hoverHead  = isNear(mouse, headWorld, HEAD_BUTT_HANDLE_RADIUS);
+    app->hoverButt  = isNear(mouse, buttWorld, HEAD_BUTT_HANDLE_RADIUS);
+
+    // the "rotating part" preview (thigh/shin turning blue) should only
+    // show when a scroll would actually do something, i.e. hovering the
+    // handle AND holding Shift -- kept separate from hoverHip/hoverKnee
+    // above so the handle markers themselves still highlight on a plain
+    // hover for the drag-to-move affordance
+    BOOL shiftHeld = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+    app->hoverHipRotate  = app->hoverHip && shiftHeld;
+    app->hoverKneeRotate = app->hoverKnee && shiftHeld;
+}
+
 LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState* app)
 {
     switch (msg)
@@ -278,32 +313,22 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 app->lastLogTime = now;
             }
 
-            Point mouse = app->mouseGL;
-
-            Point center = getCenter(app->robotScene.robot);
-            float angle = app->robotScene.robot.angle;
-
-            // hover state for the joint circle handles is tracked here,
-            // continuously, regardless of whether anything is being
-            // dragged -- that's what lets them highlight yellow just
-            // from the mouse passing near them
-            Point innerWorld = rotatePoint(app->robotScene.robot.innerCircle, center, angle);
-            Point kneeWorld  = jointToWorld(app->robotScene.robot.kneeCircle, app->robotScene.robot.innerCircle, app->robotScene.robot.hipAngle, center, angle);
-            Point ankleWorld = nestedJointToWorld(app->robotScene.robot.ankleCircle, app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeAngle, app->robotScene.robot.innerCircle, app->robotScene.robot.hipAngle, center, angle);
-            Point headWorld  = rotatePoint((Point){app->robotScene.robot.headX, app->robotScene.robot.y}, center, angle);
-            Point buttWorld  = rotatePoint((Point){app->robotScene.robot.buttX, app->robotScene.robot.y}, center, angle);
-
-            app->hoverHip   = isNear(mouse, innerWorld, HIP_HANDLE_RADIUS);
-            app->hoverKnee  = isNear(mouse, kneeWorld, KNEE_HANDLE_RADIUS);
-            app->hoverAnkle = isNear(mouse, ankleWorld, ANKLE_HANDLE_RADIUS);
-            app->hoverHead  = isNear(mouse, headWorld, HEAD_BUTT_HANDLE_RADIUS);
-            app->hoverButt  = isNear(mouse, buttWorld, HEAD_BUTT_HANDLE_RADIUS);
+            // hover state for the joint circle handles (and the Shift-gated
+            // rotate preview) is tracked here, continuously, regardless of
+            // whether anything is being dragged -- that's what lets them
+            // highlight just from the mouse passing near them
+            updateHoverState(app);
 
             if (!app->draggingTopArc && !app->draggingBottomArc &&
                 !app->draggingInner &&
                 !app->draggingKnee && !app->draggingThigh1 && !app->draggingThigh2 &&
                 !app->draggingAnkle && !app->draggingShin1 && !app->draggingShin2)
                 break;
+
+            Point mouse = app->mouseGL;
+
+            Point center = getCenter(app->robotScene.robot);
+            float angle = app->robotScene.robot.angle;
 
             Point localMouse = inverseRotate(mouse, center, angle);
 
@@ -606,7 +631,13 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             float step = 2.0f;
             float radiusStep = 0.01f;
 
-            if (isNear(mouse, innerWorld, HIP_HANDLE_RADIUS))
+            // hip/knee rotation via scroll now requires Shift to be held
+            // down too, so a plain scroll over those handles doesn't
+            // accidentally bend a joint while the user is just trying to
+            // zoom the view
+            BOOL shiftHeld = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+
+            if (shiftHeld && isNear(mouse, innerWorld, HIP_HANDLE_RADIUS))
             {
                 // rotate just the hip joint (and everything hanging off of
                 // it -- knee, ankle, thigh/shin handles), not the whole
@@ -616,7 +647,7 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 else
                     app->robotScene.robot.hipAngle -= step;
             }
-            else if (isNear(mouse, kneeWorld, KNEE_HANDLE_RADIUS))
+            else if (shiftHeld && isNear(mouse, kneeWorld, KNEE_HANDLE_RADIUS))
             {
                 // rotate just the knee joint (and the shin/ankle hanging
                 // off of it), leaving the hip and the rest of the body
@@ -674,6 +705,21 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
 
             if (wParam == VK_RIGHT)
                 app->robotScene.robot.angle -= 2.0f;
+
+            // pressing Shift while the mouse is already sitting still over
+            // the hip/knee handle should light up the rotate preview right
+            // away, not wait for the next WM_MOUSEMOVE
+            if (wParam == VK_SHIFT)
+                updateHoverState(app);
+        }
+        break;
+
+        case WM_KEYUP:
+        {
+            // mirror of the above: releasing Shift over a still mouse
+            // should clear the rotate preview immediately too
+            if (wParam == VK_SHIFT)
+                updateHoverState(app);
         }
         break;
 
