@@ -6,6 +6,7 @@
 
 #define ID_SAVE_BUTTON 1001
 #define ID_MIRROR_LEG_BUTTON 1002
+#define ID_RESET_BUTTON 1003
 
 // ---- robot model (the "Semni") ----
 
@@ -104,6 +105,7 @@ typedef struct {
 typedef struct {
     HWND hSaveButton;
     HWND hMirrorButton;
+    HWND hResetButton;
 } UIState;
 
 // ---- application state ----
@@ -138,14 +140,6 @@ typedef struct {
     int hoverAnkle;
     int hoverHead;
     int hoverButt;
-
-    // true only while hovering the hip/knee handle AND Shift is held --
-    // i.e. exactly when a scroll would actually rotate that joint. Drives
-    // the "rotating part" (thigh/shin) preview highlight, kept separate
-    // from hoverHip/hoverKnee above so the handle's own drag-affordance
-    // highlight still lights up on a plain hover, without Shift
-    int hoverHipRotate;
-    int hoverKneeRotate;
 
     // captured once, when a knee drag starts: ankleCircle's fixed offset
     // from kneeCircle at that moment. Re-applied fresh every WM_MOUSEMOVE

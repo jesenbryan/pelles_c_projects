@@ -22,11 +22,6 @@ typedef struct {
     int hoverAnkle;
     int hoverHead;
     int hoverButt;
-
-    // hover + Shift held -- true exactly when a scroll would rotate that
-    // joint, drives the rotating-part (thigh/shin) preview highlight
-    int hoverHipRotate;
-    int hoverKneeRotate;
 } RenderState;
 
 void renderApp(AppState* app, HDC hdc);
