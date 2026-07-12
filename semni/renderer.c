@@ -133,9 +133,11 @@ void drawSemniBody(Semni b, RenderState* rs)
     setColor(rs->hoverButt, 0.2f, 0.4f, 1.0f);
     drawCircle(buttCenter, b.buttRadius);
 
-
 	// ---- INNER circle ----
-    setColor(rs->draggingInner, 0.2f, 0.4f, 1.0f);
+    // same "compute into a named local first" pattern seamActive uses
+    // below, rather than inlining the OR directly into the setColor call
+    //int innerActive = rs->draggingInner || rs->hoverHip;
+    setColor(rs->draggingInner || rs->hoverHip, 0.2f, 0.4f, 1.0f);
     drawCircle(inner, b.innerRadius);
 
     // top/bottom seams: each is a circular arc internally tangent to both
@@ -174,15 +176,43 @@ void drawSemniBody(Semni b, RenderState* rs)
     // cursor would turn blue even though the other is visibly moving too
     int seamActive = rs->draggingTopArc || rs->draggingBottomArc;
 
-    setColor(seamActive, 0.2f, 0.4f, 1.0f);
-    drawArc(rotatePoint(topHeadTangentLocal, center, angle),
-            rotatePoint(topNearLocal, center, angle),
-            rotatePoint(topButtTangentLocal, center, angle));
+    Point topArcP0 = rotatePoint(topHeadTangentLocal, center, angle);
+    Point topArcP1 = rotatePoint(topNearLocal, center, angle);
+    Point topArcP2 = rotatePoint(topButtTangentLocal, center, angle);
+
+    Point botArcP0 = rotatePoint(bottomHeadTangentLocal, center, angle);
+    Point botArcP1 = rotatePoint(bottomNearLocal, center, angle);
+    Point botArcP2 = rotatePoint(bottomButtTangentLocal, center, angle);
+
+    // TEMP DIAGNOSTIC -- prints exactly what reaches drawArc, once a
+    // second, same throttle as printRobotAsInit -- remove once the seam
+    // arc investigation is done
+    //static DWORD s_lastSeamLogTime = 0;
+    //DWORD s_now = GetTickCount();
+    //if (s_now - s_lastSeamLogTime >= 1000)
+    //{
+        //printf("[seam] center=(%.6f,%.6f) angle=%.6f  headLocal=(%.6f,%.6f) buttLocal=(%.6f,%.6f) bodyMidLocal=(%.6f,%.6f)\n",
+               //center.x, center.y, angle, headLocal.x, headLocal.y, buttLocal.x, buttLocal.y, bodyMidLocal.x, bodyMidLocal.y);
+        //printf("[seam] b.headRadius=%.6f b.buttRadius=%.6f b.topArcAngle=%.6f b.bottomArcAngle=%.6f MIN_ARC_R=%.6f MAX_ARC_R=%.6f\n",
+               //b.headRadius, b.buttRadius, b.topArcAngle, b.bottomArcAngle, (float)MIN_ARC_R, (float)MAX_ARC_R);
+        //printf("[seam] topFillet: center=(%.6f,%.6f) radius=%.6f\n", topFillet.center.x, topFillet.center.y, topFillet.radius);
+        //printf("[seam] topHeadTangentLocal=(%.6f,%.6f) topNearLocal=(%.6f,%.6f) topButtTangentLocal=(%.6f,%.6f)\n",
+               //topHeadTangentLocal.x, topHeadTangentLocal.y, topNearLocal.x, topNearLocal.y, topButtTangentLocal.x, topButtTangentLocal.y);
+        //printf("[seam] bottomFillet: center=(%.6f,%.6f) radius=%.6f\n", bottomFillet.center.x, bottomFillet.center.y, bottomFillet.radius);
+        //printf("[seam] bottomHeadTangentLocal=(%.6f,%.6f) bottomNearLocal=(%.6f,%.6f) bottomButtTangentLocal=(%.6f,%.6f)\n",
+               //bottomHeadTangentLocal.x, bottomHeadTangentLocal.y, bottomNearLocal.x, bottomNearLocal.y, bottomButtTangentLocal.x, bottomButtTangentLocal.y);
+        //printf("[seam] top    p0=(%.6f,%.6f) p1=(%.6f,%.6f) p2=(%.6f,%.6f)\n",
+               //topArcP0.x, topArcP0.y, topArcP1.x, topArcP1.y, topArcP2.x, topArcP2.y);
+        //printf("[seam] bottom p0=(%.6f,%.6f) p1=(%.6f,%.6f) p2=(%.6f,%.6f)\n",
+               //botArcP0.x, botArcP0.y, botArcP1.x, botArcP1.y, botArcP2.x, botArcP2.y);
+        //s_lastSeamLogTime = s_now;
+    //}
 
     setColor(seamActive, 0.2f, 0.4f, 1.0f);
-    drawArc(rotatePoint(bottomHeadTangentLocal, center, angle),
-            rotatePoint(bottomNearLocal, center, angle),
-            rotatePoint(bottomButtTangentLocal, center, angle));
+    drawArc(topArcP0, topArcP1, topArcP2);
+
+    setColor(seamActive, 0.2f, 0.4f, 1.0f);
+    drawArc(botArcP0, botArcP1, botArcP2);
 }
 
 // Draws the knee joint and the two arcs connecting it back to the inner

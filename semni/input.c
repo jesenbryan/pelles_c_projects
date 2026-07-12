@@ -625,6 +625,23 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 else
                     app->robotScene.robot.hipAngle -= step;
             }
+            else if (isNear(mouse, innerWorld, HIP_HANDLE_RADIUS))
+            {
+                // plain scroll (no Shift) on the hip handle resizes the hip
+                // circle itself instead of rotating -- same idea as the
+                // head/butt handles below, just reachable without a
+                // modifier since resizing the hip doesn't cascade into the
+                // rest of the leg the way rotating it does
+                if (wheelDelta > 0)
+                    app->robotScene.robot.innerRadius += radiusStep;
+                else
+                    app->robotScene.robot.innerRadius -= radiusStep;
+
+                if (app->robotScene.robot.innerRadius < MIN_R)
+                    app->robotScene.robot.innerRadius = MIN_R;
+                if (app->robotScene.robot.innerRadius > MAX_R)
+                    app->robotScene.robot.innerRadius = MAX_R;
+            }
             else if (isNear(mouse, kneeWorld, KNEE_HANDLE_RADIUS) && shiftHeld)
             {
                 // rotate just the knee joint (and the shin/ankle hanging
