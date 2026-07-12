@@ -607,11 +607,19 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             float step = 2.0f;
             float radiusStep = 0.01f;
 
-            if (isNear(mouse, innerWorld, HIP_HANDLE_RADIUS))
+            // WM_MOUSEWHEEL packs the modifier keys held during the scroll
+            // into the low word of wParam (MK_SHIFT/MK_CONTROL/etc.), same
+            // as WM_MOUSEMOVE -- so no GetAsyncKeyState polling needed
+            int shiftHeld = (LOWORD(wParam) & MK_SHIFT) != 0;
+
+            if (isNear(mouse, innerWorld, HIP_HANDLE_RADIUS) && shiftHeld)
             {
                 // rotate just the hip joint (and everything hanging off of
                 // it -- knee, ankle, thigh/shin handles), not the whole
-                // robot body
+                // robot body. Gated behind Shift so a plain scroll while
+                // hovering the (small, easy-to-clip) hip handle falls
+                // through to the ordinary view-zoom behavior below instead
+                // of rotating the hip by accident.
                 if (wheelDelta > 0)
                     app->robotScene.robot.hipAngle += step;
                 else

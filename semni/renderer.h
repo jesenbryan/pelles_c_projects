@@ -22,6 +22,11 @@ typedef struct {
     int hoverAnkle;
     int hoverHead;
     int hoverButt;
+
+    // Shift held during the most recent mouse move -- combined with
+    // hoverHip to preview the shift+scroll hip rotation's reach (thigh,
+    // knee, shin, foot) in blue before any rotation actually happens
+    int shiftHeld;
 } RenderState;
 
 void renderApp(AppState* app, HDC hdc);
