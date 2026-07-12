@@ -114,6 +114,20 @@ typedef struct {
     Point kneeDragShinCtrl1Offset;
     Point kneeDragShinCtrl2Offset;
 
+    // same idea, but for a hip drag: the whole leg (kneeCircle,
+    // thighCtrl1/2, ankleCircle, shinCtrl1/2) hangs off innerCircle, so
+    // moving the hip needs to carry all of it along as one rigid piece --
+    // each point's fixed offset from innerCircle is captured when the hip
+    // drag starts, then reapplied fresh every WM_MOUSEMOVE (innerCircle +
+    // offset), so the whole leg's shape/pose is preserved exactly instead
+    // of the rest of the leg staying behind while just the hip circle moves.
+    Point hipDragKneeOffset;
+    Point hipDragThigh1Offset;
+    Point hipDragThigh2Offset;
+    Point hipDragAnkleOffset;
+    Point hipDragShinCtrl1Offset;
+    Point hipDragShinCtrl2Offset;
+
     Point mouseGL;
     DWORD lastLogTime;
 } AppState;

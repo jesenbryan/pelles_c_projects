@@ -2,13 +2,57 @@
 #include <GL/gl.h>
 
 #include "graphics.h"
+#include "config.h"
 
 static HDC hdc;
 static HGLRC hrc;
 
+// current view zoom. zoom > 1 magnifies. Layered on top of the base
+// 1.5-unit half-extent ortho projection used everywhere else. Kept here
+// (not in AppState) since it's purely a projection concern -- screenToGL
+// and the projection setup need to agree on the same value, so they live
+// side by side instead of being threaded through from the caller.
+//
+// Deliberately NOT paired with a pan offset: an earlier version panned
+// toward the cursor on every zoom step, which could drift the view away
+// from the robot entirely (easy to do, since the robot is drawn as thin
+// outlines, not filled shapes -- a tiny cursor offset from any actual
+// line was enough to end up scrolled into blank canvas with nothing
+// findable on screen). Always zooming around a fixed center (world
+// origin, which is also the body's own rotation pivot -- see getCenter())
+// means the robot can never be scrolled out of view, at the cost of not
+// being able to zoom toward wherever the cursor happens to be.
+static float g_zoom = 1.0f;
+
+// last known viewport size, cached so a zoom change can reapply the
+// projection without waiting for the next WM_SIZE
+static int g_lastW = 800;
+static int g_lastH = 600;
+
 HDC graphicsGetHDC(void)
 {
     return hdc;
+}
+
+// Recomputes the ortho projection from the current viewport size and
+// zoom. Shared by graphicsOnResize and graphicsZoom so they can never
+// drift out of sync with each other or with screenToGL.
+static void applyProjection(void)
+{
+    if (g_lastH == 0) g_lastH = 1;
+
+    glViewport(0, 0, g_lastW, g_lastH);
+
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+
+    float aspect = (float)g_lastW / (float)g_lastH;
+    float halfY = 1.5f / g_zoom;
+    float halfX = halfY * aspect;
+
+    glOrtho(-halfX, halfX, -halfY, halfY, -1, 1);
+
+    glMatrixMode(GL_MODELVIEW);
 }
 
 void setupOpenGL(HWND hwnd)
@@ -38,9 +82,7 @@ void setupOpenGL(HWND hwnd)
     hrc = wglCreateContext(hdc);
     wglMakeCurrent(hdc, hrc);
 
-    glMatrixMode(GL_PROJECTION);
-    glLoadIdentity();
-    glOrtho(-1.5, 1.5, -1.5, 1.5, -1, 1);
+    applyProjection();
 
     glClearColor(1,1,1,1);
 
@@ -54,18 +96,10 @@ void graphicsOnResize(int w, int h)
 {
     if (h == 0) h = 1;
 
-    glViewport(0, 0, w, h);
+    g_lastW = w;
+    g_lastH = h;
 
-    glMatrixMode(GL_PROJECTION);
-    glLoadIdentity();
-
-    float aspect = (float)w / (float)h;
-
-    glOrtho(-1.5f * aspect, 1.5f * aspect,
-            -1.5f, 1.5f,
-            -1, 1);
-
-    glMatrixMode(GL_MODELVIEW);
+    applyProjection();
 }
 
 void screenToGL(HWND hwnd, int mx, int my, float *x, float *y)
@@ -81,14 +115,20 @@ void screenToGL(HWND hwnd, int mx, int my, float *x, float *y)
     float nx = (mx / w) * 2.0f - 1.0f;
     float ny = 1.0f - (my / h) * 2.0f;
 
-    if (aspect >= 1.0f)
-    {
-        *x = nx * 1.5f * aspect;
-        *y = ny * 1.5f;
-    }
-    else
-    {
-        *x = nx * 1.5f;
-        *y = ny * 1.5f / aspect;
-    }
+    float halfY = 1.5f / g_zoom;
+    float halfX = halfY * aspect;
+
+    *x = nx * halfX;
+    *y = ny * halfY;
+}
+
+void graphicsZoom(float factor)
+{
+    float newZoom = g_zoom * factor;
+    if (newZoom < MIN_ZOOM) newZoom = MIN_ZOOM;
+    if (newZoom > MAX_ZOOM) newZoom = MAX_ZOOM;
+
+    g_zoom = newZoom;
+
+    applyProjection();
 }

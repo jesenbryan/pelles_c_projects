@@ -55,3 +55,12 @@
 // its constrained axis can't collapse the limb to zero or flip it
 // through the pivot
 #define MIN_LIMB_LENGTH 0.1f
+
+// canvas view zoom (scroll wheel over empty space, i.e. not over a
+// handle). Bounds are kept modest so the robot can't be scrolled away to
+// an invisible speck or blown up past where the geometry is meaningful.
+// STEP is multiplicative per wheel notch so repeated scrolling feels
+// smooth rather than jumpy.
+#define MIN_ZOOM 0.25f
+#define MAX_ZOOM 8.0f
+#define ZOOM_STEP 1.1f

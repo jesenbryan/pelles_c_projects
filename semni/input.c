@@ -81,6 +81,29 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             {
                 app->draggingInner = 1;
                 app->activeHandle = 3;
+
+                // remember the whole leg's offset from the hip right now,
+                // so dragging the hip can carry it along as one rigid
+                // piece instead of leaving it behind
+                Point hip = app->robotScene.robot.innerCircle;
+
+                app->hipDragKneeOffset.x = app->robotScene.robot.kneeCircle.x - hip.x;
+                app->hipDragKneeOffset.y = app->robotScene.robot.kneeCircle.y - hip.y;
+
+                app->hipDragThigh1Offset.x = app->robotScene.robot.thighCtrl1.x - hip.x;
+                app->hipDragThigh1Offset.y = app->robotScene.robot.thighCtrl1.y - hip.y;
+
+                app->hipDragThigh2Offset.x = app->robotScene.robot.thighCtrl2.x - hip.x;
+                app->hipDragThigh2Offset.y = app->robotScene.robot.thighCtrl2.y - hip.y;
+
+                app->hipDragAnkleOffset.x = app->robotScene.robot.ankleCircle.x - hip.x;
+                app->hipDragAnkleOffset.y = app->robotScene.robot.ankleCircle.y - hip.y;
+
+                app->hipDragShinCtrl1Offset.x = app->robotScene.robot.shinCtrl1.x - hip.x;
+                app->hipDragShinCtrl1Offset.y = app->robotScene.robot.shinCtrl1.y - hip.y;
+
+                app->hipDragShinCtrl2Offset.x = app->robotScene.robot.shinCtrl2.x - hip.x;
+                app->hipDragShinCtrl2Offset.y = app->robotScene.robot.shinCtrl2.y - hip.y;
             }
             else if (isNear(mouse, kneeWorld, KNEE_HANDLE_RADIUS))
             {
@@ -250,8 +273,36 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 app->robotScene.robot.bottomArcAngle = range.centerDeg + delta;
             }
 
+            // dragging the hip carries the whole leg along as one rigid
+            // piece -- each descendant point is re-applied fresh from its
+            // offset (captured when the drag started) relative to the new
+            // hip position, same "captured offset" pattern used below for
+            // the knee drag, so the leg's shape/pose never drifts or gets
+            // left behind
             if (app->draggingInner)
-                app->robotScene.robot.innerCircle = localMouse;
+            {
+                Point newInner = localMouse;
+
+                app->robotScene.robot.kneeCircle.x = newInner.x + app->hipDragKneeOffset.x;
+                app->robotScene.robot.kneeCircle.y = newInner.y + app->hipDragKneeOffset.y;
+
+                app->robotScene.robot.thighCtrl1.x = newInner.x + app->hipDragThigh1Offset.x;
+                app->robotScene.robot.thighCtrl1.y = newInner.y + app->hipDragThigh1Offset.y;
+
+                app->robotScene.robot.thighCtrl2.x = newInner.x + app->hipDragThigh2Offset.x;
+                app->robotScene.robot.thighCtrl2.y = newInner.y + app->hipDragThigh2Offset.y;
+
+                app->robotScene.robot.ankleCircle.x = newInner.x + app->hipDragAnkleOffset.x;
+                app->robotScene.robot.ankleCircle.y = newInner.y + app->hipDragAnkleOffset.y;
+
+                app->robotScene.robot.shinCtrl1.x = newInner.x + app->hipDragShinCtrl1Offset.x;
+                app->robotScene.robot.shinCtrl1.y = newInner.y + app->hipDragShinCtrl1Offset.y;
+
+                app->robotScene.robot.shinCtrl2.x = newInner.x + app->hipDragShinCtrl2Offset.x;
+                app->robotScene.robot.shinCtrl2.y = newInner.y + app->hipDragShinCtrl2Offset.y;
+
+                app->robotScene.robot.innerCircle = newInner;
+            }
 
             // the leg chain sits in a frame additionally rotated by hipAngle
             // around innerCircle, so undo that rotation too before storing
@@ -417,6 +468,17 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     app->robotScene.robot.buttRadius = MIN_R;
                 if (app->robotScene.robot.buttRadius > MAX_R)
                     app->robotScene.robot.buttRadius = MAX_R;
+            }
+            else
+            {
+                // not over any handle -- treat the wheel as a view zoom
+                // instead. Always centered on the robot's own rotation
+                // pivot (not the cursor) -- see graphicsZoom's comment for
+                // why: a cursor-centered version could drift the view off
+                // the robot entirely, since it's drawn as thin outlines
+                // rather than filled shapes.
+                float factor = (wheelDelta > 0) ? ZOOM_STEP : (1.0f / ZOOM_STEP);
+                graphicsZoom(factor);
             }
         }
         break;
