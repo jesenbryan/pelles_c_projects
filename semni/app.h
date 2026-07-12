@@ -106,6 +106,11 @@ typedef struct {
     HWND hSaveButton;
     HWND hMirrorButton;
     HWND hResetButton;
+
+    // bottom-left status label -- shows the friendly name of whichever
+    // handle the mouse is currently hovering (e.g. "Thigh Arc 1"), blank
+    // when nothing is hovered. Updated every WM_MOUSEMOVE.
+    HWND hHoverLabel;
 } UIState;
 
 // ---- application state ----

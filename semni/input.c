@@ -340,6 +340,94 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             app->hoverHead  = isNear(mouse, headWorld, HEAD_BUTT_HANDLE_RADIUS);
             app->hoverButt  = isNear(mouse, buttWorld, HEAD_BUTT_HANDLE_RADIUS);
 
+            // bottom-left hover label: also needs the bulge/seam handle
+            // positions (top/bottom seam, both thigh arcs, both shin
+            // arcs), which the code below only computes while a drag is
+            // active -- so they're worked out fresh here too, same
+            // fillet + circleAtX/circleAtAxisMid construction
+            // WM_LBUTTONDOWN's hit-test and renderer.c's drawSemniHandles/
+            // drawThighHandles/drawShinHandles use, so this always lines
+            // up with where each handle is actually drawn. Kept in its
+            // own "Hover"-suffixed locals so it can't collide with the
+            // (differently-scoped) drag-only versions of the same
+            // computation further down.
+            {
+                Point headLocalHover = { app->robotScene.robot.headX, app->robotScene.robot.y };
+                Point buttLocalHover = { app->robotScene.robot.buttX, app->robotScene.robot.y };
+                Point bodyMidLocalHover = { (headLocalHover.x + buttLocalHover.x) * 0.5f, (headLocalHover.y + buttLocalHover.y) * 0.5f };
+
+                Fillet topSeamFilletHover = filletFromAttachAngle(headLocalHover, app->robotScene.robot.headRadius, buttLocalHover, app->robotScene.robot.buttRadius, app->robotScene.robot.topArcAngle, MIN_ARC_R, MAX_ARC_R);
+                Fillet bottomSeamFilletHover = filletFromAttachAngle(headLocalHover, app->robotScene.robot.headRadius, buttLocalHover, app->robotScene.robot.buttRadius, app->robotScene.robot.bottomArcAngle, MIN_ARC_R, MAX_ARC_R);
+
+                Point topNearLocalHover = circleTowardPoint(topSeamFilletHover.center, topSeamFilletHover.radius, bodyMidLocalHover);
+                Point bottomNearLocalHover = circleTowardPoint(bottomSeamFilletHover.center, bottomSeamFilletHover.radius, bodyMidLocalHover);
+
+                Point topMidLocalHover = circleAtX(topSeamFilletHover.center, topSeamFilletHover.radius, bodyMidLocalHover.x, topNearLocalHover);
+                Point bottomMidLocalHover = circleAtX(bottomSeamFilletHover.center, bottomSeamFilletHover.radius, bodyMidLocalHover.x, bottomNearLocalHover);
+
+                Point topHandleWorldHover = rotatePoint(topMidLocalHover, center, angle);
+                Point bottomHandleWorldHover = rotatePoint(bottomMidLocalHover, center, angle);
+
+                Point thighAxisMidLocalHover = { (app->robotScene.robot.innerCircle.x + app->robotScene.robot.kneeCircle.x) * 0.5f,
+                                                  (app->robotScene.robot.innerCircle.y + app->robotScene.robot.kneeCircle.y) * 0.5f };
+
+                Fillet thigh1FilletHover = filletFromAttachAngle(app->robotScene.robot.innerCircle, app->robotScene.robot.innerRadius, app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeRadius, app->robotScene.robot.thighArc1Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC_R);
+                Point thigh1NearLocalHover = circleTowardPoint(thigh1FilletHover.center, thigh1FilletHover.radius, thighAxisMidLocalHover);
+                Point thigh1MidLocalHover = circleAtAxisMid(thigh1FilletHover.center, thigh1FilletHover.radius, app->robotScene.robot.innerCircle, app->robotScene.robot.kneeCircle, thigh1NearLocalHover);
+
+                Fillet thigh2FilletHover = filletFromAttachAngleConcave(app->robotScene.robot.innerCircle, app->robotScene.robot.innerRadius, app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeRadius, app->robotScene.robot.thighArc2Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC2_CONCAVE_R);
+                Point thigh2NearLocalHover = circleTowardPoint(thigh2FilletHover.center, thigh2FilletHover.radius, thighAxisMidLocalHover);
+                Point thigh2MidLocalHover = circleAtAxisMid(thigh2FilletHover.center, thigh2FilletHover.radius, app->robotScene.robot.innerCircle, app->robotScene.robot.kneeCircle, thigh2NearLocalHover);
+
+                Point thigh1WorldHover = jointToWorld(thigh1MidLocalHover, app->robotScene.robot.innerCircle, app->robotScene.robot.hipAngle, center, angle);
+                Point thigh2WorldHover = jointToWorld(thigh2MidLocalHover, app->robotScene.robot.innerCircle, app->robotScene.robot.hipAngle, center, angle);
+
+                Point shinAxisMidLocalHover = { (app->robotScene.robot.kneeCircle.x + app->robotScene.robot.ankleCircle.x) * 0.5f,
+                                                 (app->robotScene.robot.kneeCircle.y + app->robotScene.robot.ankleCircle.y) * 0.5f };
+
+                Fillet shin1FilletHover = filletFromAttachAngle(app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeRadius, app->robotScene.robot.ankleCircle, app->robotScene.robot.ankleRadius, app->robotScene.robot.shinArc1Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC_R);
+                Point shin1NearLocalHover = circleTowardPoint(shin1FilletHover.center, shin1FilletHover.radius, shinAxisMidLocalHover);
+                Point shin1MidLocalHover = circleAtAxisMid(shin1FilletHover.center, shin1FilletHover.radius, app->robotScene.robot.kneeCircle, app->robotScene.robot.ankleCircle, shin1NearLocalHover);
+
+                Fillet shin2FilletHover = filletFromAttachAngleConcave(app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeRadius, app->robotScene.robot.ankleCircle, app->robotScene.robot.ankleRadius, app->robotScene.robot.shinArc2Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC2_CONCAVE_R);
+                Point shin2NearLocalHover = circleTowardPoint(shin2FilletHover.center, shin2FilletHover.radius, shinAxisMidLocalHover);
+                Point shin2MidLocalHover = circleAtAxisMid(shin2FilletHover.center, shin2FilletHover.radius, app->robotScene.robot.kneeCircle, app->robotScene.robot.ankleCircle, shin2NearLocalHover);
+
+                Point shin1WorldHover = nestedJointToWorld(shin1MidLocalHover, app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeAngle, app->robotScene.robot.innerCircle, app->robotScene.robot.hipAngle, center, angle);
+                Point shin2WorldHover = nestedJointToWorld(shin2MidLocalHover, app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeAngle, app->robotScene.robot.innerCircle, app->robotScene.robot.hipAngle, center, angle);
+
+                // priority mirrors WM_LBUTTONDOWN's hit-test order (topArc,
+                // bottomArc, hip, knee, thigh1, thigh2, ankle, shin1,
+                // shin2), with head/butt appended at the end since they
+                // aren't part of that click chain at all
+                const wchar_t* hoverLabel = L"";
+
+                if (isNear(mouse, topHandleWorldHover, ARC_HANDLE_RADIUS))
+                    hoverLabel = L"Top Seam";
+                else if (isNear(mouse, bottomHandleWorldHover, ARC_HANDLE_RADIUS))
+                    hoverLabel = L"Bottom Seam";
+                else if (app->hoverHip)
+                    hoverLabel = L"Hip";
+                else if (app->hoverKnee)
+                    hoverLabel = L"Knee";
+                else if (isNear(mouse, thigh1WorldHover, THIGH_HANDLE_RADIUS))
+                    hoverLabel = L"Thigh Arc 1";
+                else if (isNear(mouse, thigh2WorldHover, THIGH_HANDLE_RADIUS))
+                    hoverLabel = L"Thigh Arc 2";
+                else if (app->hoverAnkle)
+                    hoverLabel = L"Ankle";
+                else if (isNear(mouse, shin1WorldHover, SHIN_HANDLE_RADIUS))
+                    hoverLabel = L"Shin Arc 1";
+                else if (isNear(mouse, shin2WorldHover, SHIN_HANDLE_RADIUS))
+                    hoverLabel = L"Shin Arc 2";
+                else if (app->hoverHead)
+                    hoverLabel = L"Head";
+                else if (app->hoverButt)
+                    hoverLabel = L"Butt";
+
+                SetWindowText(app->ui.hHoverLabel, hoverLabel);
+            }
+
             if (!app->draggingTopArc && !app->draggingBottomArc &&
                 !app->draggingInner &&
                 !app->draggingKnee && !app->draggingThigh1 && !app->draggingThigh2 &&
@@ -854,6 +942,14 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             SetWindowPos(app->ui.hResetButton, NULL,
                  xReset, y, 0, 0,
                  SWP_NOZORDER | SWP_NOSIZE);
+
+            // bottom-left hover status label
+            int hoverLabelHeight = 20;
+            int hoverLabelY = rect.bottom - hoverLabelHeight - 10;
+
+            SetWindowPos(app->ui.hHoverLabel, NULL,
+                 10, hoverLabelY, 0, 0,
+                 SWP_NOZORDER | SWP_NOSIZE);
         }
         break;
 
@@ -888,6 +984,22 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
 			    210, 10, 80, 30,
 			    hwnd,
 			    (HMENU)ID_RESET_BUTTON,
+			    NULL,
+			    NULL
+			);
+
+             // bottom-left hover status label -- real position gets set
+             // by WM_SIZE (which doesn't fire for the window's initial
+             // size, same gap main.c's comment mentions for the GL
+             // projection), so this is just a reasonable placement for
+             // the default 800x600 window until the first resize
+             app->ui.hHoverLabel = CreateWindow(
+			    L"STATIC",
+			    L"",
+			    WS_VISIBLE | WS_CHILD | SS_LEFT,
+			    10, 560, 260, 20,
+			    hwnd,
+			    NULL,
 			    NULL,
 			    NULL
 			);
