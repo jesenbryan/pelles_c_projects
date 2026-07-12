@@ -13,6 +13,46 @@
 #include "save.h"
 #include "app_init.h"
 
+// ---------------- ARC AUTO-ADJUST ----------------
+// Re-validates an arc pair's EXISTING angles against a circle's new
+// size/position, nudging an angle only as far as needed to keep its
+// fillet solve from exceeding maxRadius -- geometry.h's
+// clampToSafeAngleRange is a no-op when the current angle is already
+// safe, so an arc that's still comfortably valid after the resize/move
+// is left completely untouched, and one that isn't gets pulled back in
+// by the minimum amount rather than reset to some fixed default. Same
+// outer-bound margin (ARC_ANGLE_MARGIN_DEG and friends) the drag code
+// already computes maxDelta with -- this just applies it to the angle
+// that's already there instead of one freshly read off the mouse.
+static void adjustHeadButtArcs(AppState* app)
+{
+    Point headLocal = { app->robotScene.robot.headX, app->robotScene.robot.y };
+    Point buttLocal = { app->robotScene.robot.buttX, app->robotScene.robot.y };
+
+    SafeAngleRange range = filletSafeAngleRange(headLocal, app->robotScene.robot.headRadius, buttLocal, app->robotScene.robot.buttRadius, MAX_ARC_R);
+
+    app->robotScene.robot.topArcAngle = clampToSafeAngleRange(app->robotScene.robot.topArcAngle, range, ARC_ANGLE_MARGIN_DEG);
+    app->robotScene.robot.bottomArcAngle = clampToSafeAngleRange(app->robotScene.robot.bottomArcAngle, range, ARC_ANGLE_MARGIN_DEG);
+}
+
+static void adjustThighArcs(AppState* app)
+{
+    SafeAngleRange range1 = filletSafeAngleRange(app->robotScene.robot.innerCircle, app->robotScene.robot.innerRadius, app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeRadius, MAX_THIGH_ARC_R);
+    SafeAngleRange range2 = filletSafeAngleRangeConcave(app->robotScene.robot.innerCircle, app->robotScene.robot.innerRadius, app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeRadius, MAX_THIGH_ARC2_CONCAVE_R);
+
+    app->robotScene.robot.thighArc1Angle = clampToSafeAngleRange(app->robotScene.robot.thighArc1Angle, range1, THIGH_ARC_ANGLE_MARGIN_DEG);
+    app->robotScene.robot.thighArc2Angle = clampToSafeAngleRange(app->robotScene.robot.thighArc2Angle, range2, THIGH_ARC_ANGLE_MARGIN_DEG);
+}
+
+static void adjustShinArcs(AppState* app)
+{
+    SafeAngleRange range1 = filletSafeAngleRange(app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeRadius, app->robotScene.robot.ankleCircle, app->robotScene.robot.ankleRadius, MAX_SHIN_ARC_R);
+    SafeAngleRange range2 = filletSafeAngleRangeConcave(app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeRadius, app->robotScene.robot.ankleCircle, app->robotScene.robot.ankleRadius, MAX_SHIN_ARC2_CONCAVE_R);
+
+    app->robotScene.robot.shinArc1Angle = clampToSafeAngleRange(app->robotScene.robot.shinArc1Angle, range1, SHIN_ARC_ANGLE_MARGIN_DEG);
+    app->robotScene.robot.shinArc2Angle = clampToSafeAngleRange(app->robotScene.robot.shinArc2Angle, range2, SHIN_ARC_ANGLE_MARGIN_DEG);
+}
+
 LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState* app)
 {
     switch (msg)
@@ -403,6 +443,16 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 // just got carried along via hipDragKneeOffset above
 
                 app->robotScene.robot.innerCircle = newInner;
+
+                // dragging the hip carries the whole leg as a rigid
+                // translation, so the thigh/shin arcs' underlying
+                // distances never actually change and this ends up a
+                // no-op -- called anyway for the same reason as the
+                // length-changing drags below (consistency: moving any
+                // circle re-validates its arcs), and it's cheap since
+                // clampToSafeAngleRange leaves an already-safe angle alone
+                adjustThighArcs(app);
+                adjustShinArcs(app);
             }
 
             // the leg chain sits in a frame additionally rotated by hipAngle
@@ -433,6 +483,14 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 // shinArc1Angle/shinArc2Angle don't need re-anchoring
                 // either -- already relative to kneeCircle, which just
                 // moved to newKnee above
+
+                // the hip<->knee distance just changed, so the thigh arcs'
+                // fillet solve did too -- re-validate their existing
+                // angles against it. The shin arcs are left alone
+                // (knee<->ankle distance is preserved by the re-anchor
+                // above), matching the thigh-only blue highlight this
+                // drag already gets
+                adjustThighArcs(app);
             }
 
             // thigh arcs: same tangent-restricted, angle-driven drag as
@@ -511,11 +569,18 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             // knee->ankle axis so dragging it only changes the shin's
             // length, not its direction
             if (app->draggingAnkle)
+            {
                 app->robotScene.robot.ankleCircle = constrainToAxis(
                     app->robotScene.robot.kneeCircle,
                     app->robotScene.robot.ankleCircle,
                     shinLocalMouse,
                     MIN_LIMB_LENGTH);
+
+                // knee<->ankle distance just changed, so the shin arcs'
+                // fillet solve did too -- re-validate their existing
+                // angles against it
+                adjustShinArcs(app);
+            }
 
             // shin arcs: same tangent-restricted, angle-driven drag as the
             // thigh arcs above, just reading the mouse's perpendicular-to-
@@ -642,6 +707,10 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     app->robotScene.robot.innerRadius = MIN_R;
                 if (app->robotScene.robot.innerRadius > MAX_R)
                     app->robotScene.robot.innerRadius = MAX_R;
+
+                // hip radius feeds the thigh arcs' fillet solve --
+                // re-validate their existing angles against the new size
+                adjustThighArcs(app);
             }
             else if (isNear(mouse, kneeWorld, KNEE_HANDLE_RADIUS) && shiftHeld)
             {
@@ -669,6 +738,12 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     app->robotScene.robot.kneeRadius = MIN_R;
                 if (app->robotScene.robot.kneeRadius > MAX_R)
                     app->robotScene.robot.kneeRadius = MAX_R;
+
+                // knee radius feeds both the thigh arcs' fillet solve (hip
+                // <-> knee) and the shin arcs' (knee <-> ankle), so both
+                // pairs get re-validated
+                adjustThighArcs(app);
+                adjustShinArcs(app);
             }
             else if (isNear(mouse, ankleWorld, ANKLE_HANDLE_RADIUS))
             {
@@ -687,6 +762,10 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     app->robotScene.robot.ankleRadius = MIN_R;
                 if (app->robotScene.robot.ankleRadius > MAX_R)
                     app->robotScene.robot.ankleRadius = MAX_R;
+
+                // ankle radius feeds the shin arcs' fillet solve --
+                // re-validate their existing angles against the new size
+                adjustShinArcs(app);
             }
             else if (isNear(mouse, headWorld, HEAD_BUTT_HANDLE_RADIUS))
             {
@@ -701,6 +780,10 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     app->robotScene.robot.headRadius = MIN_R;
                 if (app->robotScene.robot.headRadius > MAX_R)
                     app->robotScene.robot.headRadius = MAX_R;
+
+                // head radius feeds the top/bottom seam arcs' fillet
+                // solve -- re-validate their existing angles
+                adjustHeadButtArcs(app);
             }
             else if (isNear(mouse, buttWorld, HEAD_BUTT_HANDLE_RADIUS))
             {
@@ -714,6 +797,9 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     app->robotScene.robot.buttRadius = MIN_R;
                 if (app->robotScene.robot.buttRadius > MAX_R)
                     app->robotScene.robot.buttRadius = MAX_R;
+
+                // butt radius feeds the same top/bottom seam fillet solve
+                adjustHeadButtArcs(app);
             }
             else
             {
