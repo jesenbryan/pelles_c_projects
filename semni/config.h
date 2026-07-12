@@ -87,6 +87,23 @@
 #define THIGH_ARC_ANGLE_MARGIN_DEG 2.0f
 #define THIGH_ARC_SIDE_MARGIN_DEG 1.0f
 
+// thigh arc 2 is built with filletFromAttachAngleConcave instead of the
+// usual filletFromAttachAngle -- it bulges INWARD (toward the hip-knee
+// axis) rather than outward, so it needs its own radius cap: the concave
+// construction's radius grows toward infinity much faster as the attach
+// angle nears its own singularity than the convex one does for the same
+// hip/knee layout (verified numerically -- the concave safe half-width
+// for this cap is ~72 degrees around its own center, vs a ~85.6 degree
+// singularity bound), so reusing MAX_THIGH_ARC_R here would let it swing
+// almost all the way to that singularity before clamping kicks in. Reuses
+// MIN_THIGH_ARC_R/THIGH_ARC_ANGLE_MARGIN_DEG/
+// THIGH_ARC_DRAG_SENSITIVITY_DEG_PER_UNIT for everything else -- thigh
+// arc 2 doesn't need its own SIDE_MARGIN either, since its concave range
+// sits on the opposite side of the hip circle from thigh arc 1's convex
+// one, so there's no shared degenerate point the two need to be kept
+// apart from anymore.
+#define MAX_THIGH_ARC2_CONCAVE_R 1.0f
+
 // same role as ARC_DRAG_SENSITIVITY_DEG_PER_UNIT -- the thigh handle also
 // drags incrementally rather than off an absolute mouse-to-angle solve,
 // for the same reason (bulge height isn't monotonic across the whole

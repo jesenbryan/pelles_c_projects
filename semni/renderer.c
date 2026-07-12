@@ -218,9 +218,15 @@ static void drawThigh(Semni b, RenderState* rs)
     Point thigh1KneeTangentLocal = internalTangentPoint(thigh1Fillet.center, thigh1Fillet.radius, b.kneeCircle, b.kneeRadius);
     Point thigh1NearLocal = circleTowardPoint(thigh1Fillet.center, thigh1Fillet.radius, axisMidLocal);
 
-    Fillet thigh2Fillet = filletFromAttachAngle(b.innerCircle, b.innerRadius, b.kneeCircle, b.kneeRadius, b.thighArc2Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC_R);
+    // thighArc2Angle uses the concave construction (bulges inward instead
+    // of outward -- see app.h's comment). The knee-side tangent point for
+    // an externally-tangent fillet is just circleTowardPoint(fillet,
+    // kneeCircle) instead of internalTangentPoint -- externally tangent
+    // circles touch exactly on the line between their centers, which is
+    // exactly what circleTowardPoint finds.
+    Fillet thigh2Fillet = filletFromAttachAngleConcave(b.innerCircle, b.innerRadius, b.kneeCircle, b.kneeRadius, b.thighArc2Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC2_CONCAVE_R);
     Point thigh2InnerTangentLocal = circleEdge(b.innerCircle, b.innerRadius, b.thighArc2Angle);
-    Point thigh2KneeTangentLocal = internalTangentPoint(thigh2Fillet.center, thigh2Fillet.radius, b.kneeCircle, b.kneeRadius);
+    Point thigh2KneeTangentLocal = circleTowardPoint(thigh2Fillet.center, thigh2Fillet.radius, b.kneeCircle);
     Point thigh2NearLocal = circleTowardPoint(thigh2Fillet.center, thigh2Fillet.radius, axisMidLocal);
 
     setColor(rs->draggingThigh1 || rs->hoverHip, 0.2f, 0.4f, 1.0f);
@@ -251,7 +257,7 @@ static void drawThighHandles(Semni b, RenderState* rs)
     Point thigh1NearLocal = circleTowardPoint(thigh1Fillet.center, thigh1Fillet.radius, axisMidLocal);
     Point thigh1MidLocal = circleAtAxisMid(thigh1Fillet.center, thigh1Fillet.radius, b.innerCircle, b.kneeCircle, thigh1NearLocal);
 
-    Fillet thigh2Fillet = filletFromAttachAngle(b.innerCircle, b.innerRadius, b.kneeCircle, b.kneeRadius, b.thighArc2Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC_R);
+    Fillet thigh2Fillet = filletFromAttachAngleConcave(b.innerCircle, b.innerRadius, b.kneeCircle, b.kneeRadius, b.thighArc2Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC2_CONCAVE_R);
     Point thigh2NearLocal = circleTowardPoint(thigh2Fillet.center, thigh2Fillet.radius, axisMidLocal);
     Point thigh2MidLocal = circleAtAxisMid(thigh2Fillet.center, thigh2Fillet.radius, b.innerCircle, b.kneeCircle, thigh2NearLocal);
 

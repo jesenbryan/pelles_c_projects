@@ -204,6 +204,52 @@ Fillet filletFromAttachAngle(Point c1, float r1, Point c2, float r2, float angle
     return result;
 }
 
+Fillet filletFromAttachAngleConcave(Point c1, float r1, Point c2, float r2, float angleDeg, float minRadius, float maxRadius)
+{
+    float a = angleDeg * 3.1415926f / 180.0f;
+    Point u = { cosf(a), sinf(a) };
+
+    // same tangent-point-fixes-the-center setup as filletFromAttachAngle
+    // (C = c1 + k*u), but external tangency to c1 means k = r1 + R instead
+    // of k = r1 - R. Plugging that into the second tangency constraint
+    // (|C - c2| == R + r2, also external) and expanding turns out to give
+    // the EXACT same k formula as the convex/internal case -- only the
+    // k-to-radius relationship at the end differs.
+    Point V = { c1.x - c2.x, c1.y - c2.y };
+    float VdotU = V.x * u.x + V.y * u.y;
+    float VmagSq = V.x * V.x + V.y * V.y;
+
+    float denom = 2.0f * (VdotU + (r1 - r2));
+
+    float radius;
+
+    if (fabsf(denom) < 1e-4f)
+    {
+        // same singularity as the convex case -- this attach angle points
+        // at the common tangent LINE, where any fillet (concave or
+        // convex) would need infinite radius
+        radius = maxRadius;
+    }
+    else
+    {
+        float k = ((r1 - r2) * (r1 - r2) - VmagSq) / denom;
+        radius = k - r1;
+    }
+
+    if (radius < minRadius) radius = minRadius;
+    if (radius > maxRadius) radius = maxRadius;
+
+    // recompute k from the (possibly clamped) radius, so the returned
+    // circle is always exactly tangent to c1 at angleDeg -- same
+    // "recompute after clamping" pattern as filletFromAttachAngle
+    float k = r1 + radius;
+
+    Fillet result;
+    result.center = (Point){ c1.x + k * u.x, c1.y + k * u.y };
+    result.radius = radius;
+    return result;
+}
+
 SafeAngleRange filletSafeAngleRange(Point c1, float r1, Point c2, float r2, float maxRadius)
 {
     Point V = { c1.x - c2.x, c1.y - c2.y };
@@ -245,6 +291,73 @@ SafeAngleRange filletSafeAngleRange(Point c1, float r1, Point c2, float r2, floa
         if (ratioCap >= -1.0f && ratioCap <= 1.0f)
         {
             float halfCap = acosf(ratioCap) * 180.0f / 3.1415926f;
+            if (halfCap < half)
+                half = halfCap;
+        }
+    }
+
+    range.halfWidthDeg = half;
+    return range;
+}
+
+// Concave counterpart to filletSafeAngleRange. The concave connection's
+// natural "safest" attach point is on the OPPOSITE side of c1 from the
+// convex case -- pointing AT c2 rather than away from it, since that's
+// where a small fillet naturally nestles into the gap between the two
+// circles -- so this range's centerDeg sits 180 degrees from
+// filletSafeAngleRange's. The same two boundaries (the common-tangent-
+// line singularity, and the maxRadius cap) apply -- they don't depend on
+// which side is being solved for, only on where the k formula blows up
+// or hits its target -- so this reuses those exact same angle solves and
+// just re-expresses each one's distance from the OPPOSITE (concave)
+// center instead: since both boundary angles sit convexCenterDeg +/-
+// halfFromConvexCenter, and concaveCenterDeg is convexCenterDeg + 180,
+// each boundary's distance from concaveCenterDeg works out to
+// (180 - halfFromConvexCenter) regardless of which of the two it is.
+SafeAngleRange filletSafeAngleRangeConcave(Point c1, float r1, Point c2, float r2, float maxRadius)
+{
+    Point V = { c1.x - c2.x, c1.y - c2.y };
+    float dist = sqrtf(V.x * V.x + V.y * V.y);
+
+    SafeAngleRange range;
+
+    if (dist < 1e-6f)
+    {
+        range.centerDeg = 0.0f;
+        range.halfWidthDeg = 180.0f;
+        return range;
+    }
+
+    float convexCenterDeg = atan2f(V.y, V.x) * 180.0f / 3.1415926f;
+
+    range.centerDeg = convexCenterDeg + 180.0f;
+    while (range.centerDeg > 180.0f) range.centerDeg -= 360.0f;
+    while (range.centerDeg < -180.0f) range.centerDeg += 360.0f;
+
+    // boundary 1: same common-tangent-line singularity as
+    // filletSafeAngleRange, just re-measured from the concave center
+    float ratioSing = (r2 - r1) / dist;
+    if (ratioSing < -1.0f) ratioSing = -1.0f;
+    if (ratioSing > 1.0f) ratioSing = 1.0f;
+    float halfSingFromConvexCenter = acosf(ratioSing) * 180.0f / 3.1415926f;
+    float half = 180.0f - halfSingFromConvexCenter;
+
+    // boundary 2 (usually the tighter one): where the concave radius
+    // would exactly equal maxRadius. Same closed-form as
+    // filletFromAttachAngleConcave, solved for the angle instead of the
+    // radius -- k0 here is r1 + maxRadius (the concave k-to-radius
+    // relation), the mirror image of filletSafeAngleRange's k0.
+    float k0 = r1 + maxRadius;
+    if (fabsf(k0) > 1e-6f)
+    {
+        float VmagSq = dist * dist;
+        float rhs = ((r1 - r2) * (r1 - r2) - VmagSq) / (2.0f * k0) - (r1 - r2);
+        float ratioCap = rhs / dist;
+
+        if (ratioCap >= -1.0f && ratioCap <= 1.0f)
+        {
+            float halfCapFromConvexCenter = acosf(ratioCap) * 180.0f / 3.1415926f;
+            float halfCap = 180.0f - halfCapFromConvexCenter;
             if (halfCap < half)
                 half = halfCap;
         }

@@ -80,9 +80,14 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             Point thigh1NearLocal = circleTowardPoint(thigh1Fillet.center, thigh1Fillet.radius, thighAxisMidLocal);
             Point thigh1MidLocal = circleAtAxisMid(thigh1Fillet.center, thigh1Fillet.radius, app->robotScene.robot.innerCircle, app->robotScene.robot.kneeCircle, thigh1NearLocal);
 
-            Fillet thigh2Fillet = filletFromAttachAngle(app->robotScene.robot.innerCircle, app->robotScene.robot.innerRadius,
-                                                         app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeRadius,
-                                                         app->robotScene.robot.thighArc2Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC_R);
+            // thighArc2Angle uses the concave construction (bulges inward
+            // instead of outward) -- see app.h's comment. circleTowardPoint
+            // + circleAtAxisMid work unchanged for it (purely geometric,
+            // don't care whether the fillet is internally or externally
+            // tangent), only the fillet solve itself differs.
+            Fillet thigh2Fillet = filletFromAttachAngleConcave(app->robotScene.robot.innerCircle, app->robotScene.robot.innerRadius,
+                                                                app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeRadius,
+                                                                app->robotScene.robot.thighArc2Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC2_CONCAVE_R);
             Point thigh2NearLocal = circleTowardPoint(thigh2Fillet.center, thigh2Fillet.radius, thighAxisMidLocal);
             Point thigh2MidLocal = circleAtAxisMid(thigh2Fillet.center, thigh2Fillet.radius, app->robotScene.robot.innerCircle, app->robotScene.robot.kneeCircle, thigh2NearLocal);
 
@@ -432,15 +437,17 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             // (perpOffsetOnAxis) instead of raw Y, since the hip->knee
             // axis isn't fixed horizontal like the head-butt axis -- it
             // rotates with hipAngle and the user can pose the leg any
-            // direction. thighArc1Angle stays locked to the negative-delta
-            // side of centerDeg and thighArc2Angle to the positive side
-            // (same "each stays on its own side" safety as top/bottom),
-            // but unlike top/bottom, dragging one does NOT mirror the
-            // other -- the thigh's two sides aren't meant to bulge
-            // symmetrically. Nothing needs to "recenter" on a hip/knee
-            // move the way the old free-point handles did: the angle is
-            // already fully relative to innerCircle/kneeCircle, so the
-            // fillet solve just adapts automatically every frame.
+            // direction. thighArc1Angle (convex) stays locked to the
+            // negative-delta side of ITS centerDeg, same "stay off the
+            // degenerate center" safety top/bottom uses. thighArc2Angle
+            // (concave) drags against a totally different, disjoint safe
+            // range (see its own block below) so it doesn't need that
+            // same one-sided lock. Dragging one never mirrors the other --
+            // the thigh's two sides aren't meant to bulge symmetrically.
+            // Nothing needs to "recenter" on a hip/knee move the way the
+            // old free-point handles did: the angle is already fully
+            // relative to innerCircle/kneeCircle, so the fillet solve
+            // just adapts automatically every frame.
             if (app->draggingThigh1)
             {
                 SafeAngleRange range = filletSafeAngleRange(app->robotScene.robot.innerCircle, app->robotScene.robot.innerRadius,
@@ -462,13 +469,21 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 app->robotScene.robot.thighArc1Angle = range.centerDeg + delta;
             }
 
+            // thighArc2Angle drags the same incremental, perpendicular-
+            // offset way as thighArc1Angle, but against its own concave
+            // safe range (filletSafeAngleRangeConcave) -- which is
+            // centered on the opposite side of innerCircle, facing
+            // kneeCircle. No side-lock needed here: thighArc1Angle's
+            // range and this one no longer share a degenerate center to
+            // stay apart from, so this just clamps symmetrically to
+            // whichever side of ITS OWN center the drag reaches.
             if (app->draggingThigh2)
             {
-                SafeAngleRange range = filletSafeAngleRange(app->robotScene.robot.innerCircle, app->robotScene.robot.innerRadius,
-                                                             app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeRadius,
-                                                             MAX_THIGH_ARC_R);
+                SafeAngleRange range = filletSafeAngleRangeConcave(app->robotScene.robot.innerCircle, app->robotScene.robot.innerRadius,
+                                                                    app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeRadius,
+                                                                    MAX_THIGH_ARC2_CONCAVE_R);
                 float maxDelta = range.halfWidthDeg - THIGH_ARC_ANGLE_MARGIN_DEG;
-                if (maxDelta < THIGH_ARC_SIDE_MARGIN_DEG) maxDelta = THIGH_ARC_SIDE_MARGIN_DEG;
+                if (maxDelta < 0.0f) maxDelta = 0.0f;
 
                 float perpNow = perpOffsetOnAxis(legLocalMouse, app->robotScene.robot.innerCircle, app->robotScene.robot.kneeCircle);
                 float raw = app->thighArcDragStartAngle + (perpNow - app->thighArcDragStartPerp) * THIGH_ARC_DRAG_SENSITIVITY_DEG_PER_UNIT;
@@ -477,10 +492,8 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 while (delta > 180.0f) delta -= 360.0f;
                 while (delta < -180.0f) delta += 360.0f;
 
-                // mirror image of thigh1's clamp -- locked to the opposite
-                // (positive-delta) side of centerDeg
-                if (delta < THIGH_ARC_SIDE_MARGIN_DEG) delta = THIGH_ARC_SIDE_MARGIN_DEG;
                 if (delta > maxDelta) delta = maxDelta;
+                if (delta < -maxDelta) delta = -maxDelta;
 
                 app->robotScene.robot.thighArc2Angle = range.centerDeg + delta;
             }

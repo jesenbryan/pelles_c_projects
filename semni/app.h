@@ -39,18 +39,21 @@ typedef struct {
     Point kneeCircle;
     float kneeRadius;
 
-    // the two thigh seams: same construction as topArcAngle/bottomArcAngle
-    // above, just between innerCircle (hip) and kneeCircle (knee) instead
-    // of head and butt -- each is a circular arc internally tangent to
-    // both joint circles, parameterized by the angle where it attaches to
-    // innerCircle (same convention as circleEdge/filletFromAttachAngle),
-    // with the fillet's radius, center, and other tangent point (on
-    // kneeCircle) all derived from that angle every frame. Unlike
-    // top/bottom, these two aren't kept mirrored -- thighArc1Angle stays
-    // on its own fixed side of the hip-knee axis (see THIGH_ARC_SIDE_
-    // MARGIN_DEG) and thighArc2Angle the opposite side, but each drags
-    // independently instead of updating in lockstep, since the thigh's
-    // two sides aren't meant to bulge symmetrically.
+    // the two thigh seams, both parameterized by the angle where they
+    // attach to innerCircle (same circleEdge/filletFromAttachAngle
+    // convention as topArcAngle/bottomArcAngle), with the fillet's
+    // radius, center, and other tangent point (on kneeCircle) derived
+    // from that angle every frame. They're NOT the same kind of curve,
+    // though: thighArc1Angle uses the usual convex construction
+    // (filletFromAttachAngle) and bulges outward, away from the hip-knee
+    // axis, same as top/bottom. thighArc2Angle uses the concave
+    // construction (filletFromAttachAngleConcave) instead and pinches
+    // inward, toward the hip-knee axis -- its safe range sits on the
+    // opposite side of innerCircle from thighArc1Angle's (facing
+    // kneeCircle rather than away from it), so the two no longer share a
+    // degenerate point to stay clear of and don't need the "each stays on
+    // its own side" locking top/bottom and thighArc1Angle still use (see
+    // THIGH_ARC_SIDE_MARGIN_DEG) -- they already can't collide.
     float thighArc1Angle;
     float thighArc2Angle;
 

@@ -35,10 +35,15 @@ void initAppState(AppState* app)
     // arbitrary starting attach angles (independent, not mirrored -- see
     // thighArc1Angle/thighArc2Angle's comment in app.h) -- verified by
     // hand to land well within the valid, non-degenerate range for this
-    // hip/knee layout (fillet radii around 0.57 and 0.48). Drag the thigh
-    // handles from here.
+    // hip/knee layout. thighArc1Angle uses the usual convex (outward-
+    // bulging) construction, fillet radius around 0.57. thighArc2Angle
+    // uses the concave (inward-pinching) construction instead -- its
+    // safe range is centered on the OPPOSITE side of the hip circle
+    // (facing the knee), so 140 degrees no longer means anything for it;
+    // -130 lands comfortably inside the concave range (fillet radius
+    // around 0.26). Drag the thigh handles from here.
     app->robotScene.robot.thighArc1Angle = 30.000000f;
-    app->robotScene.robot.thighArc2Angle = 140.000000f;
+    app->robotScene.robot.thighArc2Angle = -130.000000f;
 
     // ankle sits below the knee, and the shin tapers in a bit more than
     // the thigh did, continuing the leg

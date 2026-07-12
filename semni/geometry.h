@@ -100,6 +100,20 @@ typedef struct {
 // case, never c1.
 Fillet filletFromAttachAngle(Point c1, float r1, Point c2, float r2, float angleDeg, float minRadius, float maxRadius);
 
+// Same idea as filletFromAttachAngle, but for a CONCAVE connection: the
+// fillet circle sits in the gap between c1 and c2, externally tangent to
+// both (|C-c1| == R+r1, |C-c2| == R+r2) instead of wrapping around them
+// the way the convex/internal version does -- so the connecting arc
+// curves INWARD, toward the c1-c2 axis, rather than bulging outward.
+// Still parameterized by the exact attach angle on c1 (same circleEdge
+// convention -- the tangent point on c1 is still exactly c1 + r1*u), and
+// still closed-form: the second tangency constraint (to c2) reduces to
+// the identical k formula filletFromAttachAngle uses, just with the
+// opposite sign relating k back to the radius (R = k - r1 here, vs
+// R = r1 - k there) -- so the two share nearly all their math, just
+// interpreted on the other side.
+Fillet filletFromAttachAngleConcave(Point c1, float r1, Point c2, float r2, float angleDeg, float minRadius, float maxRadius);
+
 typedef struct {
     float centerDeg;    // angle (around c1) of the point on c1 farthest from c2 -- the "safest" attach point, always valid
     float halfWidthDeg; // the safe range extends this far to either side of centerDeg
@@ -117,6 +131,14 @@ typedef struct {
 // ever being dragged far enough to flatten the arc into a line or flip it
 // to the other side.
 SafeAngleRange filletSafeAngleRange(Point c1, float r1, Point c2, float r2, float maxRadius);
+
+// Concave counterpart to filletSafeAngleRange, for
+// filletFromAttachAngleConcave -- see its .c comment for the derivation.
+// centerDeg here is 180 degrees from filletSafeAngleRange's (the concave
+// fillet's natural resting point faces c2, not away from it), but it's
+// the same kind of range: clamping the drag angle into it keeps
+// filletFromAttachAngleConcave's radius from needing to exceed maxRadius.
+SafeAngleRange filletSafeAngleRangeConcave(Point c1, float r1, Point c2, float r2, float maxRadius);
 
 // Clamps angleDeg into the given safe range, pulled in by marginDeg extra
 // on each side for numerical headroom right at the boundary.
