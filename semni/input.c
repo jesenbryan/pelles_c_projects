@@ -102,8 +102,35 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             float kneeAngle = app->robotScene.robot.kneeAngle;
 
             Point ankleWorld = nestedJointToWorld(app->robotScene.robot.ankleCircle, kneePivot, kneeAngle, hipPivot, hipAngle, center, app->robotScene.robot.angle);
-            Point shin1World = nestedJointToWorld(app->robotScene.robot.shinCtrl1, kneePivot, kneeAngle, hipPivot, hipAngle, center, app->robotScene.robot.angle);
-            Point shin2World = nestedJointToWorld(app->robotScene.robot.shinCtrl2, kneePivot, kneeAngle, hipPivot, hipAngle, center, app->robotScene.robot.angle);
+
+            // shin arc handles: same tangent-fillet + circleAtAxisMid
+            // construction used for the thigh handles above (and in
+            // renderer.c's drawShinHandles), just between kneeCircle and
+            // ankleCircle instead of innerCircle and kneeCircle, so the
+            // hit-test matches exactly where the handle is actually drawn
+            Point shinAxisMidLocal = { (app->robotScene.robot.kneeCircle.x + app->robotScene.robot.ankleCircle.x) * 0.5f,
+                                        (app->robotScene.robot.kneeCircle.y + app->robotScene.robot.ankleCircle.y) * 0.5f };
+
+            Fillet shin1Fillet = filletFromAttachAngle(app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeRadius,
+                                                        app->robotScene.robot.ankleCircle, app->robotScene.robot.ankleRadius,
+                                                        app->robotScene.robot.shinArc1Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC_R);
+            Point shin1NearLocal = circleTowardPoint(shin1Fillet.center, shin1Fillet.radius, shinAxisMidLocal);
+            Point shin1MidLocal = circleAtAxisMid(shin1Fillet.center, shin1Fillet.radius, app->robotScene.robot.kneeCircle, app->robotScene.robot.ankleCircle, shin1NearLocal);
+
+            Fillet shin2Fillet = filletFromAttachAngle(app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeRadius,
+                                                        app->robotScene.robot.ankleCircle, app->robotScene.robot.ankleRadius,
+                                                        app->robotScene.robot.shinArc2Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC_R);
+            Point shin2NearLocal = circleTowardPoint(shin2Fillet.center, shin2Fillet.radius, shinAxisMidLocal);
+            Point shin2MidLocal = circleAtAxisMid(shin2Fillet.center, shin2Fillet.radius, app->robotScene.robot.kneeCircle, app->robotScene.robot.ankleCircle, shin2NearLocal);
+
+            Point shin1World = nestedJointToWorld(shin1MidLocal, kneePivot, kneeAngle, hipPivot, hipAngle, center, app->robotScene.robot.angle);
+            Point shin2World = nestedJointToWorld(shin2MidLocal, kneePivot, kneeAngle, hipPivot, hipAngle, center, app->robotScene.robot.angle);
+
+            // same leg-local frame the drag math in WM_MOUSEMOVE uses --
+            // computed once here so both shin handles' click-capture can
+            // read the mouse's perpendicular-to-axis position (relative to
+            // the knee->ankle axis) at the moment the drag starts
+            Point shinLocalMouseDown = inverseRotate(legLocalMouseDown, kneePivot, kneeAngle);
 
             if (isNear(mouse, topHandleWorld, ARC_HANDLE_RADIUS))
             {
@@ -137,18 +164,13 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 app->hipDragKneeOffset.x = app->robotScene.robot.kneeCircle.x - hip.x;
                 app->hipDragKneeOffset.y = app->robotScene.robot.kneeCircle.y - hip.y;
 
-                // thighArc1Angle/thighArc2Angle need no offset -- they're
-                // already hip-frame-relative angles, unaffected by moving
-                // innerCircle itself
+                // thighArc1Angle/thighArc2Angle/shinArc1Angle/shinArc2Angle
+                // need no offset -- they're already relative to their own
+                // joint (hip or knee), unaffected by moving innerCircle
+                // itself
 
                 app->hipDragAnkleOffset.x = app->robotScene.robot.ankleCircle.x - hip.x;
                 app->hipDragAnkleOffset.y = app->robotScene.robot.ankleCircle.y - hip.y;
-
-                app->hipDragShinCtrl1Offset.x = app->robotScene.robot.shinCtrl1.x - hip.x;
-                app->hipDragShinCtrl1Offset.y = app->robotScene.robot.shinCtrl1.y - hip.y;
-
-                app->hipDragShinCtrl2Offset.x = app->robotScene.robot.shinCtrl2.x - hip.x;
-                app->hipDragShinCtrl2Offset.y = app->robotScene.robot.shinCtrl2.y - hip.y;
             }
             else if (isNear(mouse, kneeWorld, KNEE_HANDLE_RADIUS))
             {
@@ -163,11 +185,9 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 app->kneeDragAnkleOffset.x = app->robotScene.robot.ankleCircle.x - knee.x;
                 app->kneeDragAnkleOffset.y = app->robotScene.robot.ankleCircle.y - knee.y;
 
-                app->kneeDragShinCtrl1Offset.x = app->robotScene.robot.shinCtrl1.x - knee.x;
-                app->kneeDragShinCtrl1Offset.y = app->robotScene.robot.shinCtrl1.y - knee.y;
-
-                app->kneeDragShinCtrl2Offset.x = app->robotScene.robot.shinCtrl2.x - knee.x;
-                app->kneeDragShinCtrl2Offset.y = app->robotScene.robot.shinCtrl2.y - knee.y;
+                // shinArc1Angle/shinArc2Angle need no offset -- they're
+                // already knee-frame-relative angles, unaffected by moving
+                // kneeCircle itself
             }
             else if (isNear(mouse, thigh1World, THIGH_HANDLE_RADIUS))
             {
@@ -198,11 +218,20 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             {
                 app->draggingShin1 = 1;
                 app->activeHandle = 8;
+
+                // remember where the drag started (mouse's perpendicular-
+                // to-axis offset, relative to the knee->ankle axis + the
+                // current angle), same idea as thighArcDragStartPerp/Angle
+                app->shinArcDragStartPerp = perpOffsetOnAxis(shinLocalMouseDown, app->robotScene.robot.kneeCircle, app->robotScene.robot.ankleCircle);
+                app->shinArcDragStartAngle = app->robotScene.robot.shinArc1Angle;
             }
             else if (isNear(mouse, shin2World, SHIN_HANDLE_RADIUS))
             {
                 app->draggingShin2 = 1;
                 app->activeHandle = 9;
+
+                app->shinArcDragStartPerp = perpOffsetOnAxis(shinLocalMouseDown, app->robotScene.robot.kneeCircle, app->robotScene.robot.ankleCircle);
+                app->shinArcDragStartAngle = app->robotScene.robot.shinArc2Angle;
             }
         }
         break;
@@ -360,11 +389,9 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 app->robotScene.robot.ankleCircle.x = newInner.x + app->hipDragAnkleOffset.x;
                 app->robotScene.robot.ankleCircle.y = newInner.y + app->hipDragAnkleOffset.y;
 
-                app->robotScene.robot.shinCtrl1.x = newInner.x + app->hipDragShinCtrl1Offset.x;
-                app->robotScene.robot.shinCtrl1.y = newInner.y + app->hipDragShinCtrl1Offset.y;
-
-                app->robotScene.robot.shinCtrl2.x = newInner.x + app->hipDragShinCtrl2Offset.x;
-                app->robotScene.robot.shinCtrl2.y = newInner.y + app->hipDragShinCtrl2Offset.y;
+                // shinArc1Angle/shinArc2Angle don't move with the hip
+                // either -- already relative to kneeCircle, which itself
+                // just got carried along via hipDragKneeOffset above
 
                 app->robotScene.robot.innerCircle = newInner;
             }
@@ -394,11 +421,9 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 app->robotScene.robot.ankleCircle.x = newKnee.x + app->kneeDragAnkleOffset.x;
                 app->robotScene.robot.ankleCircle.y = newKnee.y + app->kneeDragAnkleOffset.y;
 
-                app->robotScene.robot.shinCtrl1.x = newKnee.x + app->kneeDragShinCtrl1Offset.x;
-                app->robotScene.robot.shinCtrl1.y = newKnee.y + app->kneeDragShinCtrl1Offset.y;
-
-                app->robotScene.robot.shinCtrl2.x = newKnee.x + app->kneeDragShinCtrl2Offset.x;
-                app->robotScene.robot.shinCtrl2.y = newKnee.y + app->kneeDragShinCtrl2Offset.y;
+                // shinArc1Angle/shinArc2Angle don't need re-anchoring
+                // either -- already relative to kneeCircle, which just
+                // moved to newKnee above
             }
 
             // thigh arcs: same tangent-restricted, angle-driven drag as
@@ -475,26 +500,59 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     shinLocalMouse,
                     MIN_LIMB_LENGTH);
 
-            // same centering treatment for the shin's bulge handles,
-            // relative to the knee->ankle segment
+            // shin arcs: same tangent-restricted, angle-driven drag as the
+            // thigh arcs above, just reading the mouse's perpendicular-to-
+            // axis movement relative to the knee->ankle axis instead of
+            // hip->knee (shinLocalMouse already has kneeAngle undone, same
+            // way legLocalMouse has hipAngle undone for the thigh).
+            // shinArc1Angle stays locked to the negative-delta side of
+            // centerDeg and shinArc2Angle to the positive side, and like
+            // the thigh pair, dragging one does NOT mirror the other.
+            // Nothing needs recentering on a knee/ankle move -- the angle
+            // is already fully relative to kneeCircle/ankleCircle, so the
+            // fillet solve just adapts automatically every frame.
             if (app->draggingShin1)
-                app->robotScene.robot.shinCtrl1 = recenterOnAxis(
-                    shinLocalMouse, app->robotScene.robot.kneeCircle, app->robotScene.robot.ankleCircle);
+            {
+                SafeAngleRange range = filletSafeAngleRange(app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeRadius,
+                                                             app->robotScene.robot.ankleCircle, app->robotScene.robot.ankleRadius,
+                                                             MAX_SHIN_ARC_R);
+                float maxDelta = range.halfWidthDeg - SHIN_ARC_ANGLE_MARGIN_DEG;
+                if (maxDelta < SHIN_ARC_SIDE_MARGIN_DEG) maxDelta = SHIN_ARC_SIDE_MARGIN_DEG;
+
+                float perpNow = perpOffsetOnAxis(shinLocalMouse, app->robotScene.robot.kneeCircle, app->robotScene.robot.ankleCircle);
+                float raw = app->shinArcDragStartAngle + (perpNow - app->shinArcDragStartPerp) * SHIN_ARC_DRAG_SENSITIVITY_DEG_PER_UNIT;
+
+                float delta = raw - range.centerDeg;
+                while (delta > 180.0f) delta -= 360.0f;
+                while (delta < -180.0f) delta += 360.0f;
+
+                if (delta > -SHIN_ARC_SIDE_MARGIN_DEG) delta = -SHIN_ARC_SIDE_MARGIN_DEG;
+                if (delta < -maxDelta) delta = -maxDelta;
+
+                app->robotScene.robot.shinArc1Angle = range.centerDeg + delta;
+            }
 
             if (app->draggingShin2)
-                app->robotScene.robot.shinCtrl2 = recenterOnAxis(
-                    shinLocalMouse, app->robotScene.robot.kneeCircle, app->robotScene.robot.ankleCircle);
-
-            // if the ankle just moved (dragged directly), keep the shin
-            // handles centered on the new knee->ankle segment -- a knee
-            // drag doesn't need this, since the whole shin (including
-            // its handles) was translated as one rigid piece above
-            if (app->draggingAnkle)
             {
-                app->robotScene.robot.shinCtrl1 = recenterOnAxis(
-                    app->robotScene.robot.shinCtrl1, app->robotScene.robot.kneeCircle, app->robotScene.robot.ankleCircle);
-                app->robotScene.robot.shinCtrl2 = recenterOnAxis(
-                    app->robotScene.robot.shinCtrl2, app->robotScene.robot.kneeCircle, app->robotScene.robot.ankleCircle);
+                SafeAngleRange range = filletSafeAngleRange(app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeRadius,
+                                                             app->robotScene.robot.ankleCircle, app->robotScene.robot.ankleRadius,
+                                                             MAX_SHIN_ARC_R);
+                float maxDelta = range.halfWidthDeg - SHIN_ARC_ANGLE_MARGIN_DEG;
+                if (maxDelta < SHIN_ARC_SIDE_MARGIN_DEG) maxDelta = SHIN_ARC_SIDE_MARGIN_DEG;
+
+                float perpNow = perpOffsetOnAxis(shinLocalMouse, app->robotScene.robot.kneeCircle, app->robotScene.robot.ankleCircle);
+                float raw = app->shinArcDragStartAngle + (perpNow - app->shinArcDragStartPerp) * SHIN_ARC_DRAG_SENSITIVITY_DEG_PER_UNIT;
+
+                float delta = raw - range.centerDeg;
+                while (delta > 180.0f) delta -= 360.0f;
+                while (delta < -180.0f) delta += 360.0f;
+
+                // mirror image of shin1's clamp -- locked to the opposite
+                // (positive-delta) side of centerDeg
+                if (delta < SHIN_ARC_SIDE_MARGIN_DEG) delta = SHIN_ARC_SIDE_MARGIN_DEG;
+                if (delta > maxDelta) delta = maxDelta;
+
+                app->robotScene.robot.shinArc2Angle = range.centerDeg + delta;
             }
         }
         break;

@@ -47,9 +47,10 @@ void initAppState(AppState* app)
 
     app->robotScene.robot.ankleRadius = 0.050000f;
 
-    app->robotScene.robot.shinCtrl1.x = 0.079633f;
-    app->robotScene.robot.shinCtrl1.y = -0.671273f;
-
-    app->robotScene.robot.shinCtrl2.x = -0.055620f;
-    app->robotScene.robot.shinCtrl2.y = -0.671273f;
+    // arbitrary starting attach angles (independent, not mirrored -- same
+    // convention as thighArc1Angle/thighArc2Angle) -- verified by hand to
+    // land well within the valid, non-degenerate range for this knee/ankle
+    // layout. Drag the shin handles from here.
+    app->robotScene.robot.shinArc1Angle = 30.000000f;
+    app->robotScene.robot.shinArc2Angle = 140.000000f;
 }

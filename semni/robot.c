@@ -44,11 +44,8 @@ void printRobotAsInit(Semni b)
 
     printf("app->robotScene.robot.ankleRadius = %.6ff;\n\n", b.ankleRadius);
 
-    printf("app->robotScene.robot.shinCtrl1.x = %.6ff;\n", b.shinCtrl1.x);
-    printf("app->robotScene.robot.shinCtrl1.y = %.6ff;\n\n", b.shinCtrl1.y);
-
-    printf("app->robotScene.robot.shinCtrl2.x = %.6ff;\n", b.shinCtrl2.x);
-    printf("app->robotScene.robot.shinCtrl2.y = %.6ff;\n", b.shinCtrl2.y);
+    printf("app->robotScene.robot.shinArc1Angle = %.6ff;\n", b.shinArc1Angle);
+    printf("app->robotScene.robot.shinArc2Angle = %.6ff;\n", b.shinArc2Angle);
 
     printf("----\n");
 }

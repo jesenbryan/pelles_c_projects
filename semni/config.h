@@ -31,7 +31,7 @@
 // and the exact edge of its valid range (see filletSafeAngleRange) -- just
 // numerical safety margin, since the radius-cap bound already does the
 // real work of keeping the arc from flattening out or flipping
-#define ARC_ANGLE_MARGIN_DEG 2.0f
+#define ARC_ANGLE_MARGIN_DEG 1.0f
 
 // SafeAngleRange's centerDeg (the point on the head circle farthest from
 // the butt circle) is where a completely different degenerate case lives:
@@ -96,6 +96,19 @@
 // of raw vertical screen movement, so it feels the same regardless of
 // which way the leg is currently posed/rotated.
 #define THIGH_ARC_DRAG_SENSITIVITY_DEG_PER_UNIT 200.0f
+
+// the shin (kneeCircle -> ankleCircle) arcs use the exact same tangent-
+// restricted-fillet construction as the thigh arcs above, just one joint
+// further down the chain -- same MIN/MAX_ARC_R + margin + sensitivity
+// pattern, kept as separate constants so the shin's feel can be tuned
+// independently. MAX_SHIN_ARC_R is picked with the same ratio to the
+// knee-ankle distance (~0.30 for the default pose) that MAX_ARC_R has to
+// the head-butt distance, same reasoning as MAX_THIGH_ARC_R.
+#define MIN_SHIN_ARC_R 0.05f
+#define MAX_SHIN_ARC_R 1.5f
+#define SHIN_ARC_ANGLE_MARGIN_DEG 2.0f
+#define SHIN_ARC_SIDE_MARGIN_DEG 1.0f
+#define SHIN_ARC_DRAG_SENSITIVITY_DEG_PER_UNIT 200.0f
 
 // minimum thigh/shin length, so dragging the knee or ankle circle along
 // its constrained axis can't collapse the limb to zero or flip it

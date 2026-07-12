@@ -167,12 +167,19 @@ void drawSemniBody(Semni b, RenderState* rs)
     // the existing 3-point drawArc reuses its circumcircle + sweep-
     // direction logic for free -- the near-pole point just tells it which
     // way (short or long way around) to sweep
-    setColor(rs->draggingTopArc, 0.2f, 0.4f, 1.0f);
+    //
+    // dragging either seam handle updates BOTH topArcAngle and
+    // bottomArcAngle (see WM_MOUSEMOVE's mirrored assignment), so both
+    // arcs highlight together too -- otherwise only the one under the
+    // cursor would turn blue even though the other is visibly moving too
+    int seamActive = rs->draggingTopArc || rs->draggingBottomArc;
+
+    setColor(seamActive, 0.2f, 0.4f, 1.0f);
     drawArc(rotatePoint(topHeadTangentLocal, center, angle),
             rotatePoint(topNearLocal, center, angle),
             rotatePoint(topButtTangentLocal, center, angle));
 
-    setColor(rs->draggingBottomArc, 0.2f, 0.4f, 1.0f);
+    setColor(seamActive, 0.2f, 0.4f, 1.0f);
     drawArc(rotatePoint(bottomHeadTangentLocal, center, angle),
             rotatePoint(bottomNearLocal, center, angle),
             rotatePoint(bottomButtTangentLocal, center, angle));
@@ -257,21 +264,19 @@ static void drawThighHandles(Semni b, RenderState* rs)
 }
 
 // Continues the leg past the knee: draws the ankle joint and the two arcs
-// connecting it back to kneeCircle, same pattern as drawThigh. The ankle
-// and shin points first rotate around kneeCircle by kneeAngle (the knee's
-// own rotation), then follow the hip/body transforms like the rest of the
-// leg -- so scrolling on the knee handle swings the shin without touching
-// the thigh, hip, or body.
+// connecting it back to kneeCircle, same tangent-fillet construction as
+// drawThigh -- the shin arcs are parameterized by the angle where they
+// attach to kneeCircle (shinArc1Angle/shinArc2Angle), just one joint
+// further down the chain. The ankle and shin points first rotate around
+// kneeCircle by kneeAngle (the knee's own rotation), then follow the
+// hip/body transforms like the rest of the leg -- so scrolling on the
+// knee handle swings the shin without touching the thigh, hip, or body.
 static void drawShin(Semni b, RenderState* rs)
 {
     Point center = getCenter(b);
     float angle = b.angle;
 
-    Point kneeWorld  = jointToWorld(b.kneeCircle, b.innerCircle, b.hipAngle, center, angle);
     Point ankleWorld = nestedJointToWorld(b.ankleCircle, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle);
-
-    Point ctrl1World = nestedJointToWorld(b.shinCtrl1, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle);
-    Point ctrl2World = nestedJointToWorld(b.shinCtrl2, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle);
 
     // the shin (ankle circle + both connecting arcs) swings whenever
     // either the hip OR the knee rotates, so hovering either handle
@@ -281,20 +286,30 @@ static void drawShin(Semni b, RenderState* rs)
     setColor(rs->draggingAnkle || shinAffected, 0.2f, 0.4f, 1.0f);
     drawCircle(ankleWorld, b.ankleRadius);
 
-    float limbAngle = atan2f(ankleWorld.y - kneeWorld.y,
-                              ankleWorld.x - kneeWorld.x) * 180.0f / 3.1415926f;
+    // worked out in the shin's own local (pre-kneeAngle) frame, then
+    // carried through the nested knee->hip->body transforms at the end,
+    // same pattern drawThigh uses for its pre-hipAngle local frame
+    Point axisMidLocal = { (b.kneeCircle.x + b.ankleCircle.x) * 0.5f, (b.kneeCircle.y + b.ankleCircle.y) * 0.5f };
 
-    Point side1P0 = circleEdge(kneeWorld,  b.kneeRadius,  limbAngle + 90);
-    Point side1P2 = circleEdge(ankleWorld, b.ankleRadius, limbAngle + 90);
+    Fillet shin1Fillet = filletFromAttachAngle(b.kneeCircle, b.kneeRadius, b.ankleCircle, b.ankleRadius, b.shinArc1Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC_R);
+    Point shin1KneeTangentLocal = circleEdge(b.kneeCircle, b.kneeRadius, b.shinArc1Angle);
+    Point shin1AnkleTangentLocal = internalTangentPoint(shin1Fillet.center, shin1Fillet.radius, b.ankleCircle, b.ankleRadius);
+    Point shin1NearLocal = circleTowardPoint(shin1Fillet.center, shin1Fillet.radius, axisMidLocal);
 
-    Point side2P0 = circleEdge(kneeWorld,  b.kneeRadius,  limbAngle - 90);
-    Point side2P2 = circleEdge(ankleWorld, b.ankleRadius, limbAngle - 90);
+    Fillet shin2Fillet = filletFromAttachAngle(b.kneeCircle, b.kneeRadius, b.ankleCircle, b.ankleRadius, b.shinArc2Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC_R);
+    Point shin2KneeTangentLocal = circleEdge(b.kneeCircle, b.kneeRadius, b.shinArc2Angle);
+    Point shin2AnkleTangentLocal = internalTangentPoint(shin2Fillet.center, shin2Fillet.radius, b.ankleCircle, b.ankleRadius);
+    Point shin2NearLocal = circleTowardPoint(shin2Fillet.center, shin2Fillet.radius, axisMidLocal);
 
     setColor(rs->draggingShin1 || shinAffected, 0.2f, 0.4f, 1.0f);
-    drawArc(side1P0, ctrl1World, side1P2);
+    drawArc(nestedJointToWorld(shin1KneeTangentLocal, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle),
+            nestedJointToWorld(shin1NearLocal, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle),
+            nestedJointToWorld(shin1AnkleTangentLocal, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle));
 
     setColor(rs->draggingShin2 || shinAffected, 0.2f, 0.4f, 1.0f);
-    drawArc(side2P0, ctrl2World, side2P2);
+    drawArc(nestedJointToWorld(shin2KneeTangentLocal, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle),
+            nestedJointToWorld(shin2NearLocal, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle),
+            nestedJointToWorld(shin2AnkleTangentLocal, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle));
 }
 
 static void drawShinHandles(Semni b, RenderState* rs)
@@ -302,13 +317,26 @@ static void drawShinHandles(Semni b, RenderState* rs)
     Point center = getCenter(b);
     float angle = b.angle;
 
-    Point ankleWorld  = nestedJointToWorld(b.ankleCircle, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle);
-    Point ctrl1World  = nestedJointToWorld(b.shinCtrl1, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle);
-    Point ctrl2World  = nestedJointToWorld(b.shinCtrl2, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle);
+    Point ankleWorld = nestedJointToWorld(b.ankleCircle, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle);
+
+    // shin arc handles: pinned to the exact middle of the knee->ankle axis
+    // (circleAtAxisMid), same idea as the thigh handles' use of it
+    Point axisMidLocal = { (b.kneeCircle.x + b.ankleCircle.x) * 0.5f, (b.kneeCircle.y + b.ankleCircle.y) * 0.5f };
+
+    Fillet shin1Fillet = filletFromAttachAngle(b.kneeCircle, b.kneeRadius, b.ankleCircle, b.ankleRadius, b.shinArc1Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC_R);
+    Point shin1NearLocal = circleTowardPoint(shin1Fillet.center, shin1Fillet.radius, axisMidLocal);
+    Point shin1MidLocal = circleAtAxisMid(shin1Fillet.center, shin1Fillet.radius, b.kneeCircle, b.ankleCircle, shin1NearLocal);
+
+    Fillet shin2Fillet = filletFromAttachAngle(b.kneeCircle, b.kneeRadius, b.ankleCircle, b.ankleRadius, b.shinArc2Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC_R);
+    Point shin2NearLocal = circleTowardPoint(shin2Fillet.center, shin2Fillet.radius, axisMidLocal);
+    Point shin2MidLocal = circleAtAxisMid(shin2Fillet.center, shin2Fillet.radius, b.kneeCircle, b.ankleCircle, shin2NearLocal);
+
+    Point shin1World = nestedJointToWorld(shin1MidLocal, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle);
+    Point shin2World = nestedJointToWorld(shin2MidLocal, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle);
 
     drawHandle(ankleWorld, rs->draggingAnkle || rs->hoverAnkle, ANKLE_HANDLE_RADIUS);
-    drawHandle(ctrl1World, rs->draggingShin1, SHIN_HANDLE_RADIUS);
-    drawHandle(ctrl2World, rs->draggingShin2, SHIN_HANDLE_RADIUS);
+    drawHandle(shin1World, rs->draggingShin1, SHIN_HANDLE_RADIUS);
+    drawHandle(shin2World, rs->draggingShin2, SHIN_HANDLE_RADIUS);
 }
 
 void drawSemniHandles(Semni b, RenderState* rs)
