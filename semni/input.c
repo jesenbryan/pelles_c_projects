@@ -257,6 +257,15 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             // centerDeg (top stays negative-delta, bottom stays
             // positive-delta) so they can never cross into each other's
             // territory.
+            //
+            // The two arcs are kept symmetrical: dragging either handle
+            // also updates the OTHER arc's angle to centerDeg - delta --
+            // i.e. the same distance from centerDeg, mirrored to the
+            // opposite side. Since both arcs share the exact same
+            // centerDeg/safe range (it only depends on headLocal/buttLocal/
+            // radii, not on which handle is being dragged), the mirrored
+            // delta is automatically valid for the other arc too -- no
+            // extra clamping needed.
             if (app->draggingTopArc)
             {
                 SafeAngleRange range = filletSafeAngleRange(headLocal, app->robotScene.robot.headRadius, buttLocal, app->robotScene.robot.buttRadius, MAX_ARC_R);
@@ -274,6 +283,7 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 if (delta < -maxDelta) delta = -maxDelta;
 
                 app->robotScene.robot.topArcAngle = range.centerDeg + delta;
+                app->robotScene.robot.bottomArcAngle = range.centerDeg - delta;
             }
 
             if (app->draggingBottomArc)
@@ -295,6 +305,7 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 if (delta > maxDelta) delta = maxDelta;
 
                 app->robotScene.robot.bottomArcAngle = range.centerDeg + delta;
+                app->robotScene.robot.topArcAngle = range.centerDeg - delta;
             }
 
             // dragging the hip carries the whole leg along as one rigid

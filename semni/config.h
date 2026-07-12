@@ -41,8 +41,11 @@
 // opposite side. This margin keeps the top/bottom seam handles from ever
 // reaching or crossing centerDeg, so each stays on its own side (top
 // bulges up, bottom bulges down) instead of flattening out and flipping
-// into the other one's territory.
-#define ARC_SIDE_MARGIN_DEG 10.0f
+// into the other one's territory. Kept small (rather than 0) purely for
+// numerical headroom right at the boundary -- loosened from an earlier,
+// much more conservative value so the handle can be dragged in much
+// closer to centerDeg before the clamp kicks in.
+#define ARC_SIDE_MARGIN_DEG 1.0f
 
 // the seam handle now sits at the arc's visible middle/bulge point rather
 // than the head-circle tangent point, so dragging can no longer read the
