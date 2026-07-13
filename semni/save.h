@@ -10,3 +10,8 @@
 // Returns 1 on success, 0 on failure (bad window size, can't open the
 // file, etc). What's currently displayed on screen is left untouched.
 int saveCanvasAsBMP(const char* filename, HWND hwnd, AppState* app);
+
+// Saves the robot's current pose as mathematical equations in a text file.
+// Includes all geometric parameters (circle positions/radii, arc angles, etc)
+// in a human-readable mathematical format.
+int saveRobotAsEquations(const char* filename, AppState* app);

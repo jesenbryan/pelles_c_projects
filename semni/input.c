@@ -1076,8 +1076,10 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             switch (LOWORD(wParam))
             {
                 case ID_SAVE_BUTTON:
-                    saveCanvasAsBMP("robot.bmp", app->hwndMain, app);
-                    SetFocus(app->hwndMain);  // return focus for keyboard input
+                    // Save both the robot image and its mathematical equations
+                    saveCanvasAsBMP("semni.bmp", app->hwndMain, app);
+                    saveRobotAsEquations("semni.txt", app);
+                    SetFocus(app->hwndMain);  // return focus to main window for keyboard input
                     break;
 
                 case ID_MIRROR_LEG_BUTTON:
