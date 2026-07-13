@@ -31,8 +31,8 @@ static void adjustHeadButtArcs(AppState* app)
 
     SafeAngleRange range = filletSafeAngleRange(headLocal, app->robotScene.robot.headRadius, buttLocal, app->robotScene.robot.buttRadius, MAX_ARC_R);
 
-    app->robotScene.robot.topArcAngle = clampToSafeAngleRange(app->robotScene.robot.topArcAngle, range, ARC_ANGLE_MARGIN_DEG);
-    app->robotScene.robot.bottomArcAngle = clampToSafeAngleRange(app->robotScene.robot.bottomArcAngle, range, ARC_ANGLE_MARGIN_DEG);
+    app->robotScene.robot.seamArc1Angle = clampToSafeAngleRange(app->robotScene.robot.seamArc1Angle, range, ARC_ANGLE_MARGIN_DEG);
+    app->robotScene.robot.seamArc2Angle = clampToSafeAngleRange(app->robotScene.robot.seamArc2Angle, range, ARC_ANGLE_MARGIN_DEG);
 }
 
 static void adjustThighArcs(AppState* app)
@@ -64,8 +64,8 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
 
             screenToGL(hwnd, mx, my, &app->mouseGL.x, &app->mouseGL.y);
 
-            app->draggingTopArc = 0;
-            app->draggingBottomArc = 0;
+            app->draggingSeamArc1 = 0;
+            app->draggingSeamArc2 = 0;
             app->draggingInner = 0;
             app->draggingKnee = 0;
             app->draggingThigh1 = 0;
@@ -87,17 +87,17 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             Point buttLocal = { app->robotScene.robot.buttX, app->robotScene.robot.y };
             Point bodyMidLocal = { (headLocal.x + buttLocal.x) * 0.5f, (headLocal.y + buttLocal.y) * 0.5f };
 
-            Fillet topSeamFillet = filletFromAttachAngle(headLocal, app->robotScene.robot.headRadius, buttLocal, app->robotScene.robot.buttRadius, app->robotScene.robot.topArcAngle, MIN_ARC_R, MAX_ARC_R);
-            Fillet bottomSeamFillet = filletFromAttachAngle(headLocal, app->robotScene.robot.headRadius, buttLocal, app->robotScene.robot.buttRadius, app->robotScene.robot.bottomArcAngle, MIN_ARC_R, MAX_ARC_R);
+            Fillet seamArc1Fillet = filletFromAttachAngle(headLocal, app->robotScene.robot.headRadius, buttLocal, app->robotScene.robot.buttRadius, app->robotScene.robot.seamArc1Angle, MIN_ARC_R, MAX_ARC_R);
+            Fillet seamArc2Fillet = filletFromAttachAngle(headLocal, app->robotScene.robot.headRadius, buttLocal, app->robotScene.robot.buttRadius, app->robotScene.robot.seamArc2Angle, MIN_ARC_R, MAX_ARC_R);
 
-            Point topNearLocal = circleTowardPoint(topSeamFillet.center, topSeamFillet.radius, bodyMidLocal);
-            Point bottomNearLocal = circleTowardPoint(bottomSeamFillet.center, bottomSeamFillet.radius, bodyMidLocal);
+            Point seamArc1NearLocal = circleTowardPoint(seamArc1Fillet.center, seamArc1Fillet.radius, bodyMidLocal);
+            Point seamArc2NearLocal = circleTowardPoint(seamArc2Fillet.center, seamArc2Fillet.radius, bodyMidLocal);
 
-            Point topMidLocal = circleAtX(topSeamFillet.center, topSeamFillet.radius, bodyMidLocal.x, topNearLocal);
-            Point bottomMidLocal = circleAtX(bottomSeamFillet.center, bottomSeamFillet.radius, bodyMidLocal.x, bottomNearLocal);
+            Point seamArc1MidLocal = circleAtX(seamArc1Fillet.center, seamArc1Fillet.radius, bodyMidLocal.x, seamArc1NearLocal);
+            Point seamArc2MidLocal = circleAtX(seamArc2Fillet.center, seamArc2Fillet.radius, bodyMidLocal.x, seamArc2NearLocal);
 
-            Point topHandleWorld = rotatePoint(topMidLocal, center, app->robotScene.robot.angle);
-            Point bottomHandleWorld = rotatePoint(bottomMidLocal, center, app->robotScene.robot.angle);
+            Point seamArc1HandleWorld = rotatePoint(seamArc1MidLocal, center, app->robotScene.robot.angle);
+            Point seamArc2HandleWorld = rotatePoint(seamArc2MidLocal, center, app->robotScene.robot.angle);
 
             Point innerWorld = rotatePoint(app->robotScene.robot.innerCircle, center, app->robotScene.robot.angle);
 
@@ -181,24 +181,24 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             // the knee->ankle axis) at the moment the drag starts
             Point shinLocalMouseDown = inverseRotate(legLocalMouseDown, kneePivot, kneeAngle);
 
-            if (isNear(mouse, topHandleWorld, ARC_HANDLE_RADIUS))
+            if (isNear(mouse, seamArc1HandleWorld, ARC_HANDLE_RADIUS))
             {
-                app->draggingTopArc = 1;
+                app->draggingSeamArc1 = 1;
                 app->activeHandle = 1;
 
                 // remember where the drag started (mouse Y + current
                 // angle) so WM_MOUSEMOVE can nudge the angle incrementally
                 // from here instead of solving an absolute position
                 app->arcDragStartMouseY = inverseRotate(mouse, center, app->robotScene.robot.angle).y;
-                app->arcDragStartAngle = app->robotScene.robot.topArcAngle;
+                app->arcDragStartAngle = app->robotScene.robot.seamArc1Angle;
             }
-            else if (isNear(mouse, bottomHandleWorld, ARC_HANDLE_RADIUS))
+            else if (isNear(mouse, seamArc2HandleWorld, ARC_HANDLE_RADIUS))
             {
-                app->draggingBottomArc = 1;
+                app->draggingSeamArc2 = 1;
                 app->activeHandle = 2;
 
                 app->arcDragStartMouseY = inverseRotate(mouse, center, app->robotScene.robot.angle).y;
-                app->arcDragStartAngle = app->robotScene.robot.bottomArcAngle;
+                app->arcDragStartAngle = app->robotScene.robot.seamArc2Angle;
             }
             else if (isNear(mouse, innerWorld, HIP_HANDLE_RADIUS))
             {
@@ -287,8 +287,8 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
 
         case WM_LBUTTONUP:
         {
-            app->draggingTopArc = 0;
-            app->draggingBottomArc = 0;
+            app->draggingSeamArc1 = 0;
+            app->draggingSeamArc2 = 0;
             app->draggingInner = 0;
             app->draggingKnee = 0;
             app->draggingThigh1 = 0;
@@ -341,9 +341,9 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             app->hoverButt  = isNear(mouse, buttWorld, HEAD_BUTT_HANDLE_RADIUS);
 
             // bottom-left hover label: also needs the bulge/seam handle
-            // positions (top/bottom seam, both thigh arcs, both shin
-            // arcs), which the code below only computes while a drag is
-            // active -- so they're worked out fresh here too, same
+            // positions (seam arc 1, seam arc 2, both thigh arcs, both
+            // shin arcs), which the code below only computes while a drag
+            // is active -- so they're worked out fresh here too, same
             // fillet + circleAtX/circleAtAxisMid construction
             // WM_LBUTTONDOWN's hit-test and renderer.c's drawSemniHandles/
             // drawThighHandles/drawShinHandles use, so this always lines
@@ -356,17 +356,17 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 Point buttLocalHover = { app->robotScene.robot.buttX, app->robotScene.robot.y };
                 Point bodyMidLocalHover = { (headLocalHover.x + buttLocalHover.x) * 0.5f, (headLocalHover.y + buttLocalHover.y) * 0.5f };
 
-                Fillet topSeamFilletHover = filletFromAttachAngle(headLocalHover, app->robotScene.robot.headRadius, buttLocalHover, app->robotScene.robot.buttRadius, app->robotScene.robot.topArcAngle, MIN_ARC_R, MAX_ARC_R);
-                Fillet bottomSeamFilletHover = filletFromAttachAngle(headLocalHover, app->robotScene.robot.headRadius, buttLocalHover, app->robotScene.robot.buttRadius, app->robotScene.robot.bottomArcAngle, MIN_ARC_R, MAX_ARC_R);
+                Fillet seamArc1FilletHover = filletFromAttachAngle(headLocalHover, app->robotScene.robot.headRadius, buttLocalHover, app->robotScene.robot.buttRadius, app->robotScene.robot.seamArc1Angle, MIN_ARC_R, MAX_ARC_R);
+                Fillet seamArc2FilletHover = filletFromAttachAngle(headLocalHover, app->robotScene.robot.headRadius, buttLocalHover, app->robotScene.robot.buttRadius, app->robotScene.robot.seamArc2Angle, MIN_ARC_R, MAX_ARC_R);
 
-                Point topNearLocalHover = circleTowardPoint(topSeamFilletHover.center, topSeamFilletHover.radius, bodyMidLocalHover);
-                Point bottomNearLocalHover = circleTowardPoint(bottomSeamFilletHover.center, bottomSeamFilletHover.radius, bodyMidLocalHover);
+                Point seamArc1NearLocalHover = circleTowardPoint(seamArc1FilletHover.center, seamArc1FilletHover.radius, bodyMidLocalHover);
+                Point seamArc2NearLocalHover = circleTowardPoint(seamArc2FilletHover.center, seamArc2FilletHover.radius, bodyMidLocalHover);
 
-                Point topMidLocalHover = circleAtX(topSeamFilletHover.center, topSeamFilletHover.radius, bodyMidLocalHover.x, topNearLocalHover);
-                Point bottomMidLocalHover = circleAtX(bottomSeamFilletHover.center, bottomSeamFilletHover.radius, bodyMidLocalHover.x, bottomNearLocalHover);
+                Point seamArc1MidLocalHover = circleAtX(seamArc1FilletHover.center, seamArc1FilletHover.radius, bodyMidLocalHover.x, seamArc1NearLocalHover);
+                Point seamArc2MidLocalHover = circleAtX(seamArc2FilletHover.center, seamArc2FilletHover.radius, bodyMidLocalHover.x, seamArc2NearLocalHover);
 
-                Point topHandleWorldHover = rotatePoint(topMidLocalHover, center, angle);
-                Point bottomHandleWorldHover = rotatePoint(bottomMidLocalHover, center, angle);
+                Point seamArc1HandleWorldHover = rotatePoint(seamArc1MidLocalHover, center, angle);
+                Point seamArc2HandleWorldHover = rotatePoint(seamArc2MidLocalHover, center, angle);
 
                 Point thighAxisMidLocalHover = { (app->robotScene.robot.innerCircle.x + app->robotScene.robot.kneeCircle.x) * 0.5f,
                                                   (app->robotScene.robot.innerCircle.y + app->robotScene.robot.kneeCircle.y) * 0.5f };
@@ -396,16 +396,16 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 Point shin1WorldHover = nestedJointToWorld(shin1MidLocalHover, app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeAngle, app->robotScene.robot.innerCircle, app->robotScene.robot.hipAngle, center, angle);
                 Point shin2WorldHover = nestedJointToWorld(shin2MidLocalHover, app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeAngle, app->robotScene.robot.innerCircle, app->robotScene.robot.hipAngle, center, angle);
 
-                // priority mirrors WM_LBUTTONDOWN's hit-test order (topArc,
-                // bottomArc, hip, knee, thigh1, thigh2, ankle, shin1,
-                // shin2), with head/butt appended at the end since they
-                // aren't part of that click chain at all
+                // priority mirrors WM_LBUTTONDOWN's hit-test order
+                // (seamArc1, seamArc2, hip, knee, thigh1, thigh2, ankle,
+                // shin1, shin2), with head/butt appended at the end since
+                // they aren't part of that click chain at all
                 const wchar_t* hoverLabel = L"";
 
-                if (isNear(mouse, topHandleWorldHover, ARC_HANDLE_RADIUS))
-                    hoverLabel = L"Top Seam";
-                else if (isNear(mouse, bottomHandleWorldHover, ARC_HANDLE_RADIUS))
-                    hoverLabel = L"Bottom Seam";
+                if (isNear(mouse, seamArc1HandleWorldHover, ARC_HANDLE_RADIUS))
+                    hoverLabel = L"Seam Arc 1";
+                else if (isNear(mouse, seamArc2HandleWorldHover, ARC_HANDLE_RADIUS))
+                    hoverLabel = L"Seam Arc 2";
                 else if (app->hoverHip)
                     hoverLabel = L"Hip";
                 else if (app->hoverKnee)
@@ -420,15 +420,28 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     hoverLabel = L"Shin Arc 1";
                 else if (isNear(mouse, shin2WorldHover, SHIN_HANDLE_RADIUS))
                     hoverLabel = L"Shin Arc 2";
+                // label text intentionally swapped vs. the flag name --
+                // requested swap of "head"/"butt" as displayed NAMES only.
+                // Doing it here (display-only) instead of swapping the
+                // underlying headX/buttX/headRadius/buttRadius field
+                // values (which was tried and reverted) avoids corrupting
+                // seamArc1Angle/seamArc2Angle: those are stored as angles
+                // measured specifically around the head circle
+                // (filletFromAttachAngle/circleEdge take headLocal as
+                // their asymmetric "c1" argument), so swapping which
+                // physical circle headX/headRadius point to would silently
+                // re-interpret those tuned angles around a different
+                // circle entirely -- not just relabel them, which is what
+                // caused the seam handle drag to look broken/inverted.
                 else if (app->hoverHead)
-                    hoverLabel = L"Head";
-                else if (app->hoverButt)
                     hoverLabel = L"Butt";
+                else if (app->hoverButt)
+                    hoverLabel = L"Head";
 
                 SetWindowText(app->ui.hHoverLabel, hoverLabel);
             }
 
-            if (!app->draggingTopArc && !app->draggingBottomArc &&
+            if (!app->draggingSeamArc1 && !app->draggingSeamArc2 &&
                 !app->draggingInner &&
                 !app->draggingKnee && !app->draggingThigh1 && !app->draggingThigh2 &&
                 !app->draggingAnkle && !app->draggingShin1 && !app->draggingShin2)
@@ -453,7 +466,7 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             // second, different degenerate point where the arc's bulge
             // collapses flat against the head-butt axis and flips to the
             // opposite side. Each handle is locked to its own side of
-            // centerDeg (top stays negative-delta, bottom stays
+            // centerDeg (seam arc 1 stays negative-delta, seam arc 2 stays
             // positive-delta) so they can never cross into each other's
             // territory.
             //
@@ -465,7 +478,7 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             // radii, not on which handle is being dragged), the mirrored
             // delta is automatically valid for the other arc too -- no
             // extra clamping needed.
-            if (app->draggingTopArc)
+            if (app->draggingSeamArc1)
             {
                 SafeAngleRange range = filletSafeAngleRange(headLocal, app->robotScene.robot.headRadius, buttLocal, app->robotScene.robot.buttRadius, MAX_ARC_R);
                 float maxDelta = range.halfWidthDeg - ARC_ANGLE_MARGIN_DEG;
@@ -481,11 +494,11 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 if (delta > -ARC_SIDE_MARGIN_DEG) delta = -ARC_SIDE_MARGIN_DEG;
                 if (delta < -maxDelta) delta = -maxDelta;
 
-                app->robotScene.robot.topArcAngle = range.centerDeg + delta;
-                app->robotScene.robot.bottomArcAngle = range.centerDeg - delta;
+                app->robotScene.robot.seamArc1Angle = range.centerDeg + delta;
+                app->robotScene.robot.seamArc2Angle = range.centerDeg - delta;
             }
 
-            if (app->draggingBottomArc)
+            if (app->draggingSeamArc2)
             {
                 SafeAngleRange range = filletSafeAngleRange(headLocal, app->robotScene.robot.headRadius, buttLocal, app->robotScene.robot.buttRadius, MAX_ARC_R);
                 float maxDelta = range.halfWidthDeg - ARC_ANGLE_MARGIN_DEG;
@@ -498,13 +511,13 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 while (delta > 180.0f) delta -= 360.0f;
                 while (delta < -180.0f) delta += 360.0f;
 
-                // mirror image of the top arc's clamp -- locked to the
+                // mirror image of seam arc 1's clamp -- locked to the
                 // opposite (positive-delta) side of centerDeg
                 if (delta < ARC_SIDE_MARGIN_DEG) delta = ARC_SIDE_MARGIN_DEG;
                 if (delta > maxDelta) delta = maxDelta;
 
-                app->robotScene.robot.bottomArcAngle = range.centerDeg + delta;
-                app->robotScene.robot.topArcAngle = range.centerDeg - delta;
+                app->robotScene.robot.seamArc2Angle = range.centerDeg + delta;
+                app->robotScene.robot.seamArc1Angle = range.centerDeg - delta;
             }
 
             // dragging the hip carries the whole leg along as one rigid
@@ -582,14 +595,14 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             }
 
             // thigh arcs: same tangent-restricted, angle-driven drag as
-            // the head/butt seams above (topArcAngle/bottomArcAngle), but
+            // the head/butt seams above (seamArc1Angle/seamArc2Angle), but
             // reading the mouse's perpendicular-to-axis movement
             // (perpOffsetOnAxis) instead of raw Y, since the hip->knee
             // axis isn't fixed horizontal like the head-butt axis -- it
             // rotates with hipAngle and the user can pose the leg any
             // direction. thighArc1Angle (convex) stays locked to the
             // negative-delta side of ITS centerDeg, same "stay off the
-            // degenerate center" safety top/bottom uses. thighArc2Angle
+            // degenerate center" safety seam arc 1/2 uses. thighArc2Angle
             // (concave) drags against a totally different, disjoint safe
             // range (see its own block below) so it doesn't need that
             // same one-sided lock. Dragging one never mirrors the other --
@@ -677,7 +690,7 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             // way legLocalMouse has hipAngle undone for the thigh).
             // shinArc1Angle (convex) stays locked to the negative-delta
             // side of ITS centerDeg, same "stay off the degenerate center"
-            // safety top/bottom and thighArc1Angle use. shinArc2Angle
+            // safety seam arc 1/2 and thighArc1Angle use. shinArc2Angle
             // (concave) drags against a totally different, disjoint safe
             // range (see its own block below) so it doesn't need that
             // same one-sided lock. Dragging one never mirrors the other.
@@ -869,8 +882,8 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 if (app->robotScene.robot.headRadius > MAX_R)
                     app->robotScene.robot.headRadius = MAX_R;
 
-                // head radius feeds the top/bottom seam arcs' fillet
-                // solve -- re-validate their existing angles
+                // head radius feeds the seam arc 1/2 fillet solve --
+                // re-validate their existing angles
                 adjustHeadButtArcs(app);
             }
             else if (isNear(mouse, buttWorld, HEAD_BUTT_HANDLE_RADIUS))
@@ -886,7 +899,7 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 if (app->robotScene.robot.buttRadius > MAX_R)
                     app->robotScene.robot.buttRadius = MAX_R;
 
-                // butt radius feeds the same top/bottom seam fillet solve
+                // butt radius feeds the same seam arc 1/2 fillet solve
                 adjustHeadButtArcs(app);
             }
             else

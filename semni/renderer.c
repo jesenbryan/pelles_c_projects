@@ -147,49 +147,49 @@ void drawSemniBody(Semni b, RenderState* rs)
     setColor(rs->draggingInner || (rs->hoverHip && !rs->shiftHeld), 0.2f, 0.4f, 1.0f);
     drawCircle(inner, b.innerRadius);
 
-    // top/bottom seams: each is a circular arc internally tangent to both
-    // the head and butt circles, parameterized by the angle where it
-    // attaches to the head circle (topArcAngle/bottomArcAngle) -- the
-    // fillet's radius, center, and its other tangent point (on butt) all
-    // fall out of a closed-form solve. Done in local (unrotated) space,
-    // then rotated into world space at the end, same pattern used
-    // elsewhere for local-frame points.
+    // seam arc 1/2 (formerly "top"/"bottom"): each is a circular arc
+    // internally tangent to both the head and butt circles, parameterized
+    // by the angle where it attaches to the head circle (seamArc1Angle/
+    // seamArc2Angle) -- the fillet's radius, center, and its other
+    // tangent point (on butt) all fall out of a closed-form solve. Done
+    // in local (unrotated) space, then rotated into world space at the
+    // end, same pattern used elsewhere for local-frame points.
     Point headLocal = { b.headX, b.y };
     Point buttLocal = { b.buttX, b.y };
     Point bodyMidLocal = { (headLocal.x + buttLocal.x) * 0.5f, (headLocal.y + buttLocal.y) * 0.5f };
 
-    Fillet topFillet = filletFromAttachAngle(headLocal, b.headRadius, buttLocal, b.buttRadius, b.topArcAngle, MIN_ARC_R, MAX_ARC_R);
-    Point topHeadTangentLocal = circleEdge(headLocal, b.headRadius, b.topArcAngle); // exact, by definition of the attach angle
-    Point topButtTangentLocal = internalTangentPoint(topFillet.center, topFillet.radius, buttLocal, b.buttRadius);
+    Fillet seamArc1Fillet = filletFromAttachAngle(headLocal, b.headRadius, buttLocal, b.buttRadius, b.seamArc1Angle, MIN_ARC_R, MAX_ARC_R);
+    Point seamArc1HeadTangentLocal = circleEdge(headLocal, b.headRadius, b.seamArc1Angle); // exact, by definition of the attach angle
+    Point seamArc1ButtTangentLocal = internalTangentPoint(seamArc1Fillet.center, seamArc1Fillet.radius, buttLocal, b.buttRadius);
     // hint point for drawArc: the point on the fillet circle nearest the
     // body's midline, so it sweeps the near/visible arc instead of the
     // far side of a possibly-huge circle
-    Point topNearLocal = circleTowardPoint(topFillet.center, topFillet.radius, bodyMidLocal);
+    Point seamArc1NearLocal = circleTowardPoint(seamArc1Fillet.center, seamArc1Fillet.radius, bodyMidLocal);
 
-    Fillet bottomFillet = filletFromAttachAngle(headLocal, b.headRadius, buttLocal, b.buttRadius, b.bottomArcAngle, MIN_ARC_R, MAX_ARC_R);
-    Point bottomHeadTangentLocal = circleEdge(headLocal, b.headRadius, b.bottomArcAngle);
-    Point bottomButtTangentLocal = internalTangentPoint(bottomFillet.center, bottomFillet.radius, buttLocal, b.buttRadius);
-    Point bottomNearLocal = circleTowardPoint(bottomFillet.center, bottomFillet.radius, bodyMidLocal);
+    Fillet seamArc2Fillet = filletFromAttachAngle(headLocal, b.headRadius, buttLocal, b.buttRadius, b.seamArc2Angle, MIN_ARC_R, MAX_ARC_R);
+    Point seamArc2HeadTangentLocal = circleEdge(headLocal, b.headRadius, b.seamArc2Angle);
+    Point seamArc2ButtTangentLocal = internalTangentPoint(seamArc2Fillet.center, seamArc2Fillet.radius, buttLocal, b.buttRadius);
+    Point seamArc2NearLocal = circleTowardPoint(seamArc2Fillet.center, seamArc2Fillet.radius, bodyMidLocal);
 
-    // topHeadTangentLocal/topNearLocal/topButtTangentLocal all sit exactly
-    // on the same known circle by construction, so feeding them through
-    // the existing 3-point drawArc reuses its circumcircle + sweep-
-    // direction logic for free -- the near-pole point just tells it which
-    // way (short or long way around) to sweep
+    // seamArc1HeadTangentLocal/seamArc1NearLocal/seamArc1ButtTangentLocal
+    // all sit exactly on the same known circle by construction, so
+    // feeding them through the existing 3-point drawArc reuses its
+    // circumcircle + sweep-direction logic for free -- the near-pole
+    // point just tells it which way (short or long way around) to sweep
     //
-    // dragging either seam handle updates BOTH topArcAngle and
-    // bottomArcAngle (see WM_MOUSEMOVE's mirrored assignment), so both
+    // dragging either seam handle updates BOTH seamArc1Angle and
+    // seamArc2Angle (see WM_MOUSEMOVE's mirrored assignment), so both
     // arcs highlight together too -- otherwise only the one under the
     // cursor would turn blue even though the other is visibly moving too
-    int seamActive = rs->draggingTopArc || rs->draggingBottomArc;
+    int seamActive = rs->draggingSeamArc1 || rs->draggingSeamArc2;
 
-    Point topArcP0 = rotatePoint(topHeadTangentLocal, center, angle);
-    Point topArcP1 = rotatePoint(topNearLocal, center, angle);
-    Point topArcP2 = rotatePoint(topButtTangentLocal, center, angle);
+    Point seamArc1P0 = rotatePoint(seamArc1HeadTangentLocal, center, angle);
+    Point seamArc1P1 = rotatePoint(seamArc1NearLocal, center, angle);
+    Point seamArc1P2 = rotatePoint(seamArc1ButtTangentLocal, center, angle);
 
-    Point botArcP0 = rotatePoint(bottomHeadTangentLocal, center, angle);
-    Point botArcP1 = rotatePoint(bottomNearLocal, center, angle);
-    Point botArcP2 = rotatePoint(bottomButtTangentLocal, center, angle);
+    Point seamArc2P0 = rotatePoint(seamArc2HeadTangentLocal, center, angle);
+    Point seamArc2P1 = rotatePoint(seamArc2NearLocal, center, angle);
+    Point seamArc2P2 = rotatePoint(seamArc2ButtTangentLocal, center, angle);
 
     // TEMP DIAGNOSTIC -- prints exactly what reaches drawArc, once a
     // second, same throttle as printRobotAsInit -- remove once the seam
@@ -200,26 +200,26 @@ void drawSemniBody(Semni b, RenderState* rs)
     //{
         //printf("[seam] center=(%.6f,%.6f) angle=%.6f  headLocal=(%.6f,%.6f) buttLocal=(%.6f,%.6f) bodyMidLocal=(%.6f,%.6f)\n",
                //center.x, center.y, angle, headLocal.x, headLocal.y, buttLocal.x, buttLocal.y, bodyMidLocal.x, bodyMidLocal.y);
-        //printf("[seam] b.headRadius=%.6f b.buttRadius=%.6f b.topArcAngle=%.6f b.bottomArcAngle=%.6f MIN_ARC_R=%.6f MAX_ARC_R=%.6f\n",
-               //b.headRadius, b.buttRadius, b.topArcAngle, b.bottomArcAngle, (float)MIN_ARC_R, (float)MAX_ARC_R);
-        //printf("[seam] topFillet: center=(%.6f,%.6f) radius=%.6f\n", topFillet.center.x, topFillet.center.y, topFillet.radius);
-        //printf("[seam] topHeadTangentLocal=(%.6f,%.6f) topNearLocal=(%.6f,%.6f) topButtTangentLocal=(%.6f,%.6f)\n",
-               //topHeadTangentLocal.x, topHeadTangentLocal.y, topNearLocal.x, topNearLocal.y, topButtTangentLocal.x, topButtTangentLocal.y);
-        //printf("[seam] bottomFillet: center=(%.6f,%.6f) radius=%.6f\n", bottomFillet.center.x, bottomFillet.center.y, bottomFillet.radius);
-        //printf("[seam] bottomHeadTangentLocal=(%.6f,%.6f) bottomNearLocal=(%.6f,%.6f) bottomButtTangentLocal=(%.6f,%.6f)\n",
-               //bottomHeadTangentLocal.x, bottomHeadTangentLocal.y, bottomNearLocal.x, bottomNearLocal.y, bottomButtTangentLocal.x, bottomButtTangentLocal.y);
-        //printf("[seam] top    p0=(%.6f,%.6f) p1=(%.6f,%.6f) p2=(%.6f,%.6f)\n",
-               //topArcP0.x, topArcP0.y, topArcP1.x, topArcP1.y, topArcP2.x, topArcP2.y);
-        //printf("[seam] bottom p0=(%.6f,%.6f) p1=(%.6f,%.6f) p2=(%.6f,%.6f)\n",
-               //botArcP0.x, botArcP0.y, botArcP1.x, botArcP1.y, botArcP2.x, botArcP2.y);
+        //printf("[seam] b.headRadius=%.6f b.buttRadius=%.6f b.seamArc1Angle=%.6f b.seamArc2Angle=%.6f MIN_ARC_R=%.6f MAX_ARC_R=%.6f\n",
+               //b.headRadius, b.buttRadius, b.seamArc1Angle, b.seamArc2Angle, (float)MIN_ARC_R, (float)MAX_ARC_R);
+        //printf("[seam] seamArc1Fillet: center=(%.6f,%.6f) radius=%.6f\n", seamArc1Fillet.center.x, seamArc1Fillet.center.y, seamArc1Fillet.radius);
+        //printf("[seam] seamArc1HeadTangentLocal=(%.6f,%.6f) seamArc1NearLocal=(%.6f,%.6f) seamArc1ButtTangentLocal=(%.6f,%.6f)\n",
+               //seamArc1HeadTangentLocal.x, seamArc1HeadTangentLocal.y, seamArc1NearLocal.x, seamArc1NearLocal.y, seamArc1ButtTangentLocal.x, seamArc1ButtTangentLocal.y);
+        //printf("[seam] seamArc2Fillet: center=(%.6f,%.6f) radius=%.6f\n", seamArc2Fillet.center.x, seamArc2Fillet.center.y, seamArc2Fillet.radius);
+        //printf("[seam] seamArc2HeadTangentLocal=(%.6f,%.6f) seamArc2NearLocal=(%.6f,%.6f) seamArc2ButtTangentLocal=(%.6f,%.6f)\n",
+               //seamArc2HeadTangentLocal.x, seamArc2HeadTangentLocal.y, seamArc2NearLocal.x, seamArc2NearLocal.y, seamArc2ButtTangentLocal.x, seamArc2ButtTangentLocal.y);
+        //printf("[seam] seam1 p0=(%.6f,%.6f) p1=(%.6f,%.6f) p2=(%.6f,%.6f)\n",
+               //seamArc1P0.x, seamArc1P0.y, seamArc1P1.x, seamArc1P1.y, seamArc1P2.x, seamArc1P2.y);
+        //printf("[seam] seam2 p0=(%.6f,%.6f) p1=(%.6f,%.6f) p2=(%.6f,%.6f)\n",
+               //seamArc2P0.x, seamArc2P0.y, seamArc2P1.x, seamArc2P1.y, seamArc2P2.x, seamArc2P2.y);
         //s_lastSeamLogTime = s_now;
     //}
 
     setColor(seamActive, 0.2f, 0.4f, 1.0f);
-    drawArc(topArcP0, topArcP1, topArcP2);
+    drawArc(seamArc1P0, seamArc1P1, seamArc1P2);
 
     setColor(seamActive, 0.2f, 0.4f, 1.0f);
-    drawArc(botArcP0, botArcP1, botArcP2);
+    drawArc(seamArc2P0, seamArc2P1, seamArc2P2);
 }
 
 // Draws the knee joint and the two arcs connecting it back to the inner
@@ -462,20 +462,20 @@ void drawSemniHandles(Semni b, RenderState* rs)
     Point buttLocal = { b.buttX, b.y };
     Point bodyMidLocal = { (headLocal.x + buttLocal.x) * 0.5f, (headLocal.y + buttLocal.y) * 0.5f };
 
-    Fillet topSeamFillet = filletFromAttachAngle(headLocal, b.headRadius, buttLocal, b.buttRadius, b.topArcAngle, MIN_ARC_R, MAX_ARC_R);
-    Fillet bottomSeamFillet = filletFromAttachAngle(headLocal, b.headRadius, buttLocal, b.buttRadius, b.bottomArcAngle, MIN_ARC_R, MAX_ARC_R);
+    Fillet seamArc1Fillet = filletFromAttachAngle(headLocal, b.headRadius, buttLocal, b.buttRadius, b.seamArc1Angle, MIN_ARC_R, MAX_ARC_R);
+    Fillet seamArc2Fillet = filletFromAttachAngle(headLocal, b.headRadius, buttLocal, b.buttRadius, b.seamArc2Angle, MIN_ARC_R, MAX_ARC_R);
 
-    Point topNearLocal = circleTowardPoint(topSeamFillet.center, topSeamFillet.radius, bodyMidLocal);
-    Point bottomNearLocal = circleTowardPoint(bottomSeamFillet.center, bottomSeamFillet.radius, bodyMidLocal);
+    Point seamArc1NearLocal = circleTowardPoint(seamArc1Fillet.center, seamArc1Fillet.radius, bodyMidLocal);
+    Point seamArc2NearLocal = circleTowardPoint(seamArc2Fillet.center, seamArc2Fillet.radius, bodyMidLocal);
 
-    Point topMidLocal = circleAtX(topSeamFillet.center, topSeamFillet.radius, bodyMidLocal.x, topNearLocal);
-    Point bottomMidLocal = circleAtX(bottomSeamFillet.center, bottomSeamFillet.radius, bodyMidLocal.x, bottomNearLocal);
+    Point seamArc1MidLocal = circleAtX(seamArc1Fillet.center, seamArc1Fillet.radius, bodyMidLocal.x, seamArc1NearLocal);
+    Point seamArc2MidLocal = circleAtX(seamArc2Fillet.center, seamArc2Fillet.radius, bodyMidLocal.x, seamArc2NearLocal);
 
-    Point topHandle = rotatePoint(topMidLocal, center, angle);
-    Point bottomHandle = rotatePoint(bottomMidLocal, center, angle);
+    Point seamArc1Handle = rotatePoint(seamArc1MidLocal, center, angle);
+    Point seamArc2Handle = rotatePoint(seamArc2MidLocal, center, angle);
 
-    drawHandle(topHandle, rs->draggingTopArc, ARC_HANDLE_RADIUS);
-    drawHandle(bottomHandle, rs->draggingBottomArc, ARC_HANDLE_RADIUS);
+    drawHandle(seamArc1Handle, rs->draggingSeamArc1, ARC_HANDLE_RADIUS);
+    drawHandle(seamArc2Handle, rs->draggingSeamArc2, ARC_HANDLE_RADIUS);
 
     // joint circle handles: highlight on hover too, not just while dragging
     drawHandle(inner,
@@ -512,8 +512,8 @@ static void renderRobot(AppState* app, int includeHandles)
     RenderState rs;
 
     rs.activeHandle = app->activeHandle;
-    rs.draggingTopArc = app->draggingTopArc;
-    rs.draggingBottomArc = app->draggingBottomArc;
+    rs.draggingSeamArc1 = app->draggingSeamArc1;
+    rs.draggingSeamArc2 = app->draggingSeamArc2;
     rs.draggingInner = app->draggingInner;
     rs.draggingKnee = app->draggingKnee;
     rs.draggingThigh1 = app->draggingThigh1;

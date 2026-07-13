@@ -5,7 +5,7 @@
 Point getCenter(Semni b)
 {
     Point c;
-    c.x = (b.headX + b.buttX) * 0.5f;
+    c.x = (b.buttX + b.headX) * 0.5f;
     c.y = b.y;
     return c;
 }
@@ -30,7 +30,7 @@ static float mirrorArcAngle(float angleDeg)
 // raw local coordinates, in the frame BEFORE hipAngle/kneeAngle rotate
 // them into place (see app.h's comments on those fields) -- so mirroring
 // the leg is a plain x-reflection of each one, about the body's own
-// center line (the headX/buttX midpoint, same reference getCenter uses).
+// center line (the buttX/headX midpoint, same reference getCenter uses).
 //
 // A reflection alone would only flip the joints' REST positions though --
 // to also flip the VISIBLE (rotated) pose, hipAngle and kneeAngle, which
@@ -49,7 +49,7 @@ static float mirrorArcAngle(float angleDeg)
 // its comment.
 void mirrorHipLeg(Semni* b)
 {
-    float centerX = (b->headX + b->buttX) * 0.5f;
+    float centerX = (b->buttX + b->headX) * 0.5f;
 
     b->innerCircle.x = 2.0f * centerX - b->innerCircle.x;
     b->kneeCircle.x  = 2.0f * centerX - b->kneeCircle.x;
@@ -66,15 +66,15 @@ void mirrorHipLeg(Semni* b)
 
 void printRobotAsInit(Semni b)
 {
-    printf("app->robotScene.robot.headX = %.6ff;\n", b.headX);
     printf("app->robotScene.robot.buttX = %.6ff;\n", b.buttX);
+    printf("app->robotScene.robot.headX = %.6ff;\n", b.headX);
     printf("app->robotScene.robot.y = %.6ff;\n\n", b.y);
 
-    printf("app->robotScene.robot.headRadius = %.6ff;\n", b.headRadius);
-    printf("app->robotScene.robot.buttRadius = %.6ff;\n\n", b.buttRadius);
+    printf("app->robotScene.robot.buttRadius = %.6ff;\n", b.buttRadius);
+    printf("app->robotScene.robot.headRadius = %.6ff;\n\n", b.headRadius);
 
-    printf("app->robotScene.robot.topArcAngle = %.6ff;\n", b.topArcAngle);
-    printf("app->robotScene.robot.bottomArcAngle = %.6ff;\n\n", b.bottomArcAngle);
+    printf("app->robotScene.robot.seamArc1Angle = %.6ff;\n", b.seamArc1Angle);
+    printf("app->robotScene.robot.seamArc2Angle = %.6ff;\n\n", b.seamArc2Angle);
 
     printf("app->robotScene.robot.innerCircle.x = %.6ff;\n", b.innerCircle.x);
     printf("app->robotScene.robot.innerCircle.y = %.6ff;\n\n", b.innerCircle.y);

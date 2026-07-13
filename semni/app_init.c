@@ -9,8 +9,8 @@ app->robotScene.robot.y = 0.000000f;
 app->robotScene.robot.headRadius = 0.081000f;
 app->robotScene.robot.buttRadius = 0.288500f;
 
-app->robotScene.robot.topArcAngle = 122.854446f;
-app->robotScene.robot.bottomArcAngle = 237.145584f;
+app->robotScene.robot.seamArc1Angle = 122.854446f;
+app->robotScene.robot.seamArc2Angle = 237.145584f;
 
 app->robotScene.robot.innerCircle.x = 0.000000f;
 app->robotScene.robot.innerCircle.y = 0.000000f;
