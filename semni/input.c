@@ -923,6 +923,32 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
 
             if (wParam == VK_RIGHT)
                 app->robotScene.robot.angle -= 2.0f;
+
+            if (wParam == VK_UP)
+            {
+                // Check if Ctrl is held for finer movement
+                int ctrlHeld = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
+                float step = ctrlHeld ? 0.01f : 0.05f;
+
+                // Move entire robot including body and legs
+                app->robotScene.robot.y += step;
+                app->robotScene.robot.innerCircle.y += step;
+                app->robotScene.robot.kneeCircle.y += step;
+                app->robotScene.robot.ankleCircle.y += step;
+            }
+
+            if (wParam == VK_DOWN)
+            {
+                // Check if Ctrl is held for finer movement
+                int ctrlHeld = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
+                float step = ctrlHeld ? 0.01f : 0.05f;
+
+                // Move entire robot including body and legs
+                app->robotScene.robot.y -= step;
+                app->robotScene.robot.innerCircle.y -= step;
+                app->robotScene.robot.kneeCircle.y -= step;
+                app->robotScene.robot.ankleCircle.y -= step;
+            }
         }
         break;
 
@@ -937,23 +963,32 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             GetClientRect(hwnd, &rect);
 
             int btnHeight = 30;
+            int btnSpacing = 10;
 
-            int y = (rect.bottom / 2) - (btnHeight / 2);
+            // Top row: Standing Position and Home Position
+            int yTop = 10;
+            int xStanding = 10;
+            int xHome = xStanding + 120 + btnSpacing;
 
+            // Bottom row: Save and Mirror Leg
+            int yBottom = yTop + btnHeight + btnSpacing;
             int xSave = 10;
-            int xMirror = xSave + 80 + 10; // stack to the right of Save, same gap style
-            int xReset = xMirror + 100 + 10; // stack to the right of Mirror Leg, same gap style
+            int xMirror = xSave + 80 + btnSpacing;
+
+            SetWindowPos(app->ui.hStandingPositionButton, NULL,
+                 xStanding, yTop, 0, 0,
+                 SWP_NOZORDER | SWP_NOSIZE);
+
+            SetWindowPos(app->ui.hHomePositionButton, NULL,
+                 xHome, yTop, 0, 0,
+                 SWP_NOZORDER | SWP_NOSIZE);
 
             SetWindowPos(app->ui.hSaveButton, NULL,
-                 xSave, y, 0, 0,
+                 xSave, yBottom, 0, 0,
                  SWP_NOZORDER | SWP_NOSIZE);
 
             SetWindowPos(app->ui.hMirrorButton, NULL,
-                 xMirror, y, 0, 0,
-                 SWP_NOZORDER | SWP_NOSIZE);
-
-            SetWindowPos(app->ui.hResetButton, NULL,
-                 xReset, y, 0, 0,
+                 xMirror, yBottom, 0, 0,
                  SWP_NOZORDER | SWP_NOSIZE);
 
             // bottom-left hover status label
@@ -968,54 +1003,61 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
 
         case WM_CREATE:
         {
+             app->ui.hStandingPositionButton = CreateWindow(
+                L"BUTTON",
+                L"Standing",
+                WS_VISIBLE | WS_CHILD,
+                10, 10, 120, 30,
+                hwnd,
+                (HMENU)ID_STANDING_POSITION_BUTTON,
+                NULL,
+                NULL
+            );
+
+             app->ui.hHomePositionButton = CreateWindow(
+                L"BUTTON",
+                L"Home",
+                WS_VISIBLE | WS_CHILD,
+                140, 10, 110, 30,
+                hwnd,
+                (HMENU)ID_HOME_POSITION_BUTTON,
+                NULL,
+                NULL
+            );
+
              app->ui.hSaveButton = CreateWindow(
-			    L"BUTTON",           // Add L prefix
-			    L"Save",             // Add L prefix
-			    WS_VISIBLE | WS_CHILD,
-			    10, 10, 80, 30,
-			    hwnd,
-			    (HMENU)ID_SAVE_BUTTON,
-			    NULL,
-			    NULL
-			);
+                L"BUTTON",
+                L"Save",
+                WS_VISIBLE | WS_CHILD,
+                10, 50, 80, 30,
+                hwnd,
+                (HMENU)ID_SAVE_BUTTON,
+                NULL,
+                NULL
+            );
 
              app->ui.hMirrorButton = CreateWindow(
-			    L"BUTTON",
-			    L"Mirror Leg",
-			    WS_VISIBLE | WS_CHILD,
-			    100, 10, 100, 30,
-			    hwnd,
-			    (HMENU)ID_MIRROR_LEG_BUTTON,
-			    NULL,
-			    NULL
-			);
+                L"BUTTON",
+                L"Mirror Leg",
+                WS_VISIBLE | WS_CHILD,
+                100, 50, 100, 30,
+                hwnd,
+                (HMENU)ID_MIRROR_LEG_BUTTON,
+                NULL,
+                NULL
+            );
 
-             app->ui.hResetButton = CreateWindow(
-			    L"BUTTON",
-			    L"Reset",
-			    WS_VISIBLE | WS_CHILD,
-			    210, 10, 80, 30,
-			    hwnd,
-			    (HMENU)ID_RESET_BUTTON,
-			    NULL,
-			    NULL
-			);
-
-             // bottom-left hover status label -- real position gets set
-             // by WM_SIZE (which doesn't fire for the window's initial
-             // size, same gap main.c's comment mentions for the GL
-             // projection), so this is just a reasonable placement for
-             // the default 800x600 window until the first resize
+             // bottom-left hover status label
              app->ui.hHoverLabel = CreateWindow(
-			    L"STATIC",
-			    L"",
-			    WS_VISIBLE | WS_CHILD | SS_LEFT,
-			    10, 560, 260, 20,
-			    hwnd,
-			    NULL,
-			    NULL,
-			    NULL
-			);
+                L"STATIC",
+                L"",
+                WS_VISIBLE | WS_CHILD | SS_LEFT,
+                10, 560, 260, 20,
+                hwnd,
+                NULL,
+                NULL,
+                NULL
+            );
         }
         break;
 
@@ -1034,23 +1076,24 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             switch (LOWORD(wParam))
             {
                 case ID_SAVE_BUTTON:
-                    // renders a handle-free frame into the back buffer and
-                    // writes it out as an uncompressed 24-bit BMP -- the
-                    // on-screen display (with handles) is unaffected
                     saveCanvasAsBMP("robot.bmp", app->hwndMain, app);
+                    SetFocus(app->hwndMain);  // return focus for keyboard input
                     break;
 
                 case ID_MIRROR_LEG_BUTTON:
-                    // flips the leg's bend to the other side, in place --
-                    // see robot.c's mirrorHipLeg for the derivation
                     mirrorHipLeg(&app->robotScene.robot);
+                    SetFocus(app->hwndMain);  // return focus for keyboard input
                     break;
 
-                case ID_RESET_BUTTON:
-                    // restores the robot's pose back to the starting/home
-                    // position defined in app_init.c's initAppState()
-                    initAppState(app);
-                    break;
+                case ID_STANDING_POSITION_BUTTON:
+				    initStandingPosition(app);
+				    SetFocus(app->hwndMain);
+				    break;
+
+				case ID_HOME_POSITION_BUTTON:
+				    initHomePosition(app);
+				    SetFocus(app->hwndMain);
+				    break;
             }
             break;
     }

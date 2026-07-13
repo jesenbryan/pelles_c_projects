@@ -6,7 +6,8 @@
 
 #define ID_SAVE_BUTTON 1001
 #define ID_MIRROR_LEG_BUTTON 1002
-#define ID_RESET_BUTTON 1003
+#define ID_STANDING_POSITION_BUTTON 1003
+#define ID_HOME_POSITION_BUTTON 1004
 
 // ---- robot model (the "Semni") ----
 
@@ -110,7 +111,8 @@ typedef struct {
 typedef struct {
     HWND hSaveButton;
     HWND hMirrorButton;
-    HWND hResetButton;
+    HWND hStandingPositionButton;
+    HWND hHomePositionButton;
 
     // bottom-left status label -- shows the friendly name of whichever
     // handle the mouse is currently hovering (e.g. "Thigh Arc 1"), blank

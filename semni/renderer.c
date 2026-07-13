@@ -114,6 +114,31 @@ void drawHandle(Point p, int selected, float radius)
     glEnd();
 }
 
+// Draws a dashed horizontal reference line at the given Y coordinate,
+// spanning the full visible viewport width. Used to help the user
+// position the robot horizontally (e.g., laying down).
+void drawDashedHorizontalLine(float y, float viewportHalfWidth)
+{
+    glColor3f(0.6f, 0.6f, 0.6f); // medium gray, subtle
+    
+    const float dashLength = 0.08f;  // shorter dashes for finer appearance
+    const float gapLength = 0.06f;   // smaller gaps
+    const float segmentLength = dashLength + gapLength;
+    
+    // start from the left edge and draw dashes across
+    for (float x = -viewportHalfWidth; x < viewportHalfWidth; x += segmentLength)
+    {
+        float dashEnd = x + dashLength;
+        if (dashEnd > viewportHalfWidth)
+            dashEnd = viewportHalfWidth;
+        
+        glBegin(GL_LINES);
+        glVertex2f(x, y);
+        glVertex2f(dashEnd, y);
+        glEnd();
+    }
+}
+
 void drawSemniBody(Semni b, RenderState* rs)
 {
     Point center = getCenter(b);
@@ -190,30 +215,6 @@ void drawSemniBody(Semni b, RenderState* rs)
     Point seamArc2P0 = rotatePoint(seamArc2HeadTangentLocal, center, angle);
     Point seamArc2P1 = rotatePoint(seamArc2NearLocal, center, angle);
     Point seamArc2P2 = rotatePoint(seamArc2ButtTangentLocal, center, angle);
-
-    // TEMP DIAGNOSTIC -- prints exactly what reaches drawArc, once a
-    // second, same throttle as printRobotAsInit -- remove once the seam
-    // arc investigation is done
-    //static DWORD s_lastSeamLogTime = 0;
-    //DWORD s_now = GetTickCount();
-    //if (s_now - s_lastSeamLogTime >= 1000)
-    //{
-        //printf("[seam] center=(%.6f,%.6f) angle=%.6f  headLocal=(%.6f,%.6f) buttLocal=(%.6f,%.6f) bodyMidLocal=(%.6f,%.6f)\n",
-               //center.x, center.y, angle, headLocal.x, headLocal.y, buttLocal.x, buttLocal.y, bodyMidLocal.x, bodyMidLocal.y);
-        //printf("[seam] b.headRadius=%.6f b.buttRadius=%.6f b.seamArc1Angle=%.6f b.seamArc2Angle=%.6f MIN_ARC_R=%.6f MAX_ARC_R=%.6f\n",
-               //b.headRadius, b.buttRadius, b.seamArc1Angle, b.seamArc2Angle, (float)MIN_ARC_R, (float)MAX_ARC_R);
-        //printf("[seam] seamArc1Fillet: center=(%.6f,%.6f) radius=%.6f\n", seamArc1Fillet.center.x, seamArc1Fillet.center.y, seamArc1Fillet.radius);
-        //printf("[seam] seamArc1HeadTangentLocal=(%.6f,%.6f) seamArc1NearLocal=(%.6f,%.6f) seamArc1ButtTangentLocal=(%.6f,%.6f)\n",
-               //seamArc1HeadTangentLocal.x, seamArc1HeadTangentLocal.y, seamArc1NearLocal.x, seamArc1NearLocal.y, seamArc1ButtTangentLocal.x, seamArc1ButtTangentLocal.y);
-        //printf("[seam] seamArc2Fillet: center=(%.6f,%.6f) radius=%.6f\n", seamArc2Fillet.center.x, seamArc2Fillet.center.y, seamArc2Fillet.radius);
-        //printf("[seam] seamArc2HeadTangentLocal=(%.6f,%.6f) seamArc2NearLocal=(%.6f,%.6f) seamArc2ButtTangentLocal=(%.6f,%.6f)\n",
-               //seamArc2HeadTangentLocal.x, seamArc2HeadTangentLocal.y, seamArc2NearLocal.x, seamArc2NearLocal.y, seamArc2ButtTangentLocal.x, seamArc2ButtTangentLocal.y);
-        //printf("[seam] seam1 p0=(%.6f,%.6f) p1=(%.6f,%.6f) p2=(%.6f,%.6f)\n",
-               //seamArc1P0.x, seamArc1P0.y, seamArc1P1.x, seamArc1P1.y, seamArc1P2.x, seamArc1P2.y);
-        //printf("[seam] seam2 p0=(%.6f,%.6f) p1=(%.6f,%.6f) p2=(%.6f,%.6f)\n",
-               //seamArc2P0.x, seamArc2P0.y, seamArc2P1.x, seamArc2P1.y, seamArc2P2.x, seamArc2P2.y);
-        //s_lastSeamLogTime = s_now;
-    //}
 
     setColor(seamActive, 0.2f, 0.4f, 1.0f);
     drawArc(seamArc1P0, seamArc1P1, seamArc1P2);
@@ -544,6 +545,12 @@ void renderApp(AppState* app, HDC hdc)
 
     glMatrixMode(GL_MODELVIEW);
     glLoadIdentity();
+
+    // Draw ground reference line at the bottom. The viewport's
+    // half-width is 1.5 units at the base zoom level, so we position
+    // the line near the bottom (-1.3) to look like a ground plane
+    // that helps the user position the robot for laying down poses.
+    drawDashedHorizontalLine(-1.1f, 1.5f);
 
     renderRobot(app, 1);
 
