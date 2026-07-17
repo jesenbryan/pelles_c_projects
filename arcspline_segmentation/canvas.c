@@ -30,6 +30,12 @@ float segmentCircleRadiusWorldY[MAX_ARC_SEGMENTS];    // NEW: ghost circle radii
 // -1 means "none". Declared here (before ResetCanvas) since it's referenced there.
 static int hoveredSegment = -1;
 
+// NEW: endpoint-snap - lets the user hover near the start/end point of an
+// existing stroke and have the NEXT stroke's start point snap exactly onto
+// it, so straight-line strokes can be chained end-to-end into a polyline.
+static BOOL  snapEndpointAvailable = FALSE;
+static float snapEndpointX = 0.0f, snapEndpointY = 0.0f;
+
 // NEW: state for the "hover top-right corner to reveal the UI panel" behavior
 static BOOL hotZoneHighlighted = FALSE; // cursor is currently inside the corner hot zone
 static BOOL uiShown            = FALSE; // panel is at least partially faded in
@@ -48,6 +54,7 @@ void ResetCanvas(void)
     canvas.segmentResultCount = 0;      // NEW
     canvas.comparisonMode = FALSE;      // NEW
     hoveredSegment = -1;                // NEW: avoid a stale highlight index
+    snapEndpointAvailable = FALSE;      // NEW: avoid a stale endpoint-snap highlight
 	UpdateProjection();
 }
 
@@ -171,6 +178,50 @@ static int findHoveredSegment(float wx, float wy)
     }
 
     return best;
+}
+
+// Finds the nearest stroke START or END point to a world-space point,
+// within a small pick tolerance - used to let a new stroke snap onto
+// where a previous one left off (chaining straight lines end-to-end).
+// Only strokes belonging to the currently active design layer are
+// considered, so this stays consistent with what's actually editable.
+// Returns TRUE and fills outX/outY if something is close enough.
+static BOOL findNearestStrokeEndpoint(float wx, float wy, float* outX, float* outY)
+{
+    float tolerance = 0.05f * canvas.zoom; // pick radius, world units - matches segment picking
+    BOOL found = FALSE;
+    float bestDist = tolerance;
+
+    for (int s = 0; s < canvas.strokeCount; s++)
+    {
+        if (strokeLayer[s] != designLayer) continue;
+
+        int start = strokeStarts[s];
+        int end = (s == canvas.strokeCount - 1) ? canvas.pointCount : strokeStarts[s + 1];
+        int count = (end - start) / 2;
+        if (count < 1) continue;
+
+        float candidates[2][2] = {
+            { points[start],     points[start + 1] },     // stroke start
+            { points[end - 2],   points[end - 1] },        // stroke end
+        };
+
+        for (int c = 0; c < 2; c++)
+        {
+            float dx = wx - candidates[c][0];
+            float dy = wy - candidates[c][1];
+            float d = sqrtf(dx * dx + dy * dy);
+            if (d < bestDist)
+            {
+                bestDist = d;
+                found = TRUE;
+                *outX = candidates[c][0];
+                *outY = candidates[c][1];
+            }
+        }
+    }
+
+    return found;
 }
 
 void UpdateProjection(void)
@@ -434,6 +485,17 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		nx += canvas.panX;   // NEW
 		ny += canvas.panY;   // NEW
 
+		// NEW: if the cursor was hovering near an existing stroke's
+		// endpoint, snap this new stroke's first point exactly onto it
+		// instead of the raw cursor position - lets straight lines be
+		// chained end-to-end into a connected polyline.
+		if (snapEndpointAvailable)
+		{
+		    nx = snapEndpointX;
+		    ny = snapEndpointY;
+		    snapEndpointAvailable = FALSE;
+		}
+
 		if (canvas.pointCount < MAX_POINTS - 1) {
 		    points[canvas.pointCount++] = nx;
 		    points[canvas.pointCount++] = ny;
@@ -491,37 +553,55 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
 	    if (!drawing || !(wParam & MK_LBUTTON))
 	    {
-	        // NEW: hover detection over the segment overlay when not
-	        // actively drawing or panning
+	        // NEW: hover detection (segment overlay + stroke endpoint
+	        // snapping) when not actively drawing or panning. World coords
+	        // computed once here so both checks below can share them.
+	        float hx = (float)LOWORD(lParam);
+	        float hy = (float)HIWORD(lParam);
+	        float hAspect = (float)glWindowWidth / (float)glWindowHeight;
+	        float hwx, hwy;
+	        if (hAspect >= 1.0f) {
+	            hwx = ((2.0f * hx / glWindowWidth) - 1.0f) * hAspect * canvas.zoom;
+	            hwy = (1.0f - (2.0f * hy / glWindowHeight)) * canvas.zoom;
+	        } else {
+	            hwx = ((2.0f * hx / glWindowWidth) - 1.0f) * canvas.zoom;
+	            hwy = (1.0f - (2.0f * hy / glWindowHeight)) * (1.0f / hAspect) * canvas.zoom;
+	        }
+	        hwx += canvas.panX;
+	        hwy += canvas.panY;
+
+	        // NEW: does hovering land near an existing stroke's start/end
+	        // point? If so, the next stroke drawn will snap to it (chains
+	        // straight lines into a connected polyline).
+	        float newSnapX, newSnapY;
+	        BOOL newSnapAvailable = findNearestStrokeEndpoint(hwx, hwy, &newSnapX, &newSnapY);
+	        if (newSnapAvailable != snapEndpointAvailable ||
+	            (newSnapAvailable && (newSnapX != snapEndpointX || newSnapY != snapEndpointY)))
+	        {
+	            snapEndpointAvailable = newSnapAvailable;
+	            snapEndpointX = newSnapX;
+	            snapEndpointY = newSnapY;
+	            InvalidateRect(hWnd, NULL, FALSE);
+	        }
+
+	        // Needed to actually receive WM_MOUSELEAVE below (used to clear
+	        // both the segment hover and the endpoint-snap highlight) -
+	        // registered unconditionally now since endpoint snapping isn't
+	        // gated on canvas.showSegments the way segment hover is.
+	        TRACKMOUSEEVENT tme = {0};
+	        tme.cbSize = sizeof(tme);
+	        tme.dwFlags = TME_LEAVE;
+	        tme.hwndTrack = hWnd;
+	        TrackMouseEvent(&tme);
+
 	        if (canvas.showSegments && canvas.segmentResultCount > 0)
 	        {
-	            float hx = (float)LOWORD(lParam);
-	            float hy = (float)HIWORD(lParam);
-	            float hAspect = (float)glWindowWidth / (float)glWindowHeight;
-	            float hwx, hwy;
-	            if (hAspect >= 1.0f) {
-	                hwx = ((2.0f * hx / glWindowWidth) - 1.0f) * hAspect * canvas.zoom;
-	                hwy = (1.0f - (2.0f * hy / glWindowHeight)) * canvas.zoom;
-	            } else {
-	                hwx = ((2.0f * hx / glWindowWidth) - 1.0f) * canvas.zoom;
-	                hwy = (1.0f - (2.0f * hy / glWindowHeight)) * (1.0f / hAspect) * canvas.zoom;
-	            }
-	            hwx += canvas.panX;
-	            hwy += canvas.panY;
-
 	            int newHover = findHoveredSegment(hwx, hwy);
 	            if (newHover != hoveredSegment)
 	            {
 	                hoveredSegment = newHover;
 	                InvalidateRect(hWnd, NULL, FALSE);
 	            }
-
-	            // Needed to actually receive WM_MOUSELEAVE below
-	            TRACKMOUSEEVENT tme = {0};
-	            tme.cbSize = sizeof(tme);
-	            tme.dwFlags = TME_LEAVE;
-	            tme.hwndTrack = hWnd;
-	            TrackMouseEvent(&tme);
 	        }
 	        else if (hoveredSegment != -1)
 	        {
@@ -647,6 +727,11 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	    if (hoveredSegment != -1)
 	    {
 	        hoveredSegment = -1;
+	        InvalidateRect(hWnd, NULL, FALSE);
+	    }
+	    if (snapEndpointAvailable)
+	    {
+	        snapEndpointAvailable = FALSE;
 	        InvalidateRect(hWnd, NULL, FALSE);
 	    }
 	    return 0;
@@ -836,6 +921,44 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             }
         }
         glDisable(GL_BLEND);
+
+        // NEW: endpoint-snap highlight - a bright ring around the stroke
+        // endpoint the cursor is currently hovering near, showing the user
+        // that starting a new stroke here will snap onto it.
+        if (snapEndpointAvailable)
+        {
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+            const int ringSteps = 24;
+            float ringRadius = 0.02f * canvas.zoom;
+
+            glColor4f(1.0f, 0.55f, 0.0f, 0.9f);   // orange, matches nothing else on canvas
+            glLineWidth(2.0f);
+            glBegin(GL_LINE_LOOP);
+            for (int i = 0; i < ringSteps; i++)
+            {
+                float theta = (2.0f * 3.14159265f * i) / ringSteps;
+                glVertex2f(snapEndpointX + ringRadius * cosf(theta),
+                           snapEndpointY + ringRadius * sinf(theta));
+            }
+            glEnd();
+
+            // Small filled center dot so the exact snap point is unambiguous
+            glColor4f(1.0f, 0.55f, 0.0f, 0.9f);
+            glBegin(GL_TRIANGLE_FAN);
+            glVertex2f(snapEndpointX, snapEndpointY);
+            for (int i = 0; i <= ringSteps; i++)
+            {
+                float theta = (2.0f * 3.14159265f * i) / ringSteps;
+                glVertex2f(snapEndpointX + (ringRadius * 0.3f) * cosf(theta),
+                           snapEndpointY + (ringRadius * 0.3f) * sinf(theta));
+            }
+            glEnd();
+
+            glLineWidth(1.0f);
+            glDisable(GL_BLEND);
+        }
 
 		if (canvas.showSegments && canvas.segmentResultCount > 0)
 		{
