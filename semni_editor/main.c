@@ -188,16 +188,15 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmdLine, int nShowC
     // that mismatch was only ever getting corrected by WM_SIZE -- which
     // doesn't fire for the window's initial size, only on an actual
     // resize afterward (e.g. maximizing). Until then, what's drawn and
-    // where screenToGL thinks the mouse is disagree. Fix it up once here
-    // so the very first frame already matches the real window shape --
-    // for BOTH subsystems' own projection setup, since either one might
-    // become active before the window is ever resized.
+    // where screenToGL thinks the mouse is disagree. renderCombinedFrame
+    // reasserts both subsystems' own projections every frame anyway (see
+    // its comment), so this doesn't strictly need doing here too, but
+    // glWindowWidth/glWindowHeight themselves (read by both projections)
+    // do need to be correct before that very first call.
     RECT initialRect;
     GetClientRect(app.hwndMain, &initialRect);
     glWindowWidth = initialRect.right;
     glWindowHeight = initialRect.bottom;
-    graphicsOnResize(initialRect.right, initialRect.bottom);
-    UpdateProjection();
 
     MSG msg;
 
@@ -212,31 +211,14 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmdLine, int nShowC
             DispatchMessage(&msg);
         }
 
-        if (editorModeState.currentMode == EDITOR_MODE_SEMNI)
-        {
-            // Re-assert Semni's own projection every frame -- the
-            // ArcSpline canvas uses a different glOrtho (UpdateProjection,
-            // canvas.c) on this same shared GL context, so switching modes
-            // needs to reapply the right one rather than trusting whatever
-            // was last left set.
-            graphicsOnResize(glWindowWidth, glWindowHeight);
-
-            // renderRobot()'s semi-transparent drag handles (HANDLE_ALPHA,
-            // config.h) rely on GL_BLEND already being enabled -- normally
-            // set up once by graphics.c's setupOpenGL(), which this app no
-            // longer calls (the shared window's GL context is created by
-            // WndProcGL's WM_CREATE instead, so there's only ever one
-            // context on the one window). Reassert the blend state here.
-            glEnable(GL_BLEND);
-            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
-            renderApp(&app, canvasGetHDC());
-        }
-        else
-        {
-            UpdateProjection();
-            InvalidateRect(app.hwndMain, NULL, FALSE);
-            UpdateWindow(app.hwndMain); // synchronously runs WM_PAINT -> WndProcGL's draw + SwapBuffers
-        }
+        // Both editor subsystems now draw into the same shared canvas every
+        // frame -- whichever one is active (editorModeState.currentMode)
+        // draws crisp and on top, the other draws dimmed underneath, rather
+        // than the two of them taking turns owning the whole window. See
+        // canvas.c's renderCombinedFrame for the actual clear/draw/dim/swap
+        // sequence; WM_PAINT calls the exact same function for OS-triggered
+        // repaints (e.g. window restore), so this is the only place that
+        // needs to drive it continuously.
+        renderCombinedFrame();
     }
 }

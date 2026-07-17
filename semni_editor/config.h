@@ -155,3 +155,11 @@
 #define MIN_ZOOM 0.25f
 #define MAX_ZOOM 8.0f
 #define ZOOM_STEP 1.1f
+
+// Both editor subsystems (ArcSpline canvas, Semni robot editor) now draw
+// into the same shared window every frame instead of only one being drawn
+// at a time -- switching Design Mode just decides which one is fully
+// opaque and interactive vs. which one gets this dim overlay on top of it,
+// so the inactive one stays visible as background context rather than
+// vanishing outright. 0 = invisible overlay (no dimming), 1 = fully black.
+#define INACTIVE_MODE_DIM_ALPHA 0.65f

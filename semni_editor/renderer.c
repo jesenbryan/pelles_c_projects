@@ -1,4 +1,4 @@
-﻿#include "renderer.h"
+#include "renderer.h"
 #include <GL/gl.h>
 #include <math.h>
 #include "geometry.h"
@@ -6,12 +6,21 @@
 #include "config.h"
 #include <stdio.h>
 
-static void setColor(int active, float r, float g, float b)
+// opacity multiplies every color's alpha (1.0 = fully opaque, down toward
+// 0.0 = nearly invisible) -- this is how the whole Semni scene gets
+// "dimmed" when it isn't the currently active editor mode (see
+// renderRobotScene), instead of a post-hoc full-screen overlay. A
+// full-screen black quad would also darken the shared white canvas
+// background underneath it, making an otherwise-empty scene look grayed
+// out everywhere rather than just its own strokes/lines fading -- scaling
+// each draw's own alpha keeps the shared background untouched and only
+// fades this subsystem's actual ink.
+static void setColor(int active, float r, float g, float b, float opacity)
 {
     if (active)
-        glColor3f(r, g, b);
+        glColor4f(r, g, b, opacity);
     else
-        glColor3f(0.0f, 0.0f, 0.0f);
+        glColor4f(0.0f, 0.0f, 0.0f, opacity);
 }
 
 void drawCircle(PointF c, float r)
@@ -86,16 +95,18 @@ void drawArc(PointF p0, PointF p1, PointF p2)
     glEnd();
 }
 
-void drawHandle(PointF p, int selected, float radius)
+void drawHandle(PointF p, int selected, float radius, float opacity)
 {
     const int segments = 64;
 
     // drawn semi-transparent (HANDLE_ALPHA) so handles sit lightly on top
-    // of the robot instead of as solid opaque shapes
+    // of the robot instead of as solid opaque shapes -- opacity further
+    // scales that down when this whole scene is the dimmed (inactive)
+    // editor mode
     if (selected)
-        glColor4f(1.0f, 0.85f, 0.35f, HANDLE_ALPHA);
+        glColor4f(1.0f, 0.85f, 0.35f, HANDLE_ALPHA * opacity);
     else
-        glColor4f(1.0f, 0.0f, 0.0f, HANDLE_ALPHA);
+        glColor4f(1.0f, 0.0f, 0.0f, HANDLE_ALPHA * opacity);
 
     glBegin(GL_TRIANGLE_FAN);
 
@@ -117,21 +128,21 @@ void drawHandle(PointF p, int selected, float radius)
 // Draws a dashed horizontal reference line at the given Y coordinate,
 // spanning the full visible viewport width. Used to help the user
 // position the robot horizontally (e.g., laying down).
-void drawDashedHorizontalLine(float y, float viewportHalfWidth)
+void drawDashedHorizontalLine(float y, float viewportHalfWidth, float opacity)
 {
-    glColor3f(0.6f, 0.6f, 0.6f); // medium gray, subtle
-    
+    glColor4f(0.6f, 0.6f, 0.6f, opacity); // medium gray, subtle
+
     const float dashLength = 0.08f;  // shorter dashes for finer appearance
     const float gapLength = 0.06f;   // smaller gaps
     const float segmentLength = dashLength + gapLength;
-    
+
     // start from the left edge and draw dashes across
     for (float x = -viewportHalfWidth; x < viewportHalfWidth; x += segmentLength)
     {
         float dashEnd = x + dashLength;
         if (dashEnd > viewportHalfWidth)
             dashEnd = viewportHalfWidth;
-        
+
         glBegin(GL_LINES);
         glVertex2f(x, y);
         glVertex2f(dashEnd, y);
@@ -139,7 +150,7 @@ void drawDashedHorizontalLine(float y, float viewportHalfWidth)
     }
 }
 
-void drawSemniBody(Semni b, RenderState* rs)
+void drawSemniBody(Semni b, RenderState* rs, float opacity)
 {
     PointF center = getCenter(b);
     float angle = b.angle;
@@ -151,11 +162,11 @@ void drawSemniBody(Semni b, RenderState* rs)
 	// ---- HEAD circle ----
     // sliders are gone now -- the resize handle's hover state takes over
     // this highlight instead
-    setColor(rs->hoverHead, 0.2f, 0.4f, 1.0f);
+    setColor(rs->hoverHead, 0.2f, 0.4f, 1.0f, opacity);
     drawCircle(headCenter, b.headRadius);
 
 	// ---- BUTT circle ----
-    setColor(rs->hoverButt, 0.2f, 0.4f, 1.0f);
+    setColor(rs->hoverButt, 0.2f, 0.4f, 1.0f, opacity);
     drawCircle(buttCenter, b.buttRadius);
 
 	// ---- INNER circle ----
@@ -169,7 +180,7 @@ void drawSemniBody(Semni b, RenderState* rs)
     // drawShin's hipRotateHint) and leaves the hip circle unhighlighted.
     // A plain hover (no shift) still means "scroll resizes this circle",
     // so it keeps the highlight.
-    setColor(rs->draggingInner || (rs->hoverHip && !rs->shiftHeld), 0.2f, 0.4f, 1.0f);
+    setColor(rs->draggingInner || (rs->hoverHip && !rs->shiftHeld), 0.2f, 0.4f, 1.0f, opacity);
     drawCircle(inner, b.innerRadius);
 
     // seam arc 1/2 (formerly "top"/"bottom"): each is a circular arc
@@ -216,10 +227,10 @@ void drawSemniBody(Semni b, RenderState* rs)
     PointF seamArc2P1 = rotatePoint(seamArc2NearLocal, center, angle);
     PointF seamArc2P2 = rotatePoint(seamArc2ButtTangentLocal, center, angle);
 
-    setColor(seamActive, 0.2f, 0.4f, 1.0f);
+    setColor(seamActive, 0.2f, 0.4f, 1.0f, opacity);
     drawArc(seamArc1P0, seamArc1P1, seamArc1P2);
 
-    setColor(seamActive, 0.2f, 0.4f, 1.0f);
+    setColor(seamActive, 0.2f, 0.4f, 1.0f, opacity);
     drawArc(seamArc2P0, seamArc2P1, seamArc2P2);
 }
 
@@ -231,7 +242,7 @@ void drawSemniBody(Semni b, RenderState* rs)
 // (the hip joint's own rotation) and only then by the whole-body angle
 // around center, so scrolling on the hip handle swings the leg without
 // touching the rest of the body.
-static void drawThigh(Semni b, RenderState* rs)
+static void drawThigh(Semni b, RenderState* rs, float opacity)
 {
     PointF center = getCenter(b);
     float angle = b.angle;
@@ -263,7 +274,7 @@ static void drawThigh(Semni b, RenderState* rs)
     // sitting on the handle for the whole drag (that's what started it),
     // so without this the hover term alone would keep re-lighting the
     // circle every frame regardless of the exclusion above.
-    setColor(hipRotateHint || (rs->hoverKnee && !rs->shiftHeld && !rs->draggingKnee), 0.2f, 0.4f, 1.0f);
+    setColor(hipRotateHint || (rs->hoverKnee && !rs->shiftHeld && !rs->draggingKnee), 0.2f, 0.4f, 1.0f, opacity);
     drawCircle(kneeWorld, b.kneeRadius);
 
     // the two thigh arcs: same tangent-fillet construction as the
@@ -294,18 +305,18 @@ static void drawThigh(Semni b, RenderState* rs)
     // axis -- see WM_MOUSEMOVE's draggingKnee/constrainToAxis handling),
     // so that gets the same blue highlight as actually dragging an arc's
     // own handle, same "carries other parts along" idea as hipRotateHint
-    setColor(rs->draggingThigh1 || rs->draggingKnee || hipRotateHint, 0.2f, 0.4f, 1.0f);
+    setColor(rs->draggingThigh1 || rs->draggingKnee || hipRotateHint, 0.2f, 0.4f, 1.0f, opacity);
     drawArc(jointToWorld(thigh1InnerTangentLocal, b.innerCircle, b.hipAngle, center, angle),
             jointToWorld(thigh1NearLocal, b.innerCircle, b.hipAngle, center, angle),
             jointToWorld(thigh1KneeTangentLocal, b.innerCircle, b.hipAngle, center, angle));
 
-    setColor(rs->draggingThigh2 || rs->draggingKnee || hipRotateHint, 0.2f, 0.4f, 1.0f);
+    setColor(rs->draggingThigh2 || rs->draggingKnee || hipRotateHint, 0.2f, 0.4f, 1.0f, opacity);
     drawArc(jointToWorld(thigh2InnerTangentLocal, b.innerCircle, b.hipAngle, center, angle),
             jointToWorld(thigh2NearLocal, b.innerCircle, b.hipAngle, center, angle),
             jointToWorld(thigh2KneeTangentLocal, b.innerCircle, b.hipAngle, center, angle));
 }
 
-static void drawThighHandles(Semni b, RenderState* rs)
+static void drawThighHandles(Semni b, RenderState* rs, float opacity)
 {
     PointF center = getCenter(b);
     float angle = b.angle;
@@ -329,9 +340,9 @@ static void drawThighHandles(Semni b, RenderState* rs)
     PointF thigh1World = jointToWorld(thigh1MidLocal, b.innerCircle, b.hipAngle, center, angle);
     PointF thigh2World = jointToWorld(thigh2MidLocal, b.innerCircle, b.hipAngle, center, angle);
 
-    drawHandle(kneeWorld, rs->draggingKnee || rs->hoverKnee, KNEE_HANDLE_RADIUS);
-    drawHandle(thigh1World, rs->draggingThigh1, THIGH_HANDLE_RADIUS);
-    drawHandle(thigh2World, rs->draggingThigh2, THIGH_HANDLE_RADIUS);
+    drawHandle(kneeWorld, rs->draggingKnee || rs->hoverKnee, KNEE_HANDLE_RADIUS, opacity);
+    drawHandle(thigh1World, rs->draggingThigh1, THIGH_HANDLE_RADIUS, opacity);
+    drawHandle(thigh2World, rs->draggingThigh2, THIGH_HANDLE_RADIUS, opacity);
 }
 
 // Continues the leg past the knee: draws the ankle joint and the two arcs
@@ -342,7 +353,7 @@ static void drawThighHandles(Semni b, RenderState* rs)
 // kneeCircle by kneeAngle (the knee's own rotation), then follow the
 // hip/body transforms like the rest of the leg -- so scrolling on the
 // knee handle swings the shin without touching the thigh, hip, or body.
-static void drawShin(Semni b, RenderState* rs)
+static void drawShin(Semni b, RenderState* rs, float opacity)
 {
     PointF center = getCenter(b);
     float angle = b.angle;
@@ -376,7 +387,7 @@ static void drawShin(Semni b, RenderState* rs)
     // drag, so without the exclusion the hover term alone would keep
     // re-lighting the circle every frame despite draggingAnkle being left
     // out on purpose.
-    setColor(shinAffected || (rs->hoverAnkle && !rs->draggingAnkle), 0.2f, 0.4f, 1.0f);
+    setColor(shinAffected || (rs->hoverAnkle && !rs->draggingAnkle), 0.2f, 0.4f, 1.0f, opacity);
     drawCircle(ankleWorld, b.ankleRadius);
 
     // worked out in the shin's own local (pre-kneeAngle) frame, then
@@ -406,18 +417,18 @@ static void drawShin(Semni b, RenderState* rs)
     // axis -- see WM_MOUSEMOVE's draggingAnkle/constrainToAxis handling),
     // same "carries the other visibly-reacting parts along" idea as
     // draggingKnee getting added to the thigh arcs in drawThigh
-    setColor(rs->draggingShin1 || rs->draggingAnkle || shinAffected, 0.2f, 0.4f, 1.0f);
+    setColor(rs->draggingShin1 || rs->draggingAnkle || shinAffected, 0.2f, 0.4f, 1.0f, opacity);
     drawArc(nestedJointToWorld(shin1KneeTangentLocal, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle),
             nestedJointToWorld(shin1NearLocal, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle),
             nestedJointToWorld(shin1AnkleTangentLocal, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle));
 
-    setColor(rs->draggingShin2 || rs->draggingAnkle || shinAffected, 0.2f, 0.4f, 1.0f);
+    setColor(rs->draggingShin2 || rs->draggingAnkle || shinAffected, 0.2f, 0.4f, 1.0f, opacity);
     drawArc(nestedJointToWorld(shin2KneeTangentLocal, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle),
             nestedJointToWorld(shin2NearLocal, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle),
             nestedJointToWorld(shin2AnkleTangentLocal, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle));
 }
 
-static void drawShinHandles(Semni b, RenderState* rs)
+static void drawShinHandles(Semni b, RenderState* rs, float opacity)
 {
     PointF center = getCenter(b);
     float angle = b.angle;
@@ -439,12 +450,12 @@ static void drawShinHandles(Semni b, RenderState* rs)
     PointF shin1World = nestedJointToWorld(shin1MidLocal, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle);
     PointF shin2World = nestedJointToWorld(shin2MidLocal, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle);
 
-    drawHandle(ankleWorld, rs->draggingAnkle || rs->hoverAnkle, ANKLE_HANDLE_RADIUS);
-    drawHandle(shin1World, rs->draggingShin1, SHIN_HANDLE_RADIUS);
-    drawHandle(shin2World, rs->draggingShin2, SHIN_HANDLE_RADIUS);
+    drawHandle(ankleWorld, rs->draggingAnkle || rs->hoverAnkle, ANKLE_HANDLE_RADIUS, opacity);
+    drawHandle(shin1World, rs->draggingShin1, SHIN_HANDLE_RADIUS, opacity);
+    drawHandle(shin2World, rs->draggingShin2, SHIN_HANDLE_RADIUS, opacity);
 }
 
-void drawSemniHandles(Semni b, RenderState* rs)
+void drawSemniHandles(Semni b, RenderState* rs, float opacity)
 {
     PointF center = getCenter(b);
     float angle = b.angle;
@@ -475,40 +486,40 @@ void drawSemniHandles(Semni b, RenderState* rs)
     PointF seamArc1Handle = rotatePoint(seamArc1MidLocal, center, angle);
     PointF seamArc2Handle = rotatePoint(seamArc2MidLocal, center, angle);
 
-    drawHandle(seamArc1Handle, rs->draggingSeamArc1, ARC_HANDLE_RADIUS);
-    drawHandle(seamArc2Handle, rs->draggingSeamArc2, ARC_HANDLE_RADIUS);
+    drawHandle(seamArc1Handle, rs->draggingSeamArc1, ARC_HANDLE_RADIUS, opacity);
+    drawHandle(seamArc2Handle, rs->draggingSeamArc2, ARC_HANDLE_RADIUS, opacity);
 
     // joint circle handles: highlight on hover too, not just while dragging
     drawHandle(inner,
                rs->draggingInner || rs->hoverHip,
-               HIP_HANDLE_RADIUS);
+               HIP_HANDLE_RADIUS, opacity);
 
     drawHandle(headHandle,
                rs->hoverHead,
-               HEAD_BUTT_HANDLE_RADIUS);
+               HEAD_BUTT_HANDLE_RADIUS, opacity);
 
     drawHandle(buttHandle,
                rs->hoverButt,
-               HEAD_BUTT_HANDLE_RADIUS);
+               HEAD_BUTT_HANDLE_RADIUS, opacity);
 }
 
-void drawSemni(Semni b, RenderState* rs, int includeHandles)
+void drawSemni(Semni b, RenderState* rs, int includeHandles, float opacity)
 {
-    drawSemniBody(b, rs);
-    drawThigh(b, rs);
-    drawShin(b, rs);
+    drawSemniBody(b, rs, opacity);
+    drawThigh(b, rs, opacity);
+    drawShin(b, rs, opacity);
 
     // the draggable handles are editor UI, not part of the robot itself --
     // skip them when rendering a frame that's about to be exported
     if (includeHandles)
     {
-        drawSemniHandles(b, rs);
-        drawThighHandles(b, rs);
-        drawShinHandles(b, rs);
+        drawSemniHandles(b, rs, opacity);
+        drawThighHandles(b, rs, opacity);
+        drawShinHandles(b, rs, opacity);
     }
 }
 
-static void renderRobot(AppState* app, int includeHandles)
+static void renderRobot(AppState* app, int includeHandles, float opacity)
 {
     RenderState rs;
 
@@ -536,7 +547,7 @@ static void renderRobot(AppState* app, int includeHandles)
     // toggle the preview immediately, with no mouse movement required
     rs.shiftHeld = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
 
-    drawSemni(app->robotScene.robot, &rs, includeHandles);
+    drawSemni(app->robotScene.robot, &rs, includeHandles, opacity);
 }
 
 void renderApp(AppState* app, HDC hdc)
@@ -550,9 +561,9 @@ void renderApp(AppState* app, HDC hdc)
     // half-width is 1.5 units at the base zoom level, so we position
     // the line near the bottom (-1.3) to look like a ground plane
     // that helps the user position the robot for laying down poses.
-    drawDashedHorizontalLine(-1.1f, 1.5f);
+    drawDashedHorizontalLine(-1.1f, 1.5f, 1.0f);
 
-    renderRobot(app, 1);
+    renderRobot(app, 1, 1.0f);
 
     SwapBuffers(hdc);
 }
@@ -569,5 +580,28 @@ void renderAppForSave(AppState* app)
     glMatrixMode(GL_MODELVIEW);
     glLoadIdentity();
 
-    renderRobot(app, 0);
+    renderRobot(app, 0, 1.0f);
+}
+
+// Draws the live robot scene (with handles) into whatever's already in the
+// color buffer -- no clear, no swap -- so main.c/canvas.c's
+// renderCombinedFrame can composite it alongside the ArcSpline canvas in
+// the same frame instead of the two subsystems taking turns owning the
+// whole window. dimAmount washes out every draw call's own alpha (see
+// setColor/drawHandle/drawDashedHorizontalLine) rather than covering the
+// finished scene with a black overlay -- that would also darken the
+// shared white canvas background underneath it, making an empty scene
+// look grayed out everywhere instead of just this subsystem's own lines
+// fading, which is what "Semni isn't the active editor mode" should
+// actually look like.
+void renderRobotScene(AppState* app, float dimAmount)
+{
+    float opacity = 1.0f - dimAmount;
+
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+
+    drawDashedHorizontalLine(-1.1f, 1.5f, opacity);
+
+    renderRobot(app, 1, opacity);
 }

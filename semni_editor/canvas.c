@@ -4,6 +4,9 @@
 #include "bmp_ui.h"        // For saveBMP_UI
 #include "render.h"        // For renderSegmentsToImage
 #include "editor_mode.h"   // For switchEditorMode -- Design Mode > Robot (Semni) launches the robot editor
+#include "graphics.h"      // For graphicsOnResize -- renderCombinedFrame draws both subsystems
+#include "renderer.h"      // For renderRobotScene -- the Semni half of renderCombinedFrame
+#include "config.h"        // For INACTIVE_MODE_DIM_ALPHA
 #include <math.h>
 #include <string.h>
 
@@ -129,10 +132,10 @@ static void segmentGhostColor(int index, float* r, float* g, float* b)
     *b = palette[i][2];
 }
 
-static void drawMarkerDisc(float cx, float cy, float r, float red, float green, float blue)
+static void drawMarkerDisc(float cx, float cy, float r, float red, float green, float blue, float alpha)
 {
     const int segments = 20;
-    glColor3f(red, green, blue);
+    glColor4f(red, green, blue, alpha);
     glBegin(GL_TRIANGLE_FAN);
     glVertex2f(cx, cy);
     for (int i = 0; i <= segments; i++) {
@@ -259,6 +262,457 @@ void UpdateProjection(void)
 #define UI_HOTZONE_WIDTH  48
 #define UI_HOTZONE_HEIGHT 48
 #define UI_FADE_STEP 18              // alpha change per tick (~14 ticks, ~230ms, to fully fade)
+
+// Everything WM_PAINT used to do directly (clear excluded -- that's now
+// renderCombinedFrame's job, done once per combined frame rather than once
+// per subsystem) -- sets the ArcSpline canvas's own projection and draws
+// the whole scene into whatever's currently in the color buffer. dimAmount
+// scales every draw call's own alpha (opacity, below) when the ArcSpline
+// canvas isn't the currently active editor mode, so it still reads as
+// background context instead of vanishing while Semni is active. This is
+// deliberately NOT a full-screen overlay drawn on top afterward -- that
+// would also darken the shared white canvas background underneath it,
+// making an empty canvas look grayed out everywhere instead of just this
+// subsystem's own strokes/lines fading. Same "scale this alpha down"
+// pattern the file already uses for dimming the non-edited Robot/
+// Environment layer against each other (see strokeAlpha/ghostAlpha below).
+void canvasRenderFrame(float dimAmount)
+{
+    float opacity = 1.0f - dimAmount;
+
+    UpdateProjection();
+
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+    glTranslatef(-canvas.panX, -canvas.panY, 0.0f);   // NEW: apply camera pan to everything below
+
+    // Only show background image if NOT in active comparison mode.
+    // Deliberately NOT gated on canvas.showSegments - Comparison Mode
+    // has to work on its own whether or not "View Segments" is also
+    // checked, as long as something has been traced.
+    BOOL isComparisonActive = canvas.comparisonMode && canvas.segmentResultCount > 0;
+
+    // Robot layer has no drawable content of its own yet (it's reserved
+    // for a separate project to be embedded here later), so no new
+    // strokes can be added while it's active (see WM_LBUTTONDOWN).
+    // But the Environment layer still renders underneath as a dimmed
+    // reference, same as when Environment is dimmed while Robot is
+    // hypothetically active in the other direction — only the currently
+    // edited layer is shown at full opacity.
+    BOOL isRobotLayerActive = (appMode == APP_MODE_DESIGN && designLayer == LAYER_ROBOT);
+
+    if (canvas.hasBackgroundImage && !isComparisonActive)
+    {
+        // FIXED bounds (computed once at upload time) — canvas.zoom now
+        // actually affects this via the ortho projection, same as strokes
+        glEnable(GL_TEXTURE_2D);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glBindTexture(GL_TEXTURE_2D, canvasTexture);
+        glColor4f(1.0f, 1.0f, 1.0f, (isRobotLayerActive ? 0.25f : 1.0f) * opacity);
+
+        glBegin(GL_QUADS);
+            glTexCoord2f(0.0f, 0.0f); glVertex2f(bgLeft,  bgBottom);
+            glTexCoord2f(1.0f, 0.0f); glVertex2f(bgRight, bgBottom);
+            glTexCoord2f(1.0f, 1.0f); glVertex2f(bgRight, bgTop);
+            glTexCoord2f(0.0f, 1.0f); glVertex2f(bgLeft,  bgTop);
+        glEnd();
+
+        glDisable(GL_BLEND);
+        glDisable(GL_TEXTURE_2D);
+    }
+
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    // Only apply comparison mode (hide/fade strokes) if segments are actually being shown
+
+    if (!isComparisonActive)
+    {
+        for (int s = 0; s < canvas.strokeCount; s++)
+        {
+            int start = strokeStarts[s];
+            int end = (s == canvas.strokeCount - 1) ? canvas.pointCount : strokeStarts[s + 1];
+            int count = (end - start) / 2;
+            if (count < 2) continue;
+
+            COLORREF c = strokeColor[s];
+
+            // In Design mode, dim strokes belonging to the layer that
+            // isn't currently being edited (Robot vs Environment) so
+            // it stays visible as reference without competing with the
+            // active layer. Simulation mode shows everything at full
+            // opacity.
+            float strokeAlpha = 1.0f;
+            if (appMode == APP_MODE_DESIGN && strokeLayer[s] != designLayer)
+                strokeAlpha = 0.25f;
+
+            glColor4f(GetRValue(c)/255.0f, GetGValue(c)/255.0f, GetBValue(c)/255.0f, strokeAlpha * opacity);
+
+            float halfW = (strokeThickness[s] * canvas.zoom) / (float)glWindowWidth;
+
+            glBegin(GL_TRIANGLE_STRIP);
+            for (int i = 0; i < count; i++)
+            {
+                float x = points[start + i * 2];
+                float y = points[start + i * 2 + 1];
+                float dx = 0.0f, dy = 0.0f;
+
+                if (i == 0) {
+                    dx = points[start + (i + 1) * 2] - x;
+                    dy = points[start + (i + 1) * 2 + 1] - y;
+                } else if (i == count - 1) {
+                    dx = x - points[start + (i - 1) * 2];
+                    dy = y - points[start + (i - 1) * 2 + 1];
+                } else {
+                    float dx1 = x - points[start + (i - 1) * 2];
+                    float dy1 = y - points[start + (i - 1) * 2 + 1];
+                    float dx2 = points[start + (i + 1) * 2] - x;
+                    float dy2 = points[start + (i + 1) * 2 + 1] - y;
+                    dx = dx1 + dx2;
+                    dy = dy1 + dy2;
+                }
+
+                float len = sqrtf(dx * dx + dy * dy);
+                if (len == 0.0f) len = 1.0f;
+                float nx = -dy / len;
+                float ny = dx / len;
+
+                glVertex2f(x + nx * halfW, y + ny * halfW);
+                glVertex2f(x - nx * halfW, y - ny * halfW);
+            }
+            glEnd();
+        }
+    }
+    glDisable(GL_BLEND);
+
+    // NEW: endpoint-snap highlight - a bright ring around the stroke
+    // endpoint the cursor is currently hovering near, showing the user
+    // that starting a new stroke here will snap onto it.
+    if (snapEndpointAvailable)
+    {
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+        const int ringSteps = 24;
+        float ringRadius = 0.02f * canvas.zoom;
+
+        glColor4f(1.0f, 0.55f, 0.0f, 0.9f * opacity);   // orange, matches nothing else on canvas
+        glLineWidth(2.0f);
+        glBegin(GL_LINE_LOOP);
+        for (int i = 0; i < ringSteps; i++)
+        {
+            float theta = (2.0f * 3.14159265f * i) / ringSteps;
+            glVertex2f(snapEndpointX + ringRadius * cosf(theta),
+                       snapEndpointY + ringRadius * sinf(theta));
+        }
+        glEnd();
+
+        // Small filled center dot so the exact snap point is unambiguous
+        glColor4f(1.0f, 0.55f, 0.0f, 0.9f * opacity);
+        glBegin(GL_TRIANGLE_FAN);
+        glVertex2f(snapEndpointX, snapEndpointY);
+        for (int i = 0; i <= ringSteps; i++)
+        {
+            float theta = (2.0f * 3.14159265f * i) / ringSteps;
+            glVertex2f(snapEndpointX + (ringRadius * 0.3f) * cosf(theta),
+                       snapEndpointY + (ringRadius * 0.3f) * sinf(theta));
+        }
+        glEnd();
+
+        glLineWidth(1.0f);
+        glDisable(GL_BLEND);
+    }
+
+	// Rendered when EITHER "View Segments" is checked OR Comparison Mode
+	// is active - the two controls are independent, so Comparison Mode
+	// must be able to show the traced arcs on its own without also
+	// requiring View Segments to be checked.
+	if ((canvas.showSegments || isComparisonActive) && canvas.segmentResultCount > 0)
+	{
+	    glEnable(GL_BLEND);
+	    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+	    float ghostHalfW = (0.01f * canvas.zoom);  // Always use same thickness
+	    float ghostAlpha = isComparisonActive ? 0.95f : 0.35f;
+	    if (isRobotLayerActive) ghostAlpha *= 0.3f;  // extra-dim: Environment reference while on Robot layer
+
+	    for (int s = 0; s < canvas.segmentResultCount; s++)
+	    {
+	        int start = segmentStarts[s];
+	        int count = segmentCounts[s];
+	        if (count < 2) continue;
+
+	        BOOL isHovered = (s == hoveredSegment) && !isRobotLayerActive;   // NEW
+
+	        float r, g, b;
+	        if (isComparisonActive) {
+	            // Dark grey for comparison mode
+	            r = 0.3f;
+	            g = 0.3f;
+	            b = 0.3f;
+	        } else {
+	            segmentGhostColor(s, &r, &g, &b);
+	        }
+	        glColor4f(r, g, b, (isHovered ? 1.0f : ghostAlpha) * opacity);
+
+	        float halfW = isHovered ? ghostHalfW * 1.5f : ghostHalfW;
+
+	        glBegin(GL_TRIANGLE_STRIP);
+	        for (int i = 0; i < count; i++)
+	        {
+	            float x = segmentPointsWorld[(start + i) * 2];
+	            float y = segmentPointsWorld[(start + i) * 2 + 1];
+	            float dx = 0.0f, dy = 0.0f;
+
+	            if (i == 0) {
+	                dx = segmentPointsWorld[(start + i + 1) * 2] - x;
+	                dy = segmentPointsWorld[(start + i + 1) * 2 + 1] - y;
+	            } else if (i == count - 1) {
+	                dx = x - segmentPointsWorld[(start + i - 1) * 2];
+	                dy = y - segmentPointsWorld[(start + i - 1) * 2 + 1];
+	            } else {
+	                dx = segmentPointsWorld[(start + i + 1) * 2] - segmentPointsWorld[(start + i - 1) * 2];
+	                dy = segmentPointsWorld[(start + i + 1) * 2 + 1] - segmentPointsWorld[(start + i - 1) * 2 + 1];
+	            }
+
+	            float len = sqrtf(dx * dx + dy * dy);
+	            if (len == 0.0f) len = 1.0f;
+	            float nx = -dy / len;
+	            float ny = dx / len;
+
+	            glVertex2f(x + nx * halfW, y + ny * halfW);
+	            glVertex2f(x - nx * halfW, y - ny * halfW);
+	        }
+	        glEnd();
+	    }
+
+	    glDisable(GL_BLEND);
+	}
+
+	// NEW: ghost circles - the FULL circle each arc segment was cut from
+	if (canvas.showSegments && canvas.segmentResultCount > 0)
+	{
+	    glEnable(GL_BLEND);
+	    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+	    const int circleSteps = 64;
+
+	    for (int s = 0; s < canvas.segmentResultCount; s++)
+	    {
+	        float rx = segmentCircleRadiusWorld[s];
+	        float ry = segmentCircleRadiusWorldY[s];
+	        if (rx <= 0.0f || ry <= 0.0f) continue; // straight/degenerate segment - no circle to show
+
+	        float cx = segmentCircleCenterWorld[s * 2];
+	        float cy = segmentCircleCenterWorld[s * 2 + 1];
+
+	        BOOL isHovered = (s == hoveredSegment) && !isRobotLayerActive;   // NEW
+
+	        float gr, gg, gb;
+	        segmentGhostColor(s, &gr, &gg, &gb);
+
+	        if (isHovered) {
+	            glDisable(GL_LINE_STIPPLE);          // solid outline when hovered
+	            glLineWidth(2.5f);
+	            glColor4f(gr, gg, gb, 1.0f * opacity);
+	        } else {
+	            glEnable(GL_LINE_STIPPLE);
+	            glLineStipple(1, 0x00FF);            // dotted outline otherwise
+	            glLineWidth(1.0f);
+	            glColor4f(gr, gg, gb, (isRobotLayerActive ? 0.18f : 0.6f) * opacity);
+	        }
+
+	        glBegin(GL_LINE_LOOP);
+	        for (int i = 0; i < circleSteps; i++) {
+	            float theta = (2.0f * 3.14159265f * i) / circleSteps;
+	            glVertex2f(cx + rx * cosf(theta), cy + ry * sinf(theta));
+	        }
+	        glEnd();
+	    }
+
+	    glLineWidth(1.0f);
+	    glDisable(GL_LINE_STIPPLE);
+	    glDisable(GL_BLEND);
+	}
+
+    // Endpoints are part of the trace overlay, so they follow the same
+    // visibility toggle (Trace / View Segments) as the rest of it,
+    // instead of staying on screen after the overlay is hidden.
+    if (canvas.hasEndpointMarkers && canvas.showSegments)
+    {
+        float markerRadius = 0.02f * canvas.zoom;
+        drawMarkerDisc(markerStartX, markerStartY, markerRadius, 1.0f, 0.0f, 0.0f, opacity);
+        drawMarkerDisc(markerEndX,   markerEndY,   markerRadius, 0.0f, 0.0f, 1.0f, opacity);
+    }
+
+    // Branch/junction points (a Y/T/X-shaped stroke splits into multiple
+    // edges here) - green, so they read as distinct from the red/blue
+    // start-end pair above.
+    if (branchMarkerCount > 0)
+    {
+        float branchMarkerRadius = 0.02f * canvas.zoom;
+        for (int m = 0; m < branchMarkerCount; m++)
+        {
+            drawMarkerDisc(branchMarkersWorld[m * 2], branchMarkersWorld[m * 2 + 1],
+                           branchMarkerRadius, 0.0f, 1.0f, 0.0f, opacity);
+        }
+    }
+
+    // --- BLINK-FREE UI TEXT DRAWING ---
+    int zoomPercent = (int)(100.0f / canvas.zoom);
+    char zoomStr[32];
+    wsprintfA(zoomStr, "Zoom: %d%%", zoomPercent);
+
+    glMatrixMode(GL_PROJECTION);
+    glPushMatrix(); glLoadIdentity();
+    glOrtho(0, glWindowWidth, 0, glWindowHeight, -1, 1);
+    glMatrixMode(GL_MODELVIEW);
+    glPushMatrix(); glLoadIdentity();
+
+    // NEW: corner hover indicator - shows exactly where to hover to
+    // reveal the UI panel, and brightens while you're hovering it.
+    {
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+        float tabLeft   = (float)(glWindowWidth - UI_HOTZONE_WIDTH);
+        float tabRight  = (float)glWindowWidth;
+        float tabBottom = (float)(glWindowHeight - UI_HOTZONE_HEIGHT);
+        float tabTop    = (float)glWindowHeight;
+
+        float fillA = (hotZoneHighlighted ? 0.30f : 0.10f) * opacity;
+        if (hotZoneHighlighted)
+            glColor4f(0.25f, 0.55f, 0.95f, fillA);
+        else
+            glColor4f(0.4f, 0.4f, 0.4f, fillA);
+
+        glBegin(GL_QUADS);
+            glVertex2f(tabLeft,  tabBottom);
+            glVertex2f(tabRight, tabBottom);
+            glVertex2f(tabRight, tabTop);
+            glVertex2f(tabLeft,  tabTop);
+        glEnd();
+
+        // Small drawer-handle icon: three short horizontal bars
+        float shade = hotZoneHighlighted ? 0.95f : 0.55f;
+        glColor4f(shade, shade, shade, 0.9f * opacity);
+        float cx = (tabLeft + tabRight) * 0.5f;
+        float cy = (tabBottom + tabTop) * 0.5f;
+        float barHalfW = (float)UI_HOTZONE_WIDTH * 0.22f;
+        for (int i = -1; i <= 1; i++)
+        {
+            float by = cy + i * 7.0f;
+            glBegin(GL_QUADS);
+                glVertex2f(cx - barHalfW, by - 1.5f);
+                glVertex2f(cx + barHalfW, by - 1.5f);
+                glVertex2f(cx + barHalfW, by + 1.5f);
+                glVertex2f(cx - barHalfW, by + 1.5f);
+            glEnd();
+        }
+
+        glDisable(GL_BLEND);
+    }
+
+    // Text/swatch drawing below relies on its glColor4f alpha actually
+    // being respected (needed for opacity < 1 when this canvas is the
+    // dimmed/inactive subsystem), which requires GL_BLEND enabled --
+    // unlike the corner indicator above, this block doesn't toggle it
+    // itself, so enable it here and leave it on through the mode indicator.
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    glColor4f(0.3f, 0.3f, 0.3f, opacity);
+    glRasterPos2i(glWindowWidth - 90, 20);
+    glPushAttrib(GL_LIST_BIT);
+    glListBase(fontBase - 32);
+    glCallLists((GLsizei)strlen(zoomStr), GL_UNSIGNED_BYTE, zoomStr);
+    glPopAttrib();
+
+    // NEW: persistent top-left mode/layer indicator - otherwise the
+    // only way to tell Design/Robot/Environment apart is to open the
+    // Mode menu and see which item is checked.
+    {
+        char modeStr[64];
+        float mr, mg, mb;
+
+        if (appMode == APP_MODE_SIMULATION) {
+            wsprintfA(modeStr, "Mode: Simulation");
+            mr = 0.5f; mg = 0.3f; mb = 0.7f;   // purple
+        } else if (designLayer == LAYER_ROBOT) {
+            wsprintfA(modeStr, "Mode: Design - Robot");
+            mr = 0.85f; mg = 0.45f; mb = 0.0f; // orange, matches the endpoint-snap highlight
+        } else {
+            wsprintfA(modeStr, "Mode: Design - Environment");
+            mr = 0.1f; mg = 0.55f; mb = 0.15f; // green
+        }
+
+        // Small color swatch ahead of the text so the mode reads at a
+        // glance without needing to read the label itself.
+        glColor4f(mr, mg, mb, opacity);
+        glBegin(GL_QUADS);
+            glVertex2f(10.0f, (float)glWindowHeight - 24.0f);
+            glVertex2f(20.0f, (float)glWindowHeight - 24.0f);
+            glVertex2f(20.0f, (float)glWindowHeight - 14.0f);
+            glVertex2f(10.0f, (float)glWindowHeight - 14.0f);
+        glEnd();
+
+        glColor4f(0.2f, 0.2f, 0.2f, opacity);
+        glRasterPos2i(26, glWindowHeight - 22);
+        glPushAttrib(GL_LIST_BIT);
+        glListBase(fontBase - 32);
+        glCallLists((GLsizei)strlen(modeStr), GL_UNSIGNED_BYTE, modeStr);
+        glPopAttrib();
+    }
+
+    glDisable(GL_BLEND);
+
+    glMatrixMode(GL_PROJECTION); glPopMatrix();
+    glMatrixMode(GL_MODELVIEW); glPopMatrix();
+}
+
+// Draws ONE combined frame: clears the color buffer once, then draws both
+// editor subsystems, whichever is currently active (editorModeState.
+// currentMode) at full opacity on top, the other dimmed underneath. See
+// canvas.h for the full rationale.
+void renderCombinedFrame(void)
+{
+    glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    BOOL semniActive = (editorModeState.currentMode == EDITOR_MODE_SEMNI);
+
+    // Semni's own projection/blend state has to be (re)asserted right
+    // before it draws, and the ArcSpline canvas's projection right before
+    // IT draws (canvasRenderFrame does this itself via UpdateProjection) --
+    // same reasoning as the old per-mode render loop in main.c: the two
+    // subsystems share one GL context, so whichever drew last left its own
+    // projection matrix active.
+    if (semniActive)
+    {
+        // ArcSpline dimmed underneath...
+        canvasRenderFrame(INACTIVE_MODE_DIM_ALPHA);
+
+        // ...Semni active, full opacity, on top
+        graphicsOnResize(glWindowWidth, glWindowHeight);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        renderRobotScene(&app, 0.0f);
+    }
+    else
+    {
+        // Semni dimmed underneath...
+        graphicsOnResize(glWindowWidth, glWindowHeight);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        renderRobotScene(&app, INACTIVE_MODE_DIM_ALPHA);
+
+        // ...ArcSpline active, full opacity, on top
+        canvasRenderFrame(0.0f);
+    }
+
+    SwapBuffers(hDC);
+}
 
 LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
@@ -843,393 +1297,18 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	}
 	case WM_PAINT:
 	{
+	    // The actual drawing now lives in renderCombinedFrame (both
+	    // subsystems, one dimmed) so it can also be driven directly by
+	    // main.c's per-frame loop instead of only through Invalidate/
+	    // UpdateWindow -- WM_PAINT just needs BeginPaint/EndPaint around it
+	    // so an OS-triggered repaint (e.g. window restore) still clears the
+	    // invalid region and shows the correct combined frame.
 	    PAINTSTRUCT ps;
 	    BeginPaint(hWnd, &ps);
-	    glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
-	    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-	    glMatrixMode(GL_MODELVIEW);
-	    glLoadIdentity();
-	    glTranslatef(-canvas.panX, -canvas.panY, 0.0f);   // NEW: apply camera pan to everything below
-
-	    // Only show background image if NOT in active comparison mode.
-	    // Deliberately NOT gated on canvas.showSegments - Comparison Mode
-	    // has to work on its own whether or not "View Segments" is also
-	    // checked, as long as something has been traced.
-	    BOOL isComparisonActive = canvas.comparisonMode && canvas.segmentResultCount > 0;
-
-	    // Robot layer has no drawable content of its own yet (it's reserved
-	    // for a separate project to be embedded here later), so no new
-	    // strokes can be added while it's active (see WM_LBUTTONDOWN).
-	    // But the Environment layer still renders underneath as a dimmed
-	    // reference, same as when Environment is dimmed while Robot is
-	    // hypothetically active in the other direction — only the currently
-	    // edited layer is shown at full opacity.
-	    BOOL isRobotLayerActive = (appMode == APP_MODE_DESIGN && designLayer == LAYER_ROBOT);
-
-	    if (canvas.hasBackgroundImage && !isComparisonActive)
-	    {
-	        // FIXED bounds (computed once at upload time) — canvas.zoom now
-	        // actually affects this via the ortho projection, same as strokes
-	        glEnable(GL_TEXTURE_2D);
-	        glEnable(GL_BLEND);
-	        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-	        glBindTexture(GL_TEXTURE_2D, canvasTexture);
-	        glColor4f(1.0f, 1.0f, 1.0f, isRobotLayerActive ? 0.25f : 1.0f);
-
-	        glBegin(GL_QUADS);
-	            glTexCoord2f(0.0f, 0.0f); glVertex2f(bgLeft,  bgBottom);
-	            glTexCoord2f(1.0f, 0.0f); glVertex2f(bgRight, bgBottom);
-	            glTexCoord2f(1.0f, 1.0f); glVertex2f(bgRight, bgTop);
-	            glTexCoord2f(0.0f, 1.0f); glVertex2f(bgLeft,  bgTop);
-	        glEnd();
-
-	        glDisable(GL_BLEND);
-	        glDisable(GL_TEXTURE_2D);
-	    }
-
-	    glEnable(GL_BLEND);
-	    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
-        // Only apply comparison mode (hide/fade strokes) if segments are actually being shown
-
-        if (!isComparisonActive)
-        {
-            for (int s = 0; s < canvas.strokeCount; s++)
-            {
-                int start = strokeStarts[s];
-                int end = (s == canvas.strokeCount - 1) ? canvas.pointCount : strokeStarts[s + 1];
-                int count = (end - start) / 2;
-                if (count < 2) continue;
-
-                COLORREF c = strokeColor[s];
-
-                // In Design mode, dim strokes belonging to the layer that
-                // isn't currently being edited (Robot vs Environment) so
-                // it stays visible as reference without competing with the
-                // active layer. Simulation mode shows everything at full
-                // opacity.
-                float strokeAlpha = 1.0f;
-                if (appMode == APP_MODE_DESIGN && strokeLayer[s] != designLayer)
-                    strokeAlpha = 0.25f;
-
-                glColor4f(GetRValue(c)/255.0f, GetGValue(c)/255.0f, GetBValue(c)/255.0f, strokeAlpha);
-
-                float halfW = (strokeThickness[s] * canvas.zoom) / (float)glWindowWidth;
-
-                glBegin(GL_TRIANGLE_STRIP);
-                for (int i = 0; i < count; i++)
-                {
-                    float x = points[start + i * 2];
-                    float y = points[start + i * 2 + 1];
-                    float dx = 0.0f, dy = 0.0f;
-
-                    if (i == 0) {
-                        dx = points[start + (i + 1) * 2] - x;
-                        dy = points[start + (i + 1) * 2 + 1] - y;
-                    } else if (i == count - 1) {
-                        dx = x - points[start + (i - 1) * 2];
-                        dy = y - points[start + (i - 1) * 2 + 1];
-                    } else {
-                        float dx1 = x - points[start + (i - 1) * 2];
-                        float dy1 = y - points[start + (i - 1) * 2 + 1];
-                        float dx2 = points[start + (i + 1) * 2] - x;
-                        float dy2 = points[start + (i + 1) * 2 + 1] - y;
-                        dx = dx1 + dx2;
-                        dy = dy1 + dy2;
-                    }
-
-                    float len = sqrtf(dx * dx + dy * dy);
-                    if (len == 0.0f) len = 1.0f;
-                    float nx = -dy / len;
-                    float ny = dx / len;
-
-                    glVertex2f(x + nx * halfW, y + ny * halfW);
-                    glVertex2f(x - nx * halfW, y - ny * halfW);
-                }
-                glEnd();
-            }
-        }
-        glDisable(GL_BLEND);
-
-        // NEW: endpoint-snap highlight - a bright ring around the stroke
-        // endpoint the cursor is currently hovering near, showing the user
-        // that starting a new stroke here will snap onto it.
-        if (snapEndpointAvailable)
-        {
-            glEnable(GL_BLEND);
-            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
-            const int ringSteps = 24;
-            float ringRadius = 0.02f * canvas.zoom;
-
-            glColor4f(1.0f, 0.55f, 0.0f, 0.9f);   // orange, matches nothing else on canvas
-            glLineWidth(2.0f);
-            glBegin(GL_LINE_LOOP);
-            for (int i = 0; i < ringSteps; i++)
-            {
-                float theta = (2.0f * 3.14159265f * i) / ringSteps;
-                glVertex2f(snapEndpointX + ringRadius * cosf(theta),
-                           snapEndpointY + ringRadius * sinf(theta));
-            }
-            glEnd();
-
-            // Small filled center dot so the exact snap point is unambiguous
-            glColor4f(1.0f, 0.55f, 0.0f, 0.9f);
-            glBegin(GL_TRIANGLE_FAN);
-            glVertex2f(snapEndpointX, snapEndpointY);
-            for (int i = 0; i <= ringSteps; i++)
-            {
-                float theta = (2.0f * 3.14159265f * i) / ringSteps;
-                glVertex2f(snapEndpointX + (ringRadius * 0.3f) * cosf(theta),
-                           snapEndpointY + (ringRadius * 0.3f) * sinf(theta));
-            }
-            glEnd();
-
-            glLineWidth(1.0f);
-            glDisable(GL_BLEND);
-        }
-
-		// Rendered when EITHER "View Segments" is checked OR Comparison Mode
-		// is active - the two controls are independent, so Comparison Mode
-		// must be able to show the traced arcs on its own without also
-		// requiring View Segments to be checked.
-		if ((canvas.showSegments || isComparisonActive) && canvas.segmentResultCount > 0)
-		{
-		    glEnable(GL_BLEND);
-		    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
-		    float ghostHalfW = (0.01f * canvas.zoom);  // Always use same thickness
-		    float ghostAlpha = isComparisonActive ? 0.95f : 0.35f;
-		    if (isRobotLayerActive) ghostAlpha *= 0.3f;  // extra-dim: Environment reference while on Robot layer
-
-		    for (int s = 0; s < canvas.segmentResultCount; s++)
-		    {
-		        int start = segmentStarts[s];
-		        int count = segmentCounts[s];
-		        if (count < 2) continue;
-
-		        BOOL isHovered = (s == hoveredSegment) && !isRobotLayerActive;   // NEW
-
-		        float r, g, b;
-		        if (isComparisonActive) {
-		            // Dark grey for comparison mode
-		            r = 0.3f;
-		            g = 0.3f;
-		            b = 0.3f;
-		        } else {
-		            segmentGhostColor(s, &r, &g, &b);
-		        }
-		        glColor4f(r, g, b, isHovered ? 1.0f : ghostAlpha);
-
-		        float halfW = isHovered ? ghostHalfW * 1.5f : ghostHalfW;
-
-		        glBegin(GL_TRIANGLE_STRIP);
-		        for (int i = 0; i < count; i++)
-		        {
-		            float x = segmentPointsWorld[(start + i) * 2];
-		            float y = segmentPointsWorld[(start + i) * 2 + 1];
-		            float dx = 0.0f, dy = 0.0f;
-
-		            if (i == 0) {
-		                dx = segmentPointsWorld[(start + i + 1) * 2] - x;
-		                dy = segmentPointsWorld[(start + i + 1) * 2 + 1] - y;
-		            } else if (i == count - 1) {
-		                dx = x - segmentPointsWorld[(start + i - 1) * 2];
-		                dy = y - segmentPointsWorld[(start + i - 1) * 2 + 1];
-		            } else {
-		                dx = segmentPointsWorld[(start + i + 1) * 2] - segmentPointsWorld[(start + i - 1) * 2];
-		                dy = segmentPointsWorld[(start + i + 1) * 2 + 1] - segmentPointsWorld[(start + i - 1) * 2 + 1];
-		            }
-
-		            float len = sqrtf(dx * dx + dy * dy);
-		            if (len == 0.0f) len = 1.0f;
-		            float nx = -dy / len;
-		            float ny = dx / len;
-
-		            glVertex2f(x + nx * halfW, y + ny * halfW);
-		            glVertex2f(x - nx * halfW, y - ny * halfW);
-		        }
-		        glEnd();
-		    }
-
-		    glDisable(GL_BLEND);
-		}
-
-		// NEW: ghost circles - the FULL circle each arc segment was cut from
-		if (canvas.showSegments && canvas.segmentResultCount > 0)
-		{
-		    glEnable(GL_BLEND);
-		    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
-		    const int circleSteps = 64;
-
-		    for (int s = 0; s < canvas.segmentResultCount; s++)
-		    {
-		        float rx = segmentCircleRadiusWorld[s];
-		        float ry = segmentCircleRadiusWorldY[s];
-		        if (rx <= 0.0f || ry <= 0.0f) continue; // straight/degenerate segment - no circle to show
-
-		        float cx = segmentCircleCenterWorld[s * 2];
-		        float cy = segmentCircleCenterWorld[s * 2 + 1];
-
-		        BOOL isHovered = (s == hoveredSegment) && !isRobotLayerActive;   // NEW
-
-		        float gr, gg, gb;
-		        segmentGhostColor(s, &gr, &gg, &gb);
-
-		        if (isHovered) {
-		            glDisable(GL_LINE_STIPPLE);          // solid outline when hovered
-		            glLineWidth(2.5f);
-		            glColor4f(gr, gg, gb, 1.0f);
-		        } else {
-		            glEnable(GL_LINE_STIPPLE);
-		            glLineStipple(1, 0x00FF);            // dotted outline otherwise
-		            glLineWidth(1.0f);
-		            glColor4f(gr, gg, gb, isRobotLayerActive ? 0.18f : 0.6f);
-		        }
-
-		        glBegin(GL_LINE_LOOP);
-		        for (int i = 0; i < circleSteps; i++) {
-		            float theta = (2.0f * 3.14159265f * i) / circleSteps;
-		            glVertex2f(cx + rx * cosf(theta), cy + ry * sinf(theta));
-		        }
-		        glEnd();
-		    }
-
-		    glLineWidth(1.0f);
-		    glDisable(GL_LINE_STIPPLE);
-		    glDisable(GL_BLEND);
-		}
-
-	    // Endpoints are part of the trace overlay, so they follow the same
-	    // visibility toggle (Trace / View Segments) as the rest of it,
-	    // instead of staying on screen after the overlay is hidden.
-	    if (canvas.hasEndpointMarkers && canvas.showSegments)
-	    {
-	        float markerRadius = 0.02f * canvas.zoom;
-	        drawMarkerDisc(markerStartX, markerStartY, markerRadius, 1.0f, 0.0f, 0.0f);
-	        drawMarkerDisc(markerEndX,   markerEndY,   markerRadius, 0.0f, 0.0f, 1.0f);
-	    }
-
-	    // Branch/junction points (a Y/T/X-shaped stroke splits into multiple
-	    // edges here) - green, so they read as distinct from the red/blue
-	    // start-end pair above.
-	    if (branchMarkerCount > 0)
-	    {
-	        float branchMarkerRadius = 0.02f * canvas.zoom;
-	        for (int m = 0; m < branchMarkerCount; m++)
-	        {
-	            drawMarkerDisc(branchMarkersWorld[m * 2], branchMarkersWorld[m * 2 + 1],
-	                           branchMarkerRadius, 0.0f, 1.0f, 0.0f);
-	        }
-	    }
-
-        // --- BLINK-FREE UI TEXT DRAWING ---
-        int zoomPercent = (int)(100.0f / canvas.zoom);
-        char zoomStr[32];
-        wsprintfA(zoomStr, "Zoom: %d%%", zoomPercent);
-
-        glMatrixMode(GL_PROJECTION);
-        glPushMatrix(); glLoadIdentity();
-        glOrtho(0, glWindowWidth, 0, glWindowHeight, -1, 1);
-        glMatrixMode(GL_MODELVIEW);
-        glPushMatrix(); glLoadIdentity();
-
-        // NEW: corner hover indicator - shows exactly where to hover to
-        // reveal the UI panel, and brightens while you're hovering it.
-        {
-            glEnable(GL_BLEND);
-            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
-            float tabLeft   = (float)(glWindowWidth - UI_HOTZONE_WIDTH);
-            float tabRight  = (float)glWindowWidth;
-            float tabBottom = (float)(glWindowHeight - UI_HOTZONE_HEIGHT);
-            float tabTop    = (float)glWindowHeight;
-
-            float fillA = hotZoneHighlighted ? 0.30f : 0.10f;
-            if (hotZoneHighlighted)
-                glColor4f(0.25f, 0.55f, 0.95f, fillA);
-            else
-                glColor4f(0.4f, 0.4f, 0.4f, fillA);
-
-            glBegin(GL_QUADS);
-                glVertex2f(tabLeft,  tabBottom);
-                glVertex2f(tabRight, tabBottom);
-                glVertex2f(tabRight, tabTop);
-                glVertex2f(tabLeft,  tabTop);
-            glEnd();
-
-            // Small drawer-handle icon: three short horizontal bars
-            float shade = hotZoneHighlighted ? 0.95f : 0.55f;
-            glColor4f(shade, shade, shade, 0.9f);
-            float cx = (tabLeft + tabRight) * 0.5f;
-            float cy = (tabBottom + tabTop) * 0.5f;
-            float barHalfW = (float)UI_HOTZONE_WIDTH * 0.22f;
-            for (int i = -1; i <= 1; i++)
-            {
-                float by = cy + i * 7.0f;
-                glBegin(GL_QUADS);
-                    glVertex2f(cx - barHalfW, by - 1.5f);
-                    glVertex2f(cx + barHalfW, by - 1.5f);
-                    glVertex2f(cx + barHalfW, by + 1.5f);
-                    glVertex2f(cx - barHalfW, by + 1.5f);
-                glEnd();
-            }
-
-            glDisable(GL_BLEND);
-        }
-
-        glColor3f(0.3f, 0.3f, 0.3f);
-        glRasterPos2i(glWindowWidth - 90, 20);
-        glPushAttrib(GL_LIST_BIT);
-        glListBase(fontBase - 32);
-        glCallLists((GLsizei)strlen(zoomStr), GL_UNSIGNED_BYTE, zoomStr);
-        glPopAttrib();
-
-        // NEW: persistent top-left mode/layer indicator - otherwise the
-        // only way to tell Design/Robot/Environment apart is to open the
-        // Mode menu and see which item is checked.
-        {
-            char modeStr[64];
-            float mr, mg, mb;
-
-            if (appMode == APP_MODE_SIMULATION) {
-                wsprintfA(modeStr, "Mode: Simulation");
-                mr = 0.5f; mg = 0.3f; mb = 0.7f;   // purple
-            } else if (designLayer == LAYER_ROBOT) {
-                wsprintfA(modeStr, "Mode: Design - Robot");
-                mr = 0.85f; mg = 0.45f; mb = 0.0f; // orange, matches the endpoint-snap highlight
-            } else {
-                wsprintfA(modeStr, "Mode: Design - Environment");
-                mr = 0.1f; mg = 0.55f; mb = 0.15f; // green
-            }
-
-            // Small color swatch ahead of the text so the mode reads at a
-            // glance without needing to read the label itself.
-            glColor3f(mr, mg, mb);
-            glBegin(GL_QUADS);
-                glVertex2f(10.0f, (float)glWindowHeight - 24.0f);
-                glVertex2f(20.0f, (float)glWindowHeight - 24.0f);
-                glVertex2f(20.0f, (float)glWindowHeight - 14.0f);
-                glVertex2f(10.0f, (float)glWindowHeight - 14.0f);
-            glEnd();
-
-            glColor3f(0.2f, 0.2f, 0.2f);
-            glRasterPos2i(26, glWindowHeight - 22);
-            glPushAttrib(GL_LIST_BIT);
-            glListBase(fontBase - 32);
-            glCallLists((GLsizei)strlen(modeStr), GL_UNSIGNED_BYTE, modeStr);
-            glPopAttrib();
-        }
-
-        glMatrixMode(GL_PROJECTION); glPopMatrix();
-        glMatrixMode(GL_MODELVIEW); glPopMatrix();
-
-        SwapBuffers(hDC);
-        EndPaint(hWnd, &ps);
-        return 0;
-    }
+	    renderCombinedFrame();
+	    EndPaint(hWnd, &ps);
+	    return 0;
+	}
     case WM_ERASEBKGND: return 1;
     case WM_DESTROY: KillTimer(hWnd, UI_HOTZONE_TIMER_ID); PostQuitMessage(0); return 0;
     }
