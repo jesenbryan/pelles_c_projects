@@ -8,6 +8,15 @@
 // First and last point are the same pixel, indicating closure.
 int traceClosedLoop(uint8_t* compBin, int w, int h, Point* outPath, int maxPoints);
 
+// Finds branch/junction pixels (degree >= 3) in a component - the points
+// where a traced shape splits into multiple edges (a Y or T or X shape,
+// e.g. a line touching a circle). A real junction is usually a small
+// blob of several touching high-degree pixels rather than exactly one,
+// so nearby hits are merged into a single output point per cluster.
+// Returns the number of junction points written (<= maxOut), filling
+// outX/outY with their pixel coordinates.
+int findJunctionPixels(uint8_t* compBin, int w, int h, int outX[], int outY[], int maxOut);
+
 // Decomposes ONE already-isolated connected skeleton component (compBin -
 // same w*h size as the source image, containing just this component's
 // pixels, see extractComponent() in pipeline.c) into a set of traceable

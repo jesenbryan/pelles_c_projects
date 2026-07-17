@@ -68,6 +68,24 @@ void setEndpointMarkers(int imgW, int imgH, int sx, int sy, int ex, int ey, BOOL
     if (hWndGL) InvalidateRect(hWndGL, NULL, FALSE);
 }
 
+void addBranchMarker(int imgW, int imgH, int px, int py, BOOL stretched)
+{
+    if (branchMarkerCount >= MAX_BRANCH_MARKERS) return;
+
+    float wx, wy;
+    if (stretched) {
+        pixelToWorldStretched((float)px, (float)py, imgW, imgH, &wx, &wy);
+    } else {
+        pixelToWorldExact((float)px, (float)py, imgW, imgH, &wx, &wy);
+    }
+
+    branchMarkersWorld[branchMarkerCount * 2]     = wx;
+    branchMarkersWorld[branchMarkerCount * 2 + 1] = wy;
+    branchMarkerCount++;
+
+    if (hWndGL) InvalidateRect(hWndGL, NULL, FALSE);
+}
+
 static void setBinPixel(Image* img, int x, int y)
 {
     if (x < 0 || y < 0 || x >= img->width || y >= img->height) return;

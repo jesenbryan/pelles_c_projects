@@ -86,6 +86,13 @@ extern float bgLeft, bgRight, bgBottom, bgTop;
 extern float markerStartX, markerStartY;
 extern float markerEndX, markerEndY;
 
+// Branch/junction points found while tracing (a Y/T/X-shaped stroke
+// splits into multiple edges at these points) - drawn as their own
+// marker, separate from the single red/blue start/end pair above.
+#define MAX_BRANCH_MARKERS 64
+extern float branchMarkersWorld[MAX_BRANCH_MARKERS * 2];
+extern int   branchMarkerCount;
+
 #define MAX_SEGMENT_POINTS 10000
 extern float segmentPointsWorld[MAX_SEGMENT_POINTS * 2];
 extern int   segmentStarts[MAX_ARC_SEGMENTS];

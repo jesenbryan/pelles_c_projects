@@ -140,6 +140,36 @@ int traceClosedLoop(uint8_t* compBin, int w, int h, Point* outPath, int maxPoint
     return 0;
 }
 
+int findJunctionPixels(uint8_t* compBin, int w, int h, int outX[], int outY[], int maxOut)
+{
+    int count = 0;
+
+    for (int y = 0; y < h; y++) {
+        for (int x = 0; x < w; x++) {
+            if (!compBin[y * w + x]) continue;
+            if (degreeAt(compBin, w, h, x, y) < 3) continue;
+
+            // Merge with an already-recorded junction from the same blob
+            // instead of adding a near-duplicate marker right next to it.
+            int merged = 0;
+            for (int i = 0; i < count; i++) {
+                int dx = x - outX[i];
+                int dy = y - outY[i];
+                if (dx * dx + dy * dy <= 16) { merged = 1; break; }   // within ~4px
+            }
+            if (merged) continue;
+
+            if (count < maxOut) {
+                outX[count] = x;
+                outY[count] = y;
+                count++;
+            }
+        }
+    }
+
+    return count;
+}
+
 int traceComponentEdges(uint8_t* compBin, int w, int h,
                          Point* outPaths[], int outLengths[],
                          int maxEdges, int maxPointsPerPath)

@@ -55,12 +55,16 @@ void ResetCanvas(void)
     canvas.comparisonMode = FALSE;      // NEW
     hoveredSegment = -1;                // NEW: avoid a stale highlight index
     snapEndpointAvailable = FALSE;      // NEW: avoid a stale endpoint-snap highlight
+    branchMarkerCount = 0;              // NEW: avoid stale branch-point markers
 	UpdateProjection();
 }
 
 GLuint canvasTexture = 0;
 
 float bgLeft = -1.0f, bgRight = 1.0f, bgBottom = -1.0f, bgTop = 1.0f; // NEW
+
+float branchMarkersWorld[MAX_BRANCH_MARKERS * 2];
+int   branchMarkerCount = 0;
 
 float markerStartX = 0.0f, markerStartY = 0.0f;
 float markerEndX   = 0.0f, markerEndY   = 0.0f;
@@ -1080,6 +1084,19 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	        float markerRadius = 0.02f * canvas.zoom;
 	        drawMarkerDisc(markerStartX, markerStartY, markerRadius, 1.0f, 0.0f, 0.0f);
 	        drawMarkerDisc(markerEndX,   markerEndY,   markerRadius, 0.0f, 0.0f, 1.0f);
+	    }
+
+	    // Branch/junction points (a Y/T/X-shaped stroke splits into multiple
+	    // edges here) - green, so they read as distinct from the red/blue
+	    // start-end pair above.
+	    if (branchMarkerCount > 0)
+	    {
+	        float branchMarkerRadius = 0.02f * canvas.zoom;
+	        for (int m = 0; m < branchMarkerCount; m++)
+	        {
+	            drawMarkerDisc(branchMarkersWorld[m * 2], branchMarkersWorld[m * 2 + 1],
+	                           branchMarkerRadius, 0.0f, 1.0f, 0.0f);
+	        }
 	    }
 
         // --- BLINK-FREE UI TEXT DRAWING ---

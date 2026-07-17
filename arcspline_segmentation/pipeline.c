@@ -3,8 +3,7 @@
 #include "bmp_ui.h"
 #include "binary.h"
 #include "thinning.h"
-#include "endpoints.h"
-#include "path_trace.h"
+#include "skeleton_graph.h"
 #include "debug.h"
 #include "bmp.h"
 #include <stdio.h>
@@ -27,20 +26,33 @@ static void freePendingBmpImage(void)
     s_pendingBmpImage = NULL;
 }
 
-// find_start_end_pixels/tracePath/buildSegments were all written assuming a
-// SINGLE curve fills the whole bin buffer - with more than one freehand
-// stroke (or an uploaded BMP with several curves in it, see 2curves.bmp),
-// find_start_end_pixels just grabs the first two endpoint-looking pixels it
-// scans past, which are almost always both on the first stroke, and
-// tracePath then walks off the end of that stroke and stops - every other
-// stroke is silently dropped.
+// (historical) find_start_end_pixels/tracePath/buildSegments were all
+// written assuming a SINGLE curve fills the whole bin buffer - with more
+// than one freehand stroke (or an uploaded BMP with several curves in it,
+// see 2curves.bmp), find_start_end_pixels just grabs the first two
+// endpoint-looking pixels it scans past, which are almost always both on
+// the first stroke, and tracePath then walks off the end of that stroke
+// and stops - every other stroke is silently dropped. (find_start_end_pixels
+// and tracePath, in endpoints.c/path_trace.c, are no longer called from
+// here - see the UPDATE note below - but are kept around since nothing
+// else in the pipeline depends on removing them.)
 //
 // Fix: split the thinned bin buffer into its 8-connected components first
 // (one per stroke/curve, since strokes only touch other strokes if the user
-// actually draws them crossing/overlapping), then run the existing
-// find/trace/build pipeline independently per component and merge the
-// resulting ArcSegments into one array for setSegmentOverlay.
-#define MAX_TRACE_COMPONENTS 32
+// actually draws them crossing/overlapping), then run the trace/build
+// pipeline independently per component and merge the resulting ArcSegments
+// into one array for setSegmentOverlay.
+//
+// UPDATE: a single component can itself branch (a Y/T/X-shaped stroke,
+// or a line touching a circle) - skeleton_graph.c's traceComponentEdges
+// decomposes ONE component into several independently-traceable edges at
+// its junction/endpoint nodes, so the path budget below now has to cover
+// edges-across-all-components rather than one path per component. Bumped
+// accordingly; each entry is just a pointer plus a malloc'd point buffer,
+// so the extra headroom is cheap.
+#define MAX_TRACE_COMPONENTS 64
+#define MAX_EDGES_PER_COMPONENT 32
+#define MAX_JUNCTIONS_PER_COMPONENT 16
 
 // Flood-fills the 8-connected component containing (startX, startY) out of
 // `remaining` into `compBin` (must be pre-zeroed, same w*h size as
@@ -88,6 +100,8 @@ static void runPipelineOnImage(Image* img, const char* sourceLabel, BOOL stretch
 {
     thinningZhangSuen(img);
 
+    branchMarkerCount = 0;   // fresh trace run - drop any markers from a previous one
+
     int w = img->width;
     int h = img->height;
 
@@ -114,49 +128,70 @@ static void runPipelineOnImage(Image* img, const char* sourceLabel, BOOL stretch
             memset(compBin, 0, (size_t)w * h);
             extractComponent(remaining, compBin, w, h, x, y);
 
-            int sx, sy, ex, ey;
-            int found = find_start_end_pixels(compBin, w, h, &sx, &sy, &ex, &ey);
-            if (found != 2 && found != 3) continue;   // empty/noise speck - nothing to trace
+            // Branch/junction points (degree >= 3) in this component - a
+            // Y/T/X-shaped stroke, or a line touching a circle. Collected
+            // before tracing since traceComponentEdges below consumes/marks
+            // up the component as it walks edges, but junction detection
+            // itself only reads compBin.
+            int jx[MAX_JUNCTIONS_PER_COMPONENT], jy[MAX_JUNCTIONS_PER_COMPONENT];
+            int jCount = findJunctionPixels(compBin, w, h, jx, jy, MAX_JUNCTIONS_PER_COMPONENT);
+            for (int j = 0; j < jCount; j++)
+                addBranchMarker(w, h, jx[j], jy[j], stretched);
 
-            // found == 3: closed loop (e.g. a circle) or an ambiguous shape
-            // with no real second endpoint - find_start_end_pixels already
-            // picked a single pixel to start from and set ex/ey to a
-            // sentinel (-1,-1) that tracePath can never actually reach, so
-            // it walks the whole ring instead of stopping after one point.
-            BOOL isClosedLoop = (found == 3);
+            // Decompose this component into independently-traceable edges:
+            //   - a simple open stroke -> exactly one edge (same result the
+            //     old find_start_end_pixels + tracePath pair produced)
+            //   - a closed loop (e.g. a circle) -> one edge whose first and
+            //     last point are the same pixel (sampleArcPoints in
+            //     canvas_bridge.c detects that and draws a full circle)
+            //   - a branching stroke -> one edge per segment between nodes
+            Point* edgeBufs[MAX_EDGES_PER_COMPONENT];
+            int edgeLens[MAX_EDGES_PER_COMPONENT];
+            for (int e = 0; e < MAX_EDGES_PER_COMPONENT; e++)
+                edgeBufs[e] = (Point*)malloc(sizeof(Point) * 10000);
+
+            int edgeCount = traceComponentEdges(compBin, w, h, edgeBufs, edgeLens,
+                                                 MAX_EDGES_PER_COMPONENT, 10000);
+
+            if (edgeCount == 0) {
+                for (int e = 0; e < MAX_EDGES_PER_COMPONENT; e++) free(edgeBufs[e]);
+                continue;   // noise speck - nothing traceable
+            }
 
             if (!haveMarkers) {
-                // A closed loop has no real start/end to mark - drop both
-                // markers on the same pick point instead of using the
-                // tracePath sentinel coordinates (which aren't a real pixel).
-                setEndpointMarkers(w, h, sx, sy, isClosedLoop ? sx : ex, isClosedLoop ? sy : ey, stretched);
+                // Red/blue start-end markers only really mean something for
+                // a simple open curve - use the first edge's two ends (for
+                // a closed loop these coincide, which is fine/expected).
+                Point* first = edgeBufs[0];
+                setEndpointMarkers(w, h, first[0].x, first[0].y,
+                                   first[edgeLens[0] - 1].x, first[edgeLens[0] - 1].y, stretched);
                 haveMarkers = TRUE;
             }
 
-            Point* path = (Point*)malloc(sizeof(Point) * 10000);
-            componentPaths[componentPathCount++] = path;
-
-            int numPoints = tracePath(compBin, w, h, sx, sy, ex, ey, path, 10000);
-
-            // tracePath stops one pixel short of exactly closing the ring
-            // (the start pixel is marked visited from its very first step,
-            // so it can never step back onto it) - append it again so the
-            // path/arc-fit sees a properly closed shape instead of a
-            // near-miss with a visible seam.
-            if (isClosedLoop && numPoints > 0 && numPoints < 10000)
+            for (int e = 0; e < edgeCount; e++)
             {
-                path[numPoints].x = sx;
-                path[numPoints].y = sy;
-                numPoints++;
+                if (componentPathCount >= MAX_TRACE_COMPONENTS) {
+                    free(edgeBufs[e]);   // path budget exhausted - discard, avoid a leak
+                    continue;
+                }
+
+                componentPaths[componentPathCount++] = edgeBufs[e];
+
+                debugPrintPath(edgeBufs[e], edgeLens[e]);
+
+                ArcSegment segs[MAX_ARC_SEGMENTS];
+                int segCount = buildSegments(edgeBufs[e], edgeLens[e], segs);
+
+                for (int i = 0; i < segCount && totalSegCount < MAX_ARC_SEGMENTS; i++)
+                    allSegments[totalSegCount++] = segs[i];
             }
 
-            debugPrintPath(path, numPoints);
-
-            ArcSegment segs[MAX_ARC_SEGMENTS];
-            int segCount = buildSegments(path, numPoints, segs);
-
-            for (int i = 0; i < segCount && totalSegCount < MAX_ARC_SEGMENTS; i++)
-                allSegments[totalSegCount++] = segs[i];
+            // edgeBufs[edgeCount..MAX_EDGES_PER_COMPONENT-1] were allocated
+            // up front but traceComponentEdges never wrote into them (this
+            // component simply didn't have that many edges) - free them
+            // here rather than leaking one 10000-Point buffer per unused slot.
+            for (int e = edgeCount; e < MAX_EDGES_PER_COMPONENT; e++)
+                free(edgeBufs[e]);
         }
     }
 
@@ -219,6 +254,7 @@ void RunUploadPipeline(void)
     canvas.showSegments = FALSE;
     canvas.segmentResultCount = 0;
     canvas.hasEndpointMarkers = FALSE;
+    branchMarkerCount = 0;
 
     s_pendingBmpImage = img;   // traced later, on demand (see RunPendingUploadTrace)
 }
