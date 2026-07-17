@@ -1079,7 +1079,10 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		    glDisable(GL_BLEND);
 		}
 
-	    if (canvas.hasEndpointMarkers)
+	    // Endpoints are part of the trace overlay, so they follow the same
+	    // visibility toggle (Trace / View Segments) as the rest of it,
+	    // instead of staying on screen after the overlay is hidden.
+	    if (canvas.hasEndpointMarkers && canvas.showSegments)
 	    {
 	        float markerRadius = 0.02f * canvas.zoom;
 	        drawMarkerDisc(markerStartX, markerStartY, markerRadius, 1.0f, 0.0f, 0.0f);
