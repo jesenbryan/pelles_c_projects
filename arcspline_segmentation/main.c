@@ -38,6 +38,14 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmd, int nShow)
     AppendMenuW(hFileMenu, MF_STRING, ID_UPLOAD, L"Upload BMP...");
     AppendMenuW(hFileMenu, MF_STRING, ID_SAVE, L"Save BMP...");
     AppendMenuW(hMenu, MF_POPUP, (UINT_PTR)hFileMenu, L"File");
+
+    // Mode menu: Design vs Simulation, mutually exclusive (radio-style
+    // checkmarks maintained in WndProcGL's WM_COMMAND handler).
+    HMENU hModeMenu = CreatePopupMenu();
+    AppendMenuW(hModeMenu, MF_STRING | MF_CHECKED, ID_MODE_DESIGN, L"Design Mode");
+    AppendMenuW(hModeMenu, MF_STRING, ID_MODE_SIMULATION, L"Simulation Mode");
+    AppendMenuW(hMenu, MF_POPUP, (UINT_PTR)hModeMenu, L"Mode");
+
     SetMenu(hWndGL, hMenu);
     
     // NEW: created hidden (no WS_VISIBLE) and WS_EX_LAYERED (so its alpha can

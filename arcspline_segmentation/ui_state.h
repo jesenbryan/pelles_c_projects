@@ -15,6 +15,18 @@
 #define ID_VIEW_SEGMENTS 5
 #define ID_SAVE   6
 #define ID_COMPARISON 7
+#define ID_MODE_DESIGN     8
+#define ID_MODE_SIMULATION 9
+
+// App-wide mode, switched from the "Mode" menu on the GL window.
+// Design = draw/trace/edit arc-spline paths (current behavior).
+// Simulation = reserved for running/animating traced paths.
+typedef enum {
+    APP_MODE_DESIGN = 0,
+    APP_MODE_SIMULATION
+} AppMode;
+
+extern AppMode appMode;
 
 // Canvas state that should always reset together (see ResetCanvas)
 typedef struct {

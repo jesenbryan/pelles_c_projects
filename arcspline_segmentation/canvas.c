@@ -12,6 +12,7 @@ int glWindowHeight = 600;
 GLuint fontBase = 0;
 
 CanvasState canvas = { .zoom = 1.0f };
+AppMode appMode = APP_MODE_DESIGN;
 
 float segmentPointsWorld[MAX_SEGMENT_POINTS * 2];   // NEW
 int   segmentStarts[MAX_ARC_SEGMENTS];              // NEW
@@ -643,6 +644,19 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	    {
 	        RunUploadPipeline();
 	        SendMessage(hWndUI, WM_COMMAND, MAKEWPARAM(ID_VIEW_SEGMENTS, BN_CLICKED), 0);
+	        if (hWndGL) InvalidateRect(hWndGL, NULL, FALSE);
+	    }
+	    else if (LOWORD(wParam) == ID_MODE_DESIGN || LOWORD(wParam) == ID_MODE_SIMULATION)
+	    {
+	        appMode = (LOWORD(wParam) == ID_MODE_DESIGN) ? APP_MODE_DESIGN : APP_MODE_SIMULATION;
+
+	        // Radio-style checkmarks: only the active mode stays checked.
+	        // "Mode" is the second top-level popup (index 1, after "File").
+	        HMENU hMenuBar = GetMenu(hWnd);
+	        HMENU hModeMenu = GetSubMenu(hMenuBar, 1);
+	        CheckMenuItem(hModeMenu, ID_MODE_DESIGN, MF_BYCOMMAND | (appMode == APP_MODE_DESIGN ? MF_CHECKED : MF_UNCHECKED));
+	        CheckMenuItem(hModeMenu, ID_MODE_SIMULATION, MF_BYCOMMAND | (appMode == APP_MODE_SIMULATION ? MF_CHECKED : MF_UNCHECKED));
+
 	        if (hWndGL) InvalidateRect(hWndGL, NULL, FALSE);
 	    }
 	    else if (LOWORD(wParam) == ID_SAVE)
