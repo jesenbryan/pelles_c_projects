@@ -40,6 +40,16 @@ static void freePendingBmpImage(void)
 // actually draws them crossing/overlapping), then run the existing
 // find/trace/build pipeline independently per component and merge the
 // resulting ArcSegments into one array for setSegmentOverlay.
+//
+// NOTE: closed-loop (circle) and branching (Y/T/X junction) support were
+// tried via skeleton_graph.c's traceComponentEdges/findRealJunctions/
+// findRealEndpoints, but the edge cases around thinning-noise artifacts
+// (false junctions, misplaced endpoints, half-traced curves) weren't
+// reliable enough yet, so that path is disabled for now - find_start_end_
+// pixels only recognizes a simple open curve with exactly two endpoints;
+// closed loops and branching strokes are silently skipped, same as before
+// that work started. skeleton_graph.c itself is left in place (compiled,
+// unused) so this can be revisited later without redoing it.
 #define MAX_TRACE_COMPONENTS 32
 
 // Flood-fills the 8-connected component containing (startX, startY) out of
@@ -157,7 +167,7 @@ static void runPipelineOnImage(Image* img, const char* sourceLabel, BOOL stretch
 void RunTracePipeline(void)
 {
     Image* img = canvasToImage();
-    
+
     if (!img) {
         // No canvas strokes - check if there's a pending uploaded BMP to trace instead
         if (RunPendingUploadTrace()) {

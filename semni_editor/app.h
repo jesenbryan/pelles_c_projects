@@ -38,13 +38,13 @@ typedef struct {
     float seamArc1Angle;
     float seamArc2Angle;
 
-    Point innerCircle;
+    PointF innerCircle;
     float innerRadius;
 
     // second joint circle + the two side-arc handles connecting it back
     // to innerCircle, forming a thigh-like limb (like innerCircle is the
     // hip, kneeCircle is the knee)
-    Point kneeCircle;
+    PointF kneeCircle;
     float kneeRadius;
 
     // the two thigh seams, both parameterized by the angle where they
@@ -67,7 +67,7 @@ typedef struct {
 
     // continues the leg past the knee: ankleCircle is the next joint,
     // connected back to kneeCircle by two arcs, same pattern as the thigh
-    Point ankleCircle;
+    PointF ankleCircle;
     float ankleRadius;
 
     // the two shin seams, both parameterized by the angle where they
@@ -161,7 +161,7 @@ typedef struct {
     // equivalent offset -- like thighArc1Angle/thighArc2Angle, they're
     // already knee-frame-relative angles, unaffected by moving kneeCircle
     // itself.
-    Point kneeDragAnkleOffset;
+    PointF kneeDragAnkleOffset;
 
     // same idea, but for a hip drag: the whole leg (kneeCircle,
     // ankleCircle) hangs off innerCircle, so moving the hip needs to carry
@@ -173,8 +173,8 @@ typedef struct {
     // thighArc2Angle/shinArc1Angle/shinArc2Angle don't need an offset here
     // -- they're already relative to their own joint (hip or knee), so a
     // hip drag doesn't change any of them directly.
-    Point hipDragKneeOffset;
-    Point hipDragAnkleOffset;
+    PointF hipDragKneeOffset;
+    PointF hipDragAnkleOffset;
 
     // captured once, when a seam arc drag starts: the mouse's local Y and
     // the arc's angle at that moment. Each WM_MOUSEMOVE then sets the
@@ -203,6 +203,13 @@ typedef struct {
     float shinArcDragStartPerp;
     float shinArcDragStartAngle;
 
-    Point mouseGL;
+    PointF mouseGL;
     DWORD lastLogTime;
 } AppState;
+
+// The single running instance of the Semni app's state, defined in main.c.
+// Declared here (rather than only ever passed around as a pointer) so
+// editor_mode.c can show/hide Semni's own child controls (app.ui.*) when
+// switching editor modes without needing an AppState* threaded through
+// the whole call chain just for that.
+extern AppState app;

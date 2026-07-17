@@ -4,7 +4,7 @@
 #include "geometry.h"
 #include "app.h"
 
-Point getCenter(Semni b);
+PointF getCenter(Semni b);
 
 // Prints the current robot pose to the console as a series of
 // "app->robotScene.robot.field = value;" assignments, matching the style

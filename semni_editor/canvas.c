@@ -1,8 +1,9 @@
-﻿#include "canvas.h"
+#include "canvas.h"
 #include "pipeline.h"      // For RunUploadPipeline
 #include "canvas_bridge.h" // For canvasToImage
 #include "bmp_ui.h"        // For saveBMP_UI
 #include "render.h"        // For renderSegmentsToImage
+#include "editor_mode.h"   // For switchEditorMode -- Design Mode > Robot (Semni) launches the robot editor
 #include <math.h>
 #include <string.h>
 
@@ -12,6 +13,14 @@ int glWindowHeight = 600;
 GLuint fontBase = 0;
 
 CanvasState canvas = { .zoom = 1.0f };
+AppMode appMode = APP_MODE_DESIGN;
+
+// Starts on Environment (not Robot) so the app opens straight into a
+// usable canvas -- Robot is now a real destination (see the ID_LAYER_ROBOT
+// handling in WM_COMMAND below), not the placeholder it used to be, and
+// selecting it switches the whole app into the Semni robot editor rather
+// than just tagging strokes.
+DesignLayer designLayer = LAYER_ENVIRONMENT;
 
 float segmentPointsWorld[MAX_SEGMENT_POINTS * 2];   // NEW
 int   segmentStarts[MAX_ARC_SEGMENTS];              // NEW
@@ -27,6 +36,12 @@ float segmentCircleRadiusWorldY[MAX_ARC_SEGMENTS];    // NEW: ghost circle radii
 // NEW: which segment (if any) the mouse is currently hovering over.
 // -1 means "none". Declared here (before ResetCanvas) since it's referenced there.
 static int hoveredSegment = -1;
+
+// NEW: endpoint-snap - lets the user hover near the start/end point of an
+// existing stroke and have the NEXT stroke's start point snap exactly onto
+// it, so straight-line strokes can be chained end-to-end into a polyline.
+static BOOL  snapEndpointAvailable = FALSE;
+static float snapEndpointX = 0.0f, snapEndpointY = 0.0f;
 
 // NEW: state for the "hover top-right corner to reveal the UI panel" behavior
 static BOOL hotZoneHighlighted = FALSE; // cursor is currently inside the corner hot zone
@@ -46,12 +61,17 @@ void ResetCanvas(void)
     canvas.segmentResultCount = 0;      // NEW
     canvas.comparisonMode = FALSE;      // NEW
     hoveredSegment = -1;                // NEW: avoid a stale highlight index
+    snapEndpointAvailable = FALSE;      // NEW: avoid a stale endpoint-snap highlight
+    branchMarkerCount = 0;              // NEW: avoid stale branch-point markers
 	UpdateProjection();
 }
 
 GLuint canvasTexture = 0;
 
 float bgLeft = -1.0f, bgRight = 1.0f, bgBottom = -1.0f, bgTop = 1.0f; // NEW
+
+float branchMarkersWorld[MAX_BRANCH_MARKERS * 2];
+int   branchMarkerCount = 0;
 
 float markerStartX = 0.0f, markerStartY = 0.0f;
 float markerEndX   = 0.0f, markerEndY   = 0.0f;
@@ -85,10 +105,16 @@ float points[MAX_POINTS];
 int strokeStarts[MAX_STROKES];
 float strokeThickness[MAX_STROKES];
 COLORREF strokeColor[MAX_STROKES];
+DesignLayer strokeLayer[MAX_STROKES];
 BOOL drawing = FALSE;
 
 static HGLRC hRC;
 static HDC hDC;
+
+HDC canvasGetHDC(void)
+{
+    return hDC;
+}
 
 static void segmentGhostColor(int index, float* r, float* g, float* b)
 {
@@ -168,6 +194,50 @@ static int findHoveredSegment(float wx, float wy)
     }
 
     return best;
+}
+
+// Finds the nearest stroke START or END point to a world-space point,
+// within a small pick tolerance - used to let a new stroke snap onto
+// where a previous one left off (chaining straight lines end-to-end).
+// Only strokes belonging to the currently active design layer are
+// considered, so this stays consistent with what's actually editable.
+// Returns TRUE and fills outX/outY if something is close enough.
+static BOOL findNearestStrokeEndpoint(float wx, float wy, float* outX, float* outY)
+{
+    float tolerance = 0.05f * canvas.zoom; // pick radius, world units - matches segment picking
+    BOOL found = FALSE;
+    float bestDist = tolerance;
+
+    for (int s = 0; s < canvas.strokeCount; s++)
+    {
+        if (strokeLayer[s] != designLayer) continue;
+
+        int start = strokeStarts[s];
+        int end = (s == canvas.strokeCount - 1) ? canvas.pointCount : strokeStarts[s + 1];
+        int count = (end - start) / 2;
+        if (count < 1) continue;
+
+        float candidates[2][2] = {
+            { points[start],     points[start + 1] },     // stroke start
+            { points[end - 2],   points[end - 1] },        // stroke end
+        };
+
+        for (int c = 0; c < 2; c++)
+        {
+            float dx = wx - candidates[c][0];
+            float dy = wy - candidates[c][1];
+            float d = sqrtf(dx * dx + dy * dy);
+            if (d < bestDist)
+            {
+                bestDist = d;
+                found = TRUE;
+                *outX = candidates[c][0];
+                *outY = candidates[c][1];
+            }
+        }
+    }
+
+    return found;
 }
 
 void UpdateProjection(void)
@@ -331,6 +401,13 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
             BOOL wantVisible = inHotZone || inUIWindow;
 
+            // Robot layer has no drawing tools of its own yet (reserved for
+            // a separate project) - keep the Clear/Trace/etc. panel from
+            // popping up at all while it's the active design layer, even
+            // if the cursor is sitting in its hot corner.
+            if (appMode == APP_MODE_DESIGN && designLayer == LAYER_ROBOT)
+                wantVisible = FALSE;
+
             if (wantVisible && !uiShown)
             {
                 // Just entered the hot zone: position it flush against the
@@ -399,11 +476,15 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
     }
     case WM_LBUTTONDOWN:
     {
+        // Robot layer is a blank placeholder for now (a separate project
+        // will live here later) - no drawing while it's active.
+        if (appMode == APP_MODE_DESIGN && designLayer == LAYER_ROBOT) return 0;
         if (canvas.strokeCount >= MAX_STROKES) return 0;
         drawing = TRUE;
         strokeStarts[canvas.strokeCount] = canvas.pointCount;
         strokeColor[canvas.strokeCount] = brushColor;
         strokeThickness[canvas.strokeCount] = thickness;
+        strokeLayer[canvas.strokeCount] = designLayer;
         canvas.strokeCount++;
 
         float x = (float)LOWORD(lParam);
@@ -419,6 +500,17 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		}
 		nx += canvas.panX;   // NEW
 		ny += canvas.panY;   // NEW
+
+		// NEW: if the cursor was hovering near an existing stroke's
+		// endpoint, snap this new stroke's first point exactly onto it
+		// instead of the raw cursor position - lets straight lines be
+		// chained end-to-end into a connected polyline.
+		if (snapEndpointAvailable)
+		{
+		    nx = snapEndpointX;
+		    ny = snapEndpointY;
+		    snapEndpointAvailable = FALSE;
+		}
 
 		if (canvas.pointCount < MAX_POINTS - 1) {
 		    points[canvas.pointCount++] = nx;
@@ -477,37 +569,55 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
 	    if (!drawing || !(wParam & MK_LBUTTON))
 	    {
-	        // NEW: hover detection over the segment overlay when not
-	        // actively drawing or panning
+	        // NEW: hover detection (segment overlay + stroke endpoint
+	        // snapping) when not actively drawing or panning. World coords
+	        // computed once here so both checks below can share them.
+	        float hx = (float)LOWORD(lParam);
+	        float hy = (float)HIWORD(lParam);
+	        float hAspect = (float)glWindowWidth / (float)glWindowHeight;
+	        float hwx, hwy;
+	        if (hAspect >= 1.0f) {
+	            hwx = ((2.0f * hx / glWindowWidth) - 1.0f) * hAspect * canvas.zoom;
+	            hwy = (1.0f - (2.0f * hy / glWindowHeight)) * canvas.zoom;
+	        } else {
+	            hwx = ((2.0f * hx / glWindowWidth) - 1.0f) * canvas.zoom;
+	            hwy = (1.0f - (2.0f * hy / glWindowHeight)) * (1.0f / hAspect) * canvas.zoom;
+	        }
+	        hwx += canvas.panX;
+	        hwy += canvas.panY;
+
+	        // NEW: does hovering land near an existing stroke's start/end
+	        // point? If so, the next stroke drawn will snap to it (chains
+	        // straight lines into a connected polyline).
+	        float newSnapX, newSnapY;
+	        BOOL newSnapAvailable = findNearestStrokeEndpoint(hwx, hwy, &newSnapX, &newSnapY);
+	        if (newSnapAvailable != snapEndpointAvailable ||
+	            (newSnapAvailable && (newSnapX != snapEndpointX || newSnapY != snapEndpointY)))
+	        {
+	            snapEndpointAvailable = newSnapAvailable;
+	            snapEndpointX = newSnapX;
+	            snapEndpointY = newSnapY;
+	            InvalidateRect(hWnd, NULL, FALSE);
+	        }
+
+	        // Needed to actually receive WM_MOUSELEAVE below (used to clear
+	        // both the segment hover and the endpoint-snap highlight) -
+	        // registered unconditionally now since endpoint snapping isn't
+	        // gated on canvas.showSegments the way segment hover is.
+	        TRACKMOUSEEVENT tme = {0};
+	        tme.cbSize = sizeof(tme);
+	        tme.dwFlags = TME_LEAVE;
+	        tme.hwndTrack = hWnd;
+	        TrackMouseEvent(&tme);
+
 	        if (canvas.showSegments && canvas.segmentResultCount > 0)
 	        {
-	            float hx = (float)LOWORD(lParam);
-	            float hy = (float)HIWORD(lParam);
-	            float hAspect = (float)glWindowWidth / (float)glWindowHeight;
-	            float hwx, hwy;
-	            if (hAspect >= 1.0f) {
-	                hwx = ((2.0f * hx / glWindowWidth) - 1.0f) * hAspect * canvas.zoom;
-	                hwy = (1.0f - (2.0f * hy / glWindowHeight)) * canvas.zoom;
-	            } else {
-	                hwx = ((2.0f * hx / glWindowWidth) - 1.0f) * canvas.zoom;
-	                hwy = (1.0f - (2.0f * hy / glWindowHeight)) * (1.0f / hAspect) * canvas.zoom;
-	            }
-	            hwx += canvas.panX;
-	            hwy += canvas.panY;
-
 	            int newHover = findHoveredSegment(hwx, hwy);
 	            if (newHover != hoveredSegment)
 	            {
 	                hoveredSegment = newHover;
 	                InvalidateRect(hWnd, NULL, FALSE);
 	            }
-
-	            // Needed to actually receive WM_MOUSELEAVE below
-	            TRACKMOUSEEVENT tme = {0};
-	            tme.cbSize = sizeof(tme);
-	            tme.dwFlags = TME_LEAVE;
-	            tme.hwndTrack = hWnd;
-	            TrackMouseEvent(&tme);
 	        }
 	        else if (hoveredSegment != -1)
 	        {
@@ -635,6 +745,11 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	        hoveredSegment = -1;
 	        InvalidateRect(hWnd, NULL, FALSE);
 	    }
+	    if (snapEndpointAvailable)
+	    {
+	        snapEndpointAvailable = FALSE;
+	        InvalidateRect(hWnd, NULL, FALSE);
+	    }
 	    return 0;
 	}
 	case WM_COMMAND:
@@ -645,10 +760,48 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	        SendMessage(hWndUI, WM_COMMAND, MAKEWPARAM(ID_VIEW_SEGMENTS, BN_CLICKED), 0);
 	        if (hWndGL) InvalidateRect(hWndGL, NULL, FALSE);
 	    }
+	    else if (LOWORD(wParam) == ID_LAYER_ROBOT || LOWORD(wParam) == ID_LAYER_ENVIRONMENT || LOWORD(wParam) == ID_MODE_SIMULATION)
+	    {
+	        // "Mode" is the second top-level popup (index 1, after "File");
+	        // "Design Mode" is the first item within it (index 0) and is
+	        // itself a submenu holding the two layer choices.
+	        HMENU hMenuBar = GetMenu(hWnd);
+	        HMENU hModeMenu = GetSubMenu(hMenuBar, 1);
+	        HMENU hDesignMenu = GetSubMenu(hModeMenu, 0);
+
+	        if (LOWORD(wParam) == ID_MODE_SIMULATION)
+	        {
+	            appMode = APP_MODE_SIMULATION;
+
+	            // Simulation is an ArcSpline-only concept (running/animating
+	            // traced paths) -- make sure picking it also backs out of the
+	            // Semni robot editor if that's currently active.
+	            switchEditorMode(EDITOR_MODE_ARCSPLINE, &editorModeState);
+	        }
+	        else
+	        {
+	            // Picking either layer both enters Design mode and selects
+	            // which layer new strokes/edits go to.
+	            appMode = APP_MODE_DESIGN;
+	            designLayer = (LOWORD(wParam) == ID_LAYER_ROBOT) ? LAYER_ROBOT : LAYER_ENVIRONMENT;
+	            CheckMenuItem(hDesignMenu, ID_LAYER_ROBOT, MF_BYCOMMAND | (designLayer == LAYER_ROBOT ? MF_CHECKED : MF_UNCHECKED));
+	            CheckMenuItem(hDesignMenu, ID_LAYER_ENVIRONMENT, MF_BYCOMMAND | (designLayer == LAYER_ENVIRONMENT ? MF_CHECKED : MF_UNCHECKED));
+
+	            // "Robot (Semni)" used to be a blank placeholder layer -- it's
+	            // now the real entry point into the separate Semni robot
+	            // editor, which takes over this same window. Picking
+	            // Environment (back) returns to the ArcSpline canvas.
+	            switchEditorMode(designLayer == LAYER_ROBOT ? EDITOR_MODE_SEMNI : EDITOR_MODE_ARCSPLINE, &editorModeState);
+	        }
+
+	        CheckMenuItem(hModeMenu, ID_MODE_SIMULATION, MF_BYCOMMAND | (appMode == APP_MODE_SIMULATION ? MF_CHECKED : MF_UNCHECKED));
+
+	        if (hWndGL) InvalidateRect(hWndGL, NULL, FALSE);
+	    }
 	    else if (LOWORD(wParam) == ID_SAVE)
 	    {
 	        // If comparison mode is on and segments exist, save reconstructed drawing
-	        if (canvas.comparisonMode && canvas.showSegments && canvas.segmentResultCount > 0)
+	        if (canvas.comparisonMode && canvas.segmentResultCount > 0)
 	        {
 	            Image* img = (Image*)malloc(sizeof(Image));
 	            if (img)
@@ -699,16 +852,30 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	    glLoadIdentity();
 	    glTranslatef(-canvas.panX, -canvas.panY, 0.0f);   // NEW: apply camera pan to everything below
 
-	    // Only show background image if NOT in active comparison mode
-	    BOOL isComparisonActive = canvas.comparisonMode && canvas.showSegments && canvas.segmentResultCount > 0;
-	    
+	    // Only show background image if NOT in active comparison mode.
+	    // Deliberately NOT gated on canvas.showSegments - Comparison Mode
+	    // has to work on its own whether or not "View Segments" is also
+	    // checked, as long as something has been traced.
+	    BOOL isComparisonActive = canvas.comparisonMode && canvas.segmentResultCount > 0;
+
+	    // Robot layer has no drawable content of its own yet (it's reserved
+	    // for a separate project to be embedded here later), so no new
+	    // strokes can be added while it's active (see WM_LBUTTONDOWN).
+	    // But the Environment layer still renders underneath as a dimmed
+	    // reference, same as when Environment is dimmed while Robot is
+	    // hypothetically active in the other direction — only the currently
+	    // edited layer is shown at full opacity.
+	    BOOL isRobotLayerActive = (appMode == APP_MODE_DESIGN && designLayer == LAYER_ROBOT);
+
 	    if (canvas.hasBackgroundImage && !isComparisonActive)
 	    {
 	        // FIXED bounds (computed once at upload time) — canvas.zoom now
 	        // actually affects this via the ortho projection, same as strokes
 	        glEnable(GL_TEXTURE_2D);
+	        glEnable(GL_BLEND);
+	        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 	        glBindTexture(GL_TEXTURE_2D, canvasTexture);
-	        glColor3f(1.0f, 1.0f, 1.0f);
+	        glColor4f(1.0f, 1.0f, 1.0f, isRobotLayerActive ? 0.25f : 1.0f);
 
 	        glBegin(GL_QUADS);
 	            glTexCoord2f(0.0f, 0.0f); glVertex2f(bgLeft,  bgBottom);
@@ -717,6 +884,7 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	            glTexCoord2f(0.0f, 1.0f); glVertex2f(bgLeft,  bgTop);
 	        glEnd();
 
+	        glDisable(GL_BLEND);
 	        glDisable(GL_TEXTURE_2D);
 	    }
 
@@ -724,7 +892,7 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
         // Only apply comparison mode (hide/fade strokes) if segments are actually being shown
-        
+
         if (!isComparisonActive)
         {
             for (int s = 0; s < canvas.strokeCount; s++)
@@ -735,7 +903,17 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 if (count < 2) continue;
 
                 COLORREF c = strokeColor[s];
-                glColor3f(GetRValue(c)/255.0f, GetGValue(c)/255.0f, GetBValue(c)/255.0f);
+
+                // In Design mode, dim strokes belonging to the layer that
+                // isn't currently being edited (Robot vs Environment) so
+                // it stays visible as reference without competing with the
+                // active layer. Simulation mode shows everything at full
+                // opacity.
+                float strokeAlpha = 1.0f;
+                if (appMode == APP_MODE_DESIGN && strokeLayer[s] != designLayer)
+                    strokeAlpha = 0.25f;
+
+                glColor4f(GetRValue(c)/255.0f, GetGValue(c)/255.0f, GetBValue(c)/255.0f, strokeAlpha);
 
                 float halfW = (strokeThickness[s] * canvas.zoom) / (float)glWindowWidth;
 
@@ -774,14 +952,56 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         }
         glDisable(GL_BLEND);
 
-		if (canvas.showSegments && canvas.segmentResultCount > 0)
+        // NEW: endpoint-snap highlight - a bright ring around the stroke
+        // endpoint the cursor is currently hovering near, showing the user
+        // that starting a new stroke here will snap onto it.
+        if (snapEndpointAvailable)
+        {
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+            const int ringSteps = 24;
+            float ringRadius = 0.02f * canvas.zoom;
+
+            glColor4f(1.0f, 0.55f, 0.0f, 0.9f);   // orange, matches nothing else on canvas
+            glLineWidth(2.0f);
+            glBegin(GL_LINE_LOOP);
+            for (int i = 0; i < ringSteps; i++)
+            {
+                float theta = (2.0f * 3.14159265f * i) / ringSteps;
+                glVertex2f(snapEndpointX + ringRadius * cosf(theta),
+                           snapEndpointY + ringRadius * sinf(theta));
+            }
+            glEnd();
+
+            // Small filled center dot so the exact snap point is unambiguous
+            glColor4f(1.0f, 0.55f, 0.0f, 0.9f);
+            glBegin(GL_TRIANGLE_FAN);
+            glVertex2f(snapEndpointX, snapEndpointY);
+            for (int i = 0; i <= ringSteps; i++)
+            {
+                float theta = (2.0f * 3.14159265f * i) / ringSteps;
+                glVertex2f(snapEndpointX + (ringRadius * 0.3f) * cosf(theta),
+                           snapEndpointY + (ringRadius * 0.3f) * sinf(theta));
+            }
+            glEnd();
+
+            glLineWidth(1.0f);
+            glDisable(GL_BLEND);
+        }
+
+		// Rendered when EITHER "View Segments" is checked OR Comparison Mode
+		// is active - the two controls are independent, so Comparison Mode
+		// must be able to show the traced arcs on its own without also
+		// requiring View Segments to be checked.
+		if ((canvas.showSegments || isComparisonActive) && canvas.segmentResultCount > 0)
 		{
 		    glEnable(GL_BLEND);
 		    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-		    BOOL isComparisonActive = canvas.comparisonMode && canvas.segmentResultCount > 0;
 		    float ghostHalfW = (0.01f * canvas.zoom);  // Always use same thickness
 		    float ghostAlpha = isComparisonActive ? 0.95f : 0.35f;
+		    if (isRobotLayerActive) ghostAlpha *= 0.3f;  // extra-dim: Environment reference while on Robot layer
 
 		    for (int s = 0; s < canvas.segmentResultCount; s++)
 		    {
@@ -789,7 +1009,7 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		        int count = segmentCounts[s];
 		        if (count < 2) continue;
 
-		        BOOL isHovered = (s == hoveredSegment);   // NEW
+		        BOOL isHovered = (s == hoveredSegment) && !isRobotLayerActive;   // NEW
 
 		        float r, g, b;
 		        if (isComparisonActive) {
@@ -853,7 +1073,7 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		        float cx = segmentCircleCenterWorld[s * 2];
 		        float cy = segmentCircleCenterWorld[s * 2 + 1];
 
-		        BOOL isHovered = (s == hoveredSegment);   // NEW
+		        BOOL isHovered = (s == hoveredSegment) && !isRobotLayerActive;   // NEW
 
 		        float gr, gg, gb;
 		        segmentGhostColor(s, &gr, &gg, &gb);
@@ -866,7 +1086,7 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		            glEnable(GL_LINE_STIPPLE);
 		            glLineStipple(1, 0x00FF);            // dotted outline otherwise
 		            glLineWidth(1.0f);
-		            glColor4f(gr, gg, gb, 0.6f);
+		            glColor4f(gr, gg, gb, isRobotLayerActive ? 0.18f : 0.6f);
 		        }
 
 		        glBegin(GL_LINE_LOOP);
@@ -882,11 +1102,27 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		    glDisable(GL_BLEND);
 		}
 
-	    if (canvas.hasEndpointMarkers)
+	    // Endpoints are part of the trace overlay, so they follow the same
+	    // visibility toggle (Trace / View Segments) as the rest of it,
+	    // instead of staying on screen after the overlay is hidden.
+	    if (canvas.hasEndpointMarkers && canvas.showSegments)
 	    {
 	        float markerRadius = 0.02f * canvas.zoom;
 	        drawMarkerDisc(markerStartX, markerStartY, markerRadius, 1.0f, 0.0f, 0.0f);
 	        drawMarkerDisc(markerEndX,   markerEndY,   markerRadius, 0.0f, 0.0f, 1.0f);
+	    }
+
+	    // Branch/junction points (a Y/T/X-shaped stroke splits into multiple
+	    // edges here) - green, so they read as distinct from the red/blue
+	    // start-end pair above.
+	    if (branchMarkerCount > 0)
+	    {
+	        float branchMarkerRadius = 0.02f * canvas.zoom;
+	        for (int m = 0; m < branchMarkerCount; m++)
+	        {
+	            drawMarkerDisc(branchMarkersWorld[m * 2], branchMarkersWorld[m * 2 + 1],
+	                           branchMarkerRadius, 0.0f, 1.0f, 0.0f);
+	        }
 	    }
 
         // --- BLINK-FREE UI TEXT DRAWING ---
@@ -950,6 +1186,43 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         glListBase(fontBase - 32);
         glCallLists((GLsizei)strlen(zoomStr), GL_UNSIGNED_BYTE, zoomStr);
         glPopAttrib();
+
+        // NEW: persistent top-left mode/layer indicator - otherwise the
+        // only way to tell Design/Robot/Environment apart is to open the
+        // Mode menu and see which item is checked.
+        {
+            char modeStr[64];
+            float mr, mg, mb;
+
+            if (appMode == APP_MODE_SIMULATION) {
+                wsprintfA(modeStr, "Mode: Simulation");
+                mr = 0.5f; mg = 0.3f; mb = 0.7f;   // purple
+            } else if (designLayer == LAYER_ROBOT) {
+                wsprintfA(modeStr, "Mode: Design - Robot");
+                mr = 0.85f; mg = 0.45f; mb = 0.0f; // orange, matches the endpoint-snap highlight
+            } else {
+                wsprintfA(modeStr, "Mode: Design - Environment");
+                mr = 0.1f; mg = 0.55f; mb = 0.15f; // green
+            }
+
+            // Small color swatch ahead of the text so the mode reads at a
+            // glance without needing to read the label itself.
+            glColor3f(mr, mg, mb);
+            glBegin(GL_QUADS);
+                glVertex2f(10.0f, (float)glWindowHeight - 24.0f);
+                glVertex2f(20.0f, (float)glWindowHeight - 24.0f);
+                glVertex2f(20.0f, (float)glWindowHeight - 14.0f);
+                glVertex2f(10.0f, (float)glWindowHeight - 14.0f);
+            glEnd();
+
+            glColor3f(0.2f, 0.2f, 0.2f);
+            glRasterPos2i(26, glWindowHeight - 22);
+            glPushAttrib(GL_LIST_BIT);
+            glListBase(fontBase - 32);
+            glCallLists((GLsizei)strlen(modeStr), GL_UNSIGNED_BYTE, modeStr);
+            glPopAttrib();
+        }
+
         glMatrixMode(GL_PROJECTION); glPopMatrix();
         glMatrixMode(GL_MODELVIEW); glPopMatrix();
 

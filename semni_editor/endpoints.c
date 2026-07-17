@@ -1,4 +1,4 @@
-﻿#include "endpoints.h"
+#include "endpoints.h"
 
 //int find_any_curve_pixel(uint8_t* bin, int w, int h, int* sx, int* sy)
 //{
@@ -105,7 +105,6 @@ int find_start_end_pixels(uint8_t* bin, int w, int h, int* sx, int* sy, int* ex,
 
     return count_found;
 }
-
 
 
 

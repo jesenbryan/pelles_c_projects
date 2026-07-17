@@ -17,6 +17,11 @@
 // travel somewhere get kept.
 #define MIN_EDGE_POINTS 4
 
+// Cap on distinct node clusters findRealJunctions() tracks per call -
+// generously sized for how many endpoints/junctions a single component's
+// edges could plausibly produce.
+#define MAX_JUNCTION_NODES 256
+
 typedef struct { int dx, dy; } Off2D;
 
 static const Off2D NB[8] = {
@@ -24,16 +29,32 @@ static const Off2D NB[8] = {
     {0, 1}, {-1, 1}, {-1, 0}, {-1, -1}
 };
 
+// Topological degree via crossing number, NOT a raw neighbor count. A
+// sharp/acute turn in a thinned skeleton routinely leaves a "thick" 2px
+// elbow - e.g. both E and SE foreground at the bend pixel - which a raw
+// count misreads as 3 separate neighbors (a junction) even though E and
+// SE are adjacent to EACH OTHER and really represent one continuing
+// direction, not two branches. Walking the 8 neighbors in ring order and
+// counting background->foreground transitions instead counts distinct
+// connected neighbor GROUPS, which is the actual number of directions
+// leaving this pixel - the standard technique for classifying skeleton
+// pixels (endpoint/pass-through/junction) without corners falsely
+// registering as nodes.
 static int degreeAt(uint8_t* bin, int w, int h, int x, int y)
 {
-    int d = 0;
+    int ring[8];
     for (int k = 0; k < 8; k++) {
         int nx = x + NB[k].dx;
         int ny = y + NB[k].dy;
-        if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
-        if (bin[ny * w + nx]) d++;
+        ring[k] = (nx >= 0 && nx < w && ny >= 0 && ny < h && bin[ny * w + nx]) ? 1 : 0;
     }
-    return d;
+
+    int crossings = 0;
+    for (int k = 0; k < 8; k++) {
+        int next = (k + 1) % 8;
+        if (ring[k] == 0 && ring[next] == 1) crossings++;
+    }
+    return crossings;
 }
 
 // Walks one edge starting at node pixel (sx,sy), heading first into
@@ -140,6 +161,98 @@ int traceClosedLoop(uint8_t* compBin, int w, int h, Point* outPath, int maxPoint
     return 0;
 }
 
+// Shared by findRealJunctions()/findRealEndpoints(): clusters every kept
+// edge's two endpoint pixels into logical nodes (nearby hits within ~4px
+// are treated as the same physical point) and counts how many edge-ends
+// land in each cluster. A self-closing edge (closed loop) contributes
+// nothing - its "start" and "end" are the same seam pixel, not a real
+// node either endpoint- or junction-wise.
+static int buildEdgeNodeTable(Point* const edgePaths[], const int edgeLengths[], int edgeCount,
+                               int nodeX[], int nodeY[], int nodeHits[], int maxNodes)
+{
+    int nodeCount = 0;
+
+    for (int e = 0; e < edgeCount; e++)
+    {
+        if (edgeLengths[e] < 1) continue;
+
+        Point a = edgePaths[e][0];
+        Point b = edgePaths[e][edgeLengths[e] - 1];
+
+        if (a.x == b.x && a.y == b.y) continue;
+
+        Point ends[2] = { a, b };
+        for (int k = 0; k < 2; k++)
+        {
+            int found = -1;
+            for (int i = 0; i < nodeCount; i++) {
+                int dx = ends[k].x - nodeX[i];
+                int dy = ends[k].y - nodeY[i];
+                if (dx * dx + dy * dy <= 16) { found = i; break; }   // within ~4px - same node
+            }
+            if (found == -1 && nodeCount < maxNodes) {
+                nodeX[nodeCount] = ends[k].x;
+                nodeY[nodeCount] = ends[k].y;
+                nodeHits[nodeCount] = 0;
+                found = nodeCount++;
+            }
+            if (found != -1) nodeHits[found]++;
+        }
+    }
+
+    return nodeCount;
+}
+
+int findRealJunctions(Point* const edgePaths[], const int edgeLengths[], int edgeCount,
+                       int outX[], int outY[], int maxOut)
+{
+    if (edgeCount < 2) return 0;   // nothing can branch with only 0 or 1 edge
+
+    int nodeX[MAX_JUNCTION_NODES], nodeY[MAX_JUNCTION_NODES], nodeHits[MAX_JUNCTION_NODES];
+    int nodeCount = buildEdgeNodeTable(edgePaths, edgeLengths, edgeCount,
+                                        nodeX, nodeY, nodeHits, MAX_JUNCTION_NODES);
+
+    int written = 0;
+    for (int i = 0; i < nodeCount && written < maxOut; i++)
+    {
+        // A node touched by only 1 edge-end is a plain endpoint. Exactly 2
+        // can happen where a short spurious branch got filtered out
+        // elsewhere, leaving what looks like a pass-through - still not a
+        // real junction. 3 or more genuinely-kept edges meeting at one
+        // point is the real thing.
+        if (nodeHits[i] >= 3) {
+            outX[written] = nodeX[i];
+            outY[written] = nodeY[i];
+            written++;
+        }
+    }
+
+    return written;
+}
+
+int findRealEndpoints(Point* const edgePaths[], const int edgeLengths[], int edgeCount,
+                       int outX[], int outY[], int maxOut)
+{
+    if (edgeCount < 1) return 0;
+
+    int nodeX[MAX_JUNCTION_NODES], nodeY[MAX_JUNCTION_NODES], nodeHits[MAX_JUNCTION_NODES];
+    int nodeCount = buildEdgeNodeTable(edgePaths, edgeLengths, edgeCount,
+                                        nodeX, nodeY, nodeHits, MAX_JUNCTION_NODES);
+
+    int written = 0;
+    for (int i = 0; i < nodeCount && written < maxOut; i++)
+    {
+        // Exactly 1 edge touching this node - a real, single-sided end.
+        if (nodeHits[i] == 1) {
+            outX[written] = nodeX[i];
+            outY[written] = nodeY[i];
+            written++;
+        }
+    }
+
+    return written;
+}
+
 int traceComponentEdges(uint8_t* compBin, int w, int h,
                          Point* outPaths[], int outLengths[],
                          int maxEdges, int maxPointsPerPath)
@@ -199,9 +312,17 @@ int traceComponentEdges(uint8_t* compBin, int w, int h,
     }
 
     if (nodePixelsFound == 0 && edgeCount < maxEdges) {
-        // No endpoints or junctions anywhere - either one clean closed loop,
-        // or a stray speck too small to have a well-defined degree. Trace
-        // the ring starting from the first foreground pixel found.
+        // No endpoints or junctions anywhere - normally means a genuine
+        // closed loop, but can also happen for an OPEN curve whose real
+        // tip pixels got misclassified as pass-through (a stray thinning
+        // artifact right at the tip that isn't touching the tip's one
+        // real neighbor reads as two separate neighbor groups instead of
+        // one). Trace from the first foreground pixel found; if that walk
+        // doesn't actually close back on its own start, it wasn't a loop
+        // at all - the start pixel was really just a MID-POINT of an open
+        // curve - so also walk the other direction from there and stitch
+        // the two halves into one full tip-to-tip path instead of
+        // silently keeping only the half already traced.
         for (int y = 0; y < h; y++) {
             int done = 0;
             for (int x = 0; x < w; x++) {
@@ -209,12 +330,65 @@ int traceComponentEdges(uint8_t* compBin, int w, int h,
 
                 Point* buf = outPaths[edgeCount];
                 int n = walkLoop(compBin, w, h, x, y, buf, maxPointsPerPath);
+
+                int closesProperly = (n >= 3 && buf[0].x == buf[n - 1].x && buf[0].y == buf[n - 1].y);
+
+                if (!closesProperly && n >= 1)
+                {
+                    uint8_t* seen = (uint8_t*)calloc((size_t)w * h, 1);
+                    if (seen)
+                    {
+                        for (int i = 0; i < n; i++) seen[buf[i].y * w + buf[i].x] = 1;
+
+                        // Look for an unvisited neighbor of the ORIGINAL
+                        // start pixel - the other direction the first
+                        // walk didn't explore.
+                        int fx = -1, fy = -1;
+                        for (int k = 0; k < 8; k++) {
+                            int ox = x + NB[k].dx, oy = y + NB[k].dy;
+                            if (ox < 0 || ox >= w || oy < 0 || oy >= h) continue;
+                            if (!compBin[oy * w + ox]) continue;
+                            if (seen[oy * w + ox]) continue;
+                            fx = ox; fy = oy;
+                            break;
+                        }
+
+                        if (fx != -1)
+                        {
+                            Point* other = (Point*)malloc(sizeof(Point) * (size_t)maxPointsPerPath);
+                            Point* merged = other ? (Point*)malloc(sizeof(Point) * (size_t)maxPointsPerPath) : NULL;
+
+                            if (other && merged)
+                            {
+                                int otherN = walkEdge(compBin, seen, w, h, x, y, fx, fy, other, maxPointsPerPath);
+
+                                // Stitch: reversed `other` (skipping its
+                                // own duplicate leading (x,y) at index 0)
+                                // followed by the original walk.
+                                int m = 0;
+                                for (int i = otherN - 1; i >= 1 && m < maxPointsPerPath; i--)
+                                    merged[m++] = other[i];
+                                for (int i = 0; i < n && m < maxPointsPerPath; i++)
+                                    merged[m++] = buf[i];
+
+                                memcpy(buf, merged, sizeof(Point) * (size_t)m);
+                                n = m;
+                            }
+
+                            free(other);
+                            free(merged);
+                        }
+
+                        free(seen);
+                    }
+                }
+
                 if (n >= 3) {
                     outLengths[edgeCount] = n;
                     edgeCount++;
                 }
                 done = 1;
-                break;   // only one loop to find in this component
+                break;   // only one shape to find in this component
             }
             if (done) break;
         }

@@ -14,7 +14,7 @@ static void setColor(int active, float r, float g, float b)
         glColor3f(0.0f, 0.0f, 0.0f);
 }
 
-void drawCircle(Point c, float r)
+void drawCircle(PointF c, float r)
 {
     glBegin(GL_LINE_LOOP);
     for (float t = 0; t < 6.28318f; t += 0.05f)
@@ -29,10 +29,12 @@ void drawCircle(Point c, float r)
 
 // Draws a circular arc that passes through p0, p1, and p2 (p1 is the
 // "bulge" handle, same role it played as the bezier control point).
-void drawArc(Point p0, Point p1, Point p2)
+void drawArc(PointF p0, PointF p1, PointF p2)
 {
-    Circle_Semni circle = circumcircle(p0, p1, p2);
-	if (!circle.valid) {
+    CircleF circle = circumcircle(p0, p1, p2);
+
+    if (!circle.valid)
+    {
         // p0, p1, p2 are (nearly) collinear -- fall back to straight lines
         glBegin(GL_LINE_STRIP);
         glVertex2f(p0.x, p0.y);
@@ -84,7 +86,7 @@ void drawArc(Point p0, Point p1, Point p2)
     glEnd();
 }
 
-void drawHandle(Point p, int selected, float radius)
+void drawHandle(PointF p, int selected, float radius)
 {
     const int segments = 64;
 
@@ -139,12 +141,12 @@ void drawDashedHorizontalLine(float y, float viewportHalfWidth)
 
 void drawSemniBody(Semni b, RenderState* rs)
 {
-    Point center = getCenter(b);
+    PointF center = getCenter(b);
     float angle = b.angle;
 
-    Point headCenter = rotatePoint((Point){b.headX, b.y}, center, angle);
-    Point buttCenter = rotatePoint((Point){b.buttX, b.y}, center, angle);
-    Point inner = rotatePoint(b.innerCircle, center, angle);
+    PointF headCenter = rotatePoint((PointF){b.headX, b.y}, center, angle);
+    PointF buttCenter = rotatePoint((PointF){b.buttX, b.y}, center, angle);
+    PointF inner = rotatePoint(b.innerCircle, center, angle);
 
 	// ---- HEAD circle ----
     // sliders are gone now -- the resize handle's hover state takes over
@@ -177,22 +179,22 @@ void drawSemniBody(Semni b, RenderState* rs)
     // tangent point (on butt) all fall out of a closed-form solve. Done
     // in local (unrotated) space, then rotated into world space at the
     // end, same pattern used elsewhere for local-frame points.
-    Point headLocal = { b.headX, b.y };
-    Point buttLocal = { b.buttX, b.y };
-    Point bodyMidLocal = { (headLocal.x + buttLocal.x) * 0.5f, (headLocal.y + buttLocal.y) * 0.5f };
+    PointF headLocal = { b.headX, b.y };
+    PointF buttLocal = { b.buttX, b.y };
+    PointF bodyMidLocal = { (headLocal.x + buttLocal.x) * 0.5f, (headLocal.y + buttLocal.y) * 0.5f };
 
     Fillet seamArc1Fillet = filletFromAttachAngle(headLocal, b.headRadius, buttLocal, b.buttRadius, b.seamArc1Angle, MIN_ARC_R, MAX_ARC_R);
-    Point seamArc1HeadTangentLocal = circleEdge(headLocal, b.headRadius, b.seamArc1Angle); // exact, by definition of the attach angle
-    Point seamArc1ButtTangentLocal = internalTangentPoint(seamArc1Fillet.center, seamArc1Fillet.radius, buttLocal, b.buttRadius);
+    PointF seamArc1HeadTangentLocal = circleEdge(headLocal, b.headRadius, b.seamArc1Angle); // exact, by definition of the attach angle
+    PointF seamArc1ButtTangentLocal = internalTangentPoint(seamArc1Fillet.center, seamArc1Fillet.radius, buttLocal, b.buttRadius);
     // hint point for drawArc: the point on the fillet circle nearest the
     // body's midline, so it sweeps the near/visible arc instead of the
     // far side of a possibly-huge circle
-    Point seamArc1NearLocal = circleTowardPoint(seamArc1Fillet.center, seamArc1Fillet.radius, bodyMidLocal);
+    PointF seamArc1NearLocal = circleTowardPoint(seamArc1Fillet.center, seamArc1Fillet.radius, bodyMidLocal);
 
     Fillet seamArc2Fillet = filletFromAttachAngle(headLocal, b.headRadius, buttLocal, b.buttRadius, b.seamArc2Angle, MIN_ARC_R, MAX_ARC_R);
-    Point seamArc2HeadTangentLocal = circleEdge(headLocal, b.headRadius, b.seamArc2Angle);
-    Point seamArc2ButtTangentLocal = internalTangentPoint(seamArc2Fillet.center, seamArc2Fillet.radius, buttLocal, b.buttRadius);
-    Point seamArc2NearLocal = circleTowardPoint(seamArc2Fillet.center, seamArc2Fillet.radius, bodyMidLocal);
+    PointF seamArc2HeadTangentLocal = circleEdge(headLocal, b.headRadius, b.seamArc2Angle);
+    PointF seamArc2ButtTangentLocal = internalTangentPoint(seamArc2Fillet.center, seamArc2Fillet.radius, buttLocal, b.buttRadius);
+    PointF seamArc2NearLocal = circleTowardPoint(seamArc2Fillet.center, seamArc2Fillet.radius, bodyMidLocal);
 
     // seamArc1HeadTangentLocal/seamArc1NearLocal/seamArc1ButtTangentLocal
     // all sit exactly on the same known circle by construction, so
@@ -206,13 +208,13 @@ void drawSemniBody(Semni b, RenderState* rs)
     // cursor would turn blue even though the other is visibly moving too
     int seamActive = rs->draggingSeamArc1 || rs->draggingSeamArc2;
 
-    Point seamArc1P0 = rotatePoint(seamArc1HeadTangentLocal, center, angle);
-    Point seamArc1P1 = rotatePoint(seamArc1NearLocal, center, angle);
-    Point seamArc1P2 = rotatePoint(seamArc1ButtTangentLocal, center, angle);
+    PointF seamArc1P0 = rotatePoint(seamArc1HeadTangentLocal, center, angle);
+    PointF seamArc1P1 = rotatePoint(seamArc1NearLocal, center, angle);
+    PointF seamArc1P2 = rotatePoint(seamArc1ButtTangentLocal, center, angle);
 
-    Point seamArc2P0 = rotatePoint(seamArc2HeadTangentLocal, center, angle);
-    Point seamArc2P1 = rotatePoint(seamArc2NearLocal, center, angle);
-    Point seamArc2P2 = rotatePoint(seamArc2ButtTangentLocal, center, angle);
+    PointF seamArc2P0 = rotatePoint(seamArc2HeadTangentLocal, center, angle);
+    PointF seamArc2P1 = rotatePoint(seamArc2NearLocal, center, angle);
+    PointF seamArc2P2 = rotatePoint(seamArc2ButtTangentLocal, center, angle);
 
     setColor(seamActive, 0.2f, 0.4f, 1.0f);
     drawArc(seamArc1P0, seamArc1P1, seamArc1P2);
@@ -231,10 +233,10 @@ void drawSemniBody(Semni b, RenderState* rs)
 // touching the rest of the body.
 static void drawThigh(Semni b, RenderState* rs)
 {
-    Point center = getCenter(b);
+    PointF center = getCenter(b);
     float angle = b.angle;
 
-    Point kneeWorld = jointToWorld(b.kneeCircle, b.innerCircle, b.hipAngle, center, angle);
+    PointF kneeWorld = jointToWorld(b.kneeCircle, b.innerCircle, b.hipAngle, center, angle);
 
     // the whole thigh (knee circle + both connecting arcs) swings with the
     // hip, so hovering the hip handle WHILE HOLDING SHIFT previews that
@@ -269,12 +271,12 @@ static void drawThigh(Semni b, RenderState* rs)
     // out in the leg's own local (pre-hipAngle) frame, then rotated into
     // world space at the end, same pattern drawSemniBody uses for the
     // head/butt seams (which work in pre-body-angle local space)
-    Point axisMidLocal = { (b.innerCircle.x + b.kneeCircle.x) * 0.5f, (b.innerCircle.y + b.kneeCircle.y) * 0.5f };
+    PointF axisMidLocal = { (b.innerCircle.x + b.kneeCircle.x) * 0.5f, (b.innerCircle.y + b.kneeCircle.y) * 0.5f };
 
     Fillet thigh1Fillet = filletFromAttachAngle(b.innerCircle, b.innerRadius, b.kneeCircle, b.kneeRadius, b.thighArc1Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC_R);
-    Point thigh1InnerTangentLocal = circleEdge(b.innerCircle, b.innerRadius, b.thighArc1Angle);
-    Point thigh1KneeTangentLocal = internalTangentPoint(thigh1Fillet.center, thigh1Fillet.radius, b.kneeCircle, b.kneeRadius);
-    Point thigh1NearLocal = circleTowardPoint(thigh1Fillet.center, thigh1Fillet.radius, axisMidLocal);
+    PointF thigh1InnerTangentLocal = circleEdge(b.innerCircle, b.innerRadius, b.thighArc1Angle);
+    PointF thigh1KneeTangentLocal = internalTangentPoint(thigh1Fillet.center, thigh1Fillet.radius, b.kneeCircle, b.kneeRadius);
+    PointF thigh1NearLocal = circleTowardPoint(thigh1Fillet.center, thigh1Fillet.radius, axisMidLocal);
 
     // thighArc2Angle uses the concave construction (bulges inward instead
     // of outward -- see app.h's comment). The knee-side tangent point for
@@ -283,9 +285,9 @@ static void drawThigh(Semni b, RenderState* rs)
     // circles touch exactly on the line between their centers, which is
     // exactly what circleTowardPoint finds.
     Fillet thigh2Fillet = filletFromAttachAngleConcave(b.innerCircle, b.innerRadius, b.kneeCircle, b.kneeRadius, b.thighArc2Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC2_CONCAVE_R);
-    Point thigh2InnerTangentLocal = circleEdge(b.innerCircle, b.innerRadius, b.thighArc2Angle);
-    Point thigh2KneeTangentLocal = circleTowardPoint(thigh2Fillet.center, thigh2Fillet.radius, b.kneeCircle);
-    Point thigh2NearLocal = circleTowardPoint(thigh2Fillet.center, thigh2Fillet.radius, axisMidLocal);
+    PointF thigh2InnerTangentLocal = circleEdge(b.innerCircle, b.innerRadius, b.thighArc2Angle);
+    PointF thigh2KneeTangentLocal = circleTowardPoint(thigh2Fillet.center, thigh2Fillet.radius, b.kneeCircle);
+    PointF thigh2NearLocal = circleTowardPoint(thigh2Fillet.center, thigh2Fillet.radius, axisMidLocal);
 
     // dragging the knee circle also stretches/shrinks both thigh arcs
     // (they attach to kneeCircle, which just moved along the hip->knee
@@ -305,27 +307,27 @@ static void drawThigh(Semni b, RenderState* rs)
 
 static void drawThighHandles(Semni b, RenderState* rs)
 {
-    Point center = getCenter(b);
+    PointF center = getCenter(b);
     float angle = b.angle;
 
-    Point kneeWorld = jointToWorld(b.kneeCircle, b.innerCircle, b.hipAngle, center, angle);
+    PointF kneeWorld = jointToWorld(b.kneeCircle, b.innerCircle, b.hipAngle, center, angle);
 
     // thigh arc handles: pinned to the exact middle of the hip->knee axis
     // (circleAtAxisMid), same idea as the head/butt seam handles' use of
     // circleAtX -- except the axis here can point any direction, so the
     // generalized version is needed instead of pinning to a fixed X
-    Point axisMidLocal = { (b.innerCircle.x + b.kneeCircle.x) * 0.5f, (b.innerCircle.y + b.kneeCircle.y) * 0.5f };
+    PointF axisMidLocal = { (b.innerCircle.x + b.kneeCircle.x) * 0.5f, (b.innerCircle.y + b.kneeCircle.y) * 0.5f };
 
     Fillet thigh1Fillet = filletFromAttachAngle(b.innerCircle, b.innerRadius, b.kneeCircle, b.kneeRadius, b.thighArc1Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC_R);
-    Point thigh1NearLocal = circleTowardPoint(thigh1Fillet.center, thigh1Fillet.radius, axisMidLocal);
-    Point thigh1MidLocal = circleAtAxisMid(thigh1Fillet.center, thigh1Fillet.radius, b.innerCircle, b.kneeCircle, thigh1NearLocal);
+    PointF thigh1NearLocal = circleTowardPoint(thigh1Fillet.center, thigh1Fillet.radius, axisMidLocal);
+    PointF thigh1MidLocal = circleAtAxisMid(thigh1Fillet.center, thigh1Fillet.radius, b.innerCircle, b.kneeCircle, thigh1NearLocal);
 
     Fillet thigh2Fillet = filletFromAttachAngleConcave(b.innerCircle, b.innerRadius, b.kneeCircle, b.kneeRadius, b.thighArc2Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC2_CONCAVE_R);
-    Point thigh2NearLocal = circleTowardPoint(thigh2Fillet.center, thigh2Fillet.radius, axisMidLocal);
-    Point thigh2MidLocal = circleAtAxisMid(thigh2Fillet.center, thigh2Fillet.radius, b.innerCircle, b.kneeCircle, thigh2NearLocal);
+    PointF thigh2NearLocal = circleTowardPoint(thigh2Fillet.center, thigh2Fillet.radius, axisMidLocal);
+    PointF thigh2MidLocal = circleAtAxisMid(thigh2Fillet.center, thigh2Fillet.radius, b.innerCircle, b.kneeCircle, thigh2NearLocal);
 
-    Point thigh1World = jointToWorld(thigh1MidLocal, b.innerCircle, b.hipAngle, center, angle);
-    Point thigh2World = jointToWorld(thigh2MidLocal, b.innerCircle, b.hipAngle, center, angle);
+    PointF thigh1World = jointToWorld(thigh1MidLocal, b.innerCircle, b.hipAngle, center, angle);
+    PointF thigh2World = jointToWorld(thigh2MidLocal, b.innerCircle, b.hipAngle, center, angle);
 
     drawHandle(kneeWorld, rs->draggingKnee || rs->hoverKnee, KNEE_HANDLE_RADIUS);
     drawHandle(thigh1World, rs->draggingThigh1, THIGH_HANDLE_RADIUS);
@@ -342,10 +344,10 @@ static void drawThighHandles(Semni b, RenderState* rs)
 // knee handle swings the shin without touching the thigh, hip, or body.
 static void drawShin(Semni b, RenderState* rs)
 {
-    Point center = getCenter(b);
+    PointF center = getCenter(b);
     float angle = b.angle;
 
-    Point ankleWorld = nestedJointToWorld(b.ankleCircle, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle);
+    PointF ankleWorld = nestedJointToWorld(b.ankleCircle, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle);
 
     // the shin (ankle/foot circle + both connecting arcs) swings whenever
     // either the hip OR the knee rotates -- both of those rotations are
@@ -380,12 +382,12 @@ static void drawShin(Semni b, RenderState* rs)
     // worked out in the shin's own local (pre-kneeAngle) frame, then
     // carried through the nested knee->hip->body transforms at the end,
     // same pattern drawThigh uses for its pre-hipAngle local frame
-    Point axisMidLocal = { (b.kneeCircle.x + b.ankleCircle.x) * 0.5f, (b.kneeCircle.y + b.ankleCircle.y) * 0.5f };
+    PointF axisMidLocal = { (b.kneeCircle.x + b.ankleCircle.x) * 0.5f, (b.kneeCircle.y + b.ankleCircle.y) * 0.5f };
 
     Fillet shin1Fillet = filletFromAttachAngle(b.kneeCircle, b.kneeRadius, b.ankleCircle, b.ankleRadius, b.shinArc1Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC_R);
-    Point shin1KneeTangentLocal = circleEdge(b.kneeCircle, b.kneeRadius, b.shinArc1Angle);
-    Point shin1AnkleTangentLocal = internalTangentPoint(shin1Fillet.center, shin1Fillet.radius, b.ankleCircle, b.ankleRadius);
-    Point shin1NearLocal = circleTowardPoint(shin1Fillet.center, shin1Fillet.radius, axisMidLocal);
+    PointF shin1KneeTangentLocal = circleEdge(b.kneeCircle, b.kneeRadius, b.shinArc1Angle);
+    PointF shin1AnkleTangentLocal = internalTangentPoint(shin1Fillet.center, shin1Fillet.radius, b.ankleCircle, b.ankleRadius);
+    PointF shin1NearLocal = circleTowardPoint(shin1Fillet.center, shin1Fillet.radius, axisMidLocal);
 
     // shinArc2Angle uses the concave construction (bulges inward instead
     // of outward -- see app.h's comment), same as thighArc2Angle. The
@@ -395,9 +397,9 @@ static void drawShin(Semni b, RenderState* rs)
     // the line between their centers, which is exactly what
     // circleTowardPoint finds.
     Fillet shin2Fillet = filletFromAttachAngleConcave(b.kneeCircle, b.kneeRadius, b.ankleCircle, b.ankleRadius, b.shinArc2Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC2_CONCAVE_R);
-    Point shin2KneeTangentLocal = circleEdge(b.kneeCircle, b.kneeRadius, b.shinArc2Angle);
-    Point shin2AnkleTangentLocal = circleTowardPoint(shin2Fillet.center, shin2Fillet.radius, b.ankleCircle);
-    Point shin2NearLocal = circleTowardPoint(shin2Fillet.center, shin2Fillet.radius, axisMidLocal);
+    PointF shin2KneeTangentLocal = circleEdge(b.kneeCircle, b.kneeRadius, b.shinArc2Angle);
+    PointF shin2AnkleTangentLocal = circleTowardPoint(shin2Fillet.center, shin2Fillet.radius, b.ankleCircle);
+    PointF shin2NearLocal = circleTowardPoint(shin2Fillet.center, shin2Fillet.radius, axisMidLocal);
 
     // dragging the ankle circle also stretches/shrinks both shin arcs
     // (they attach to ankleCircle, which just moved along the knee->ankle
@@ -417,25 +419,25 @@ static void drawShin(Semni b, RenderState* rs)
 
 static void drawShinHandles(Semni b, RenderState* rs)
 {
-    Point center = getCenter(b);
+    PointF center = getCenter(b);
     float angle = b.angle;
 
-    Point ankleWorld = nestedJointToWorld(b.ankleCircle, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle);
+    PointF ankleWorld = nestedJointToWorld(b.ankleCircle, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle);
 
     // shin arc handles: pinned to the exact middle of the knee->ankle axis
     // (circleAtAxisMid), same idea as the thigh handles' use of it
-    Point axisMidLocal = { (b.kneeCircle.x + b.ankleCircle.x) * 0.5f, (b.kneeCircle.y + b.ankleCircle.y) * 0.5f };
+    PointF axisMidLocal = { (b.kneeCircle.x + b.ankleCircle.x) * 0.5f, (b.kneeCircle.y + b.ankleCircle.y) * 0.5f };
 
     Fillet shin1Fillet = filletFromAttachAngle(b.kneeCircle, b.kneeRadius, b.ankleCircle, b.ankleRadius, b.shinArc1Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC_R);
-    Point shin1NearLocal = circleTowardPoint(shin1Fillet.center, shin1Fillet.radius, axisMidLocal);
-    Point shin1MidLocal = circleAtAxisMid(shin1Fillet.center, shin1Fillet.radius, b.kneeCircle, b.ankleCircle, shin1NearLocal);
+    PointF shin1NearLocal = circleTowardPoint(shin1Fillet.center, shin1Fillet.radius, axisMidLocal);
+    PointF shin1MidLocal = circleAtAxisMid(shin1Fillet.center, shin1Fillet.radius, b.kneeCircle, b.ankleCircle, shin1NearLocal);
 
     Fillet shin2Fillet = filletFromAttachAngleConcave(b.kneeCircle, b.kneeRadius, b.ankleCircle, b.ankleRadius, b.shinArc2Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC2_CONCAVE_R);
-    Point shin2NearLocal = circleTowardPoint(shin2Fillet.center, shin2Fillet.radius, axisMidLocal);
-    Point shin2MidLocal = circleAtAxisMid(shin2Fillet.center, shin2Fillet.radius, b.kneeCircle, b.ankleCircle, shin2NearLocal);
+    PointF shin2NearLocal = circleTowardPoint(shin2Fillet.center, shin2Fillet.radius, axisMidLocal);
+    PointF shin2MidLocal = circleAtAxisMid(shin2Fillet.center, shin2Fillet.radius, b.kneeCircle, b.ankleCircle, shin2NearLocal);
 
-    Point shin1World = nestedJointToWorld(shin1MidLocal, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle);
-    Point shin2World = nestedJointToWorld(shin2MidLocal, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle);
+    PointF shin1World = nestedJointToWorld(shin1MidLocal, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle);
+    PointF shin2World = nestedJointToWorld(shin2MidLocal, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle);
 
     drawHandle(ankleWorld, rs->draggingAnkle || rs->hoverAnkle, ANKLE_HANDLE_RADIUS);
     drawHandle(shin1World, rs->draggingShin1, SHIN_HANDLE_RADIUS);
@@ -444,12 +446,12 @@ static void drawShinHandles(Semni b, RenderState* rs)
 
 void drawSemniHandles(Semni b, RenderState* rs)
 {
-    Point center = getCenter(b);
+    PointF center = getCenter(b);
     float angle = b.angle;
 
-    Point inner        = rotatePoint(b.innerCircle, center, angle);
-    Point headHandle   = rotatePoint((Point){b.headX, b.y}, center, angle);
-    Point buttHandle    = rotatePoint((Point){b.buttX, b.y}, center, angle);
+    PointF inner        = rotatePoint(b.innerCircle, center, angle);
+    PointF headHandle   = rotatePoint((PointF){b.headX, b.y}, center, angle);
+    PointF buttHandle    = rotatePoint((PointF){b.buttX, b.y}, center, angle);
 
     // seam attach handles: pinned to the exact midpoint between head and
     // butt on X, with Y solved from the arc's actual fillet circle at
@@ -457,21 +459,21 @@ void drawSemniHandles(Semni b, RenderState* rs)
     // visible curve AND in the true middle -- filletBulgePoint alone only
     // gives the closest point to the midline, which is usually close but
     // not exactly at bodyMid.x
-    Point headLocal = { b.headX, b.y };
-    Point buttLocal = { b.buttX, b.y };
-    Point bodyMidLocal = { (headLocal.x + buttLocal.x) * 0.5f, (headLocal.y + buttLocal.y) * 0.5f };
+    PointF headLocal = { b.headX, b.y };
+    PointF buttLocal = { b.buttX, b.y };
+    PointF bodyMidLocal = { (headLocal.x + buttLocal.x) * 0.5f, (headLocal.y + buttLocal.y) * 0.5f };
 
     Fillet seamArc1Fillet = filletFromAttachAngle(headLocal, b.headRadius, buttLocal, b.buttRadius, b.seamArc1Angle, MIN_ARC_R, MAX_ARC_R);
     Fillet seamArc2Fillet = filletFromAttachAngle(headLocal, b.headRadius, buttLocal, b.buttRadius, b.seamArc2Angle, MIN_ARC_R, MAX_ARC_R);
 
-    Point seamArc1NearLocal = circleTowardPoint(seamArc1Fillet.center, seamArc1Fillet.radius, bodyMidLocal);
-    Point seamArc2NearLocal = circleTowardPoint(seamArc2Fillet.center, seamArc2Fillet.radius, bodyMidLocal);
+    PointF seamArc1NearLocal = circleTowardPoint(seamArc1Fillet.center, seamArc1Fillet.radius, bodyMidLocal);
+    PointF seamArc2NearLocal = circleTowardPoint(seamArc2Fillet.center, seamArc2Fillet.radius, bodyMidLocal);
 
-    Point seamArc1MidLocal = circleAtX(seamArc1Fillet.center, seamArc1Fillet.radius, bodyMidLocal.x, seamArc1NearLocal);
-    Point seamArc2MidLocal = circleAtX(seamArc2Fillet.center, seamArc2Fillet.radius, bodyMidLocal.x, seamArc2NearLocal);
+    PointF seamArc1MidLocal = circleAtX(seamArc1Fillet.center, seamArc1Fillet.radius, bodyMidLocal.x, seamArc1NearLocal);
+    PointF seamArc2MidLocal = circleAtX(seamArc2Fillet.center, seamArc2Fillet.radius, bodyMidLocal.x, seamArc2NearLocal);
 
-    Point seamArc1Handle = rotatePoint(seamArc1MidLocal, center, angle);
-    Point seamArc2Handle = rotatePoint(seamArc2MidLocal, center, angle);
+    PointF seamArc1Handle = rotatePoint(seamArc1MidLocal, center, angle);
+    PointF seamArc2Handle = rotatePoint(seamArc2MidLocal, center, angle);
 
     drawHandle(seamArc1Handle, rs->draggingSeamArc1, ARC_HANDLE_RADIUS);
     drawHandle(seamArc2Handle, rs->draggingSeamArc2, ARC_HANDLE_RADIUS);

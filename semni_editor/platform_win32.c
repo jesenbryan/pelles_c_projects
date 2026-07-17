@@ -1,4 +1,4 @@
-﻿#define UNICODE
+#define UNICODE
 #define _UNICODE
 
 #include <windows.h>
@@ -34,7 +34,7 @@ void platformInitCommonControls(void)
     InitCommonControlsEx(&icc);
 }
 
-HWND platformCreateMainWindow(HINSTANCE hInst, int nShowCmd, WNDPROC wndProc)
+HWND platformCreateMainWindow(HINSTANCE hInst, int nShowCmd, WNDPROC wndProc, HMENU hMenu)
 {
     WNDCLASS wc = {0};
     wc.lpfnWndProc = wndProc;
@@ -54,7 +54,7 @@ HWND platformCreateMainWindow(HINSTANCE hInst, int nShowCmd, WNDPROC wndProc)
         WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
         CW_USEDEFAULT, CW_USEDEFAULT,
         800, 600,
-        NULL, NULL,
+        NULL, hMenu,
         hInst, NULL
     );
 

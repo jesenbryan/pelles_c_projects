@@ -1,4 +1,4 @@
-﻿#include "ui.h"
+#include "ui.h"
 #include "pipeline.h"      // NEW
 #include "canvas_bridge.h" // NEW: for canvasToImage()
 #include "bmp_ui.h"        // NEW: for saveBMP_UI() and BMP_RGB
@@ -76,13 +76,15 @@ LRESULT CALLBACK WndProcUI(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         hSlider   = CreateWindowEx(0, TRACKBAR_CLASS, L"", WS_CHILD | WS_VISIBLE | TBS_AUTOTICKS | TBS_HORZ, 20, 80, 300, 40, hWnd, NULL, GetModuleHandle(NULL), NULL);
         hColorBtn = CreateWindowEx(0, L"BUTTON", L"Color", WS_CHILD | WS_VISIBLE, 20, 130, 300, 30, hWnd, (HMENU)ID_COLOR, GetModuleHandle(NULL), NULL);
 		
-		hTraceBtn = CreateWindowEx(0, L"BUTTON", L"Trace", WS_CHILD | WS_VISIBLE,
+		// BS_AUTOCHECKBOX | BS_PUSHLIKE: a checkbox drawn/behaving like a button
+		// that stays visually pressed while checked - gives "Trace" a native
+		// on/off toggle look instead of a plain momentary click.
+		hTraceBtn = CreateWindowEx(0, L"BUTTON", L"Trace",
+                            WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX | BS_PUSHLIKE,
                             20, 170, 300, 30, hWnd, (HMENU)ID_TRACE,
                             GetModuleHandle(NULL), NULL);
 
-		// BS_AUTOCHECKBOX | BS_PUSHLIKE: a checkbox drawn/behaving like a button
-		// that stays visually pressed while checked - gives "View Segments" a
-		// native on/off toggle look instead of a plain momentary click.
+		// Same treatment for "View Segments".
 		hViewSegBtn = CreateWindowEx(0, L"BUTTON", L"View Segments",
 		                              WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX | BS_PUSHLIKE,
 		                              20, 250, 300, 30, hWnd, (HMENU)ID_VIEW_SEGMENTS,
@@ -124,6 +126,7 @@ LRESULT CALLBACK WndProcUI(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         if (LOWORD(wParam) == ID_CLEAR)
 		{
 		    ResetCanvas();
+		    SendMessage(hTraceBtn, BM_SETCHECK, BST_UNCHECKED, 0);
 		    SendMessage(hViewSegBtn, BM_SETCHECK, BST_UNCHECKED, 0);
 		    SendMessage(hComparisonBtn, BM_SETCHECK, BST_UNCHECKED, 0);
 		    if (hWndGL) InvalidateRect(hWndGL, NULL, TRUE);
@@ -141,7 +144,38 @@ LRESULT CALLBACK WndProcUI(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         }
 		else if (LOWORD(wParam) == ID_TRACE)
 		{
-		    RunTracePipeline();
+		    // BS_AUTOCHECKBOX already flipped its own check state before this
+		    // notification fires, so read it back rather than tracking a
+		    // separate bool - the button IS the toggle state.
+		    BOOL nowChecked = (SendMessage(hTraceBtn, BM_GETCHECK, 0, 0) == BST_CHECKED);
+
+		    if (nowChecked)
+		    {
+		        RunTracePipeline();
+
+		        // Trace has to be self-sufficient: checking it alone should show
+		        // a visible result immediately, not silently compute segments
+		        // that stay invisible until View Segments is separately checked.
+		        // Sync that checkbox too, so its displayed state matches reality.
+		        if (canvas.segmentResultCount > 0)
+		        {
+		            canvas.showSegments = TRUE;
+		            SendMessage(hViewSegBtn, BM_SETCHECK, BST_CHECKED, 0);
+		        }
+		        else
+		        {
+		            // Nothing traceable - don't leave the button stuck checked.
+		            SendMessage(hTraceBtn, BM_SETCHECK, BST_UNCHECKED, 0);
+		        }
+		    }
+		    else
+		    {
+		        // Unchecking Trace hides the overlay without discarding the
+		        // traced result - same effect as unchecking View Segments -
+		        // so re-checking either box brings it back instantly.
+		        canvas.showSegments = FALSE;
+		        SendMessage(hViewSegBtn, BM_SETCHECK, BST_UNCHECKED, 0);
+		    }
 		    if (hWndGL) InvalidateRect(hWndGL, NULL, FALSE);
 		}
 		else if (LOWORD(wParam) == ID_VIEW_SEGMENTS)
@@ -151,18 +185,31 @@ LRESULT CALLBACK WndProcUI(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		    // separate bool - the button IS the toggle state.
 		    BOOL nowChecked = (SendMessage(hViewSegBtn, BM_GETCHECK, 0, 0) == BST_CHECKED);
 
-		    if (nowChecked)
+		    if (nowChecked && canvas.segmentResultCount == 0)
 		    {
-		        RunPendingUploadTrace();   // trace/segment the uploaded BMP on demand,
-		                                   // no-op if already traced or nothing was uploaded
+		        // Nothing traced yet - trace on demand (canvas drawing takes
+		        // priority, falls back to a pending uploaded BMP) so View
+		        // Segments works standalone without requiring Trace first.
+		        RunTracePipeline();
 		    }
 		    canvas.showSegments = nowChecked;
+		    // Keep the Trace toggle mirroring visibility so both buttons
+		    // always agree on whether the overlay is showing.
+		    SendMessage(hTraceBtn, BM_SETCHECK, nowChecked ? BST_CHECKED : BST_UNCHECKED, 0);
 		    if (hWndGL) InvalidateRect(hWndGL, NULL, FALSE);
 		}
 		else if (LOWORD(wParam) == ID_COMPARISON)
 		{
 		    // Toggle between showing original strokes vs. reconstructed arc line
 		    BOOL nowChecked = (SendMessage(hComparisonBtn, BM_GETCHECK, 0, 0) == BST_CHECKED);
+
+		    if (nowChecked && canvas.segmentResultCount == 0)
+		    {
+		        // Same as View Segments: trace on demand so Comparison Mode
+		        // is also usable on its own, without needing Trace or View
+		        // Segments pressed first.
+		        RunTracePipeline();
+		    }
 		    canvas.comparisonMode = nowChecked;
 		    if (hWndGL) InvalidateRect(hWndGL, NULL, FALSE);
 		}
@@ -173,4 +220,41 @@ LRESULT CALLBACK WndProcUI(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         return 0;
     }
     return DefWindowProc(hWnd, msg, wParam, lParam);
+}
+
+void createUIWindow(HINSTANCE hInst, HWND hWndParent)
+{
+    WNDCLASS wc = {0};
+    wc.lpfnWndProc = WndProcUI;
+    wc.hInstance = hInst;
+    wc.lpszClassName = L"SemniUIPanel";
+    wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
+    wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+
+    RegisterClass(&wc);
+
+    // WS_POPUP (no title bar/border -- a floating tool panel, not a real
+    // top-level window) + WS_EX_LAYERED (canvas.c's WM_TIMER fades it in/
+    // out via SetLayeredWindowAttributes) + WS_EX_TOOLWINDOW (keeps it off
+    // the taskbar/alt-tab, matching what a hover-reveal panel should be).
+    // Owned by hWndParent (not a child of it -- it needs to float outside
+    // the parent's client rect and receive its own WM_COMMAND from its
+    // buttons) so it stays above and closes alongside the main window.
+    //
+    // Starts with WS_VISIBLE omitted and alpha 0: canvas.c's WM_TIMER
+    // hot-zone check is what actually reveals it (see uiShown/uiAlpha),
+    // this just needs to exist first.
+    HWND hwnd = CreateWindowEx(
+        WS_EX_LAYERED | WS_EX_TOOLWINDOW,
+        L"SemniUIPanel",
+        L"",
+        WS_POPUP,
+        0, 0, 220, 100,
+        hWndParent, NULL,
+        hInst, NULL
+    );
+
+    SetLayeredWindowAttributes(hwnd, 0, 0, LWA_ALPHA);
+
+    hWndUI = hwnd;
 }

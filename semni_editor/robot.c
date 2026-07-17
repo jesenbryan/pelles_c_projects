@@ -2,9 +2,9 @@
 
 #include "robot.h"
 
-Point getCenter(Semni b)
+PointF getCenter(Semni b)
 {
-    Point c;
+    PointF c;
     c.x = (b.buttX + b.headX) * 0.5f;
     c.y = b.y;
     return c;

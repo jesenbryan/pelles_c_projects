@@ -68,6 +68,24 @@ void setEndpointMarkers(int imgW, int imgH, int sx, int sy, int ex, int ey, BOOL
     if (hWndGL) InvalidateRect(hWndGL, NULL, FALSE);
 }
 
+void addBranchMarker(int imgW, int imgH, int px, int py, BOOL stretched)
+{
+    if (branchMarkerCount >= MAX_BRANCH_MARKERS) return;
+
+    float wx, wy;
+    if (stretched) {
+        pixelToWorldStretched((float)px, (float)py, imgW, imgH, &wx, &wy);
+    } else {
+        pixelToWorldExact((float)px, (float)py, imgW, imgH, &wx, &wy);
+    }
+
+    branchMarkersWorld[branchMarkerCount * 2]     = wx;
+    branchMarkersWorld[branchMarkerCount * 2 + 1] = wy;
+    branchMarkerCount++;
+
+    if (hWndGL) InvalidateRect(hWndGL, NULL, FALSE);
+}
+
 static void setBinPixel(Image* img, int x, int y)
 {
     if (x < 0 || y < 0 || x >= img->width || y >= img->height) return;
@@ -121,9 +139,12 @@ static void stampSegment(Image* img, float x0, float y0, float x1, float y1, flo
 
 // Sub-pixel arc sample point - deliberately NOT the int-based Point type used
 // for traced pixel paths. See note below.
-typedef struct { float x, y; } PointF;
+// Named SampleF rather than PointF to avoid colliding with geometry.h's
+// PointF (the unrelated robot-joint float point type, now merged into
+// geometry.h alongside this pixel-domain code).
+typedef struct { float x, y; } SampleF;
 
-static void sampleArcPoints(ArcSegment* seg, PointF* outPts, int* outCount, int maxOut)
+static void sampleArcPoints(ArcSegment* seg, SampleF* outPts, int* outCount, int maxOut)
 {
     Circle c = seg->circle;
 
@@ -178,7 +199,7 @@ void setSegmentOverlay(ArcSegment* segments, int count, int imgW, int imgH, BOOL
 
     for (int s = 0; s < count && s < MAX_ARC_SEGMENTS; s++)
     {
-        PointF arcPts[24];
+        SampleF arcPts[24];
         int arcCount = 0;
         sampleArcPoints(&segments[s], arcPts, &arcCount, 24);
 

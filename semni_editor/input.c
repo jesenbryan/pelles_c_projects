@@ -26,8 +26,8 @@
 // that's already there instead of one freshly read off the mouse.
 static void adjustHeadButtArcs(AppState* app)
 {
-    Point headLocal = { app->robotScene.robot.headX, app->robotScene.robot.y };
-    Point buttLocal = { app->robotScene.robot.buttX, app->robotScene.robot.y };
+    PointF headLocal = { app->robotScene.robot.headX, app->robotScene.robot.y };
+    PointF buttLocal = { app->robotScene.robot.buttX, app->robotScene.robot.y };
 
     SafeAngleRange range = filletSafeAngleRange(headLocal, app->robotScene.robot.headRadius, buttLocal, app->robotScene.robot.buttRadius, MAX_ARC_R);
 
@@ -59,13 +59,10 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
     {
         case WM_LBUTTONDOWN:
         {
-            float mx = (float)LOWORD(lParam);
-            float my = (float)HIWORD(lParam);
+            int mx = LOWORD(lParam);
+            int my = HIWORD(lParam);
 
-            float glX, glY;
-			screenToGL(hwnd, mx, my, &glX, &glY);
-			app->mouseGL.x = glX;
-			app->mouseGL.y = glY;
+            screenToGL(hwnd, mx, my, &app->mouseGL.x, &app->mouseGL.y);
 
             app->draggingSeamArc1 = 0;
             app->draggingSeamArc2 = 0;
@@ -77,52 +74,52 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             app->draggingShin1 = 0;
             app->draggingShin2 = 0;
 
-            Point center = getCenter(app->robotScene.robot);
+            PointF center = getCenter(app->robotScene.robot);
 
-            Point mouse = app->mouseGL;
+            PointF mouse = app->mouseGL;
 
             // seam attach handles: pinned to the exact midpoint between
             // head and butt on X, with Y solved from the arc's actual
             // fillet circle at that exact X (circleAtX) -- same
             // construction as drawSemniHandles, so the hit-test matches
             // exactly where the handle is actually drawn
-            Point headLocal = { app->robotScene.robot.headX, app->robotScene.robot.y };
-            Point buttLocal = { app->robotScene.robot.buttX, app->robotScene.robot.y };
-            Point bodyMidLocal = { (headLocal.x + buttLocal.x) * 0.5f, (headLocal.y + buttLocal.y) * 0.5f };
+            PointF headLocal = { app->robotScene.robot.headX, app->robotScene.robot.y };
+            PointF buttLocal = { app->robotScene.robot.buttX, app->robotScene.robot.y };
+            PointF bodyMidLocal = { (headLocal.x + buttLocal.x) * 0.5f, (headLocal.y + buttLocal.y) * 0.5f };
 
             Fillet seamArc1Fillet = filletFromAttachAngle(headLocal, app->robotScene.robot.headRadius, buttLocal, app->robotScene.robot.buttRadius, app->robotScene.robot.seamArc1Angle, MIN_ARC_R, MAX_ARC_R);
             Fillet seamArc2Fillet = filletFromAttachAngle(headLocal, app->robotScene.robot.headRadius, buttLocal, app->robotScene.robot.buttRadius, app->robotScene.robot.seamArc2Angle, MIN_ARC_R, MAX_ARC_R);
 
-            Point seamArc1NearLocal = circleTowardPoint(seamArc1Fillet.center, seamArc1Fillet.radius, bodyMidLocal);
-            Point seamArc2NearLocal = circleTowardPoint(seamArc2Fillet.center, seamArc2Fillet.radius, bodyMidLocal);
+            PointF seamArc1NearLocal = circleTowardPoint(seamArc1Fillet.center, seamArc1Fillet.radius, bodyMidLocal);
+            PointF seamArc2NearLocal = circleTowardPoint(seamArc2Fillet.center, seamArc2Fillet.radius, bodyMidLocal);
 
-            Point seamArc1MidLocal = circleAtX(seamArc1Fillet.center, seamArc1Fillet.radius, bodyMidLocal.x, seamArc1NearLocal);
-            Point seamArc2MidLocal = circleAtX(seamArc2Fillet.center, seamArc2Fillet.radius, bodyMidLocal.x, seamArc2NearLocal);
+            PointF seamArc1MidLocal = circleAtX(seamArc1Fillet.center, seamArc1Fillet.radius, bodyMidLocal.x, seamArc1NearLocal);
+            PointF seamArc2MidLocal = circleAtX(seamArc2Fillet.center, seamArc2Fillet.radius, bodyMidLocal.x, seamArc2NearLocal);
 
-            Point seamArc1HandleWorld = rotatePoint(seamArc1MidLocal, center, app->robotScene.robot.angle);
-            Point seamArc2HandleWorld = rotatePoint(seamArc2MidLocal, center, app->robotScene.robot.angle);
+            PointF seamArc1HandleWorld = rotatePoint(seamArc1MidLocal, center, app->robotScene.robot.angle);
+            PointF seamArc2HandleWorld = rotatePoint(seamArc2MidLocal, center, app->robotScene.robot.angle);
 
-            Point innerWorld = rotatePoint(app->robotScene.robot.innerCircle, center, app->robotScene.robot.angle);
+            PointF innerWorld = rotatePoint(app->robotScene.robot.innerCircle, center, app->robotScene.robot.angle);
 
             // the leg chain (knee, thigh handles, ankle, shin handles) lives
             // in a frame that's additionally rotated by hipAngle around
             // innerCircle, independent of the whole-body angle
-            Point hipPivot = app->robotScene.robot.innerCircle;
+            PointF hipPivot = app->robotScene.robot.innerCircle;
             float hipAngle = app->robotScene.robot.hipAngle;
 
-            Point kneeWorld = jointToWorld(app->robotScene.robot.kneeCircle, hipPivot, hipAngle, center, app->robotScene.robot.angle);
+            PointF kneeWorld = jointToWorld(app->robotScene.robot.kneeCircle, hipPivot, hipAngle, center, app->robotScene.robot.angle);
 
             // thigh arc handles: same tangent-fillet + circleAtAxisMid
             // construction used in renderer.c's drawThighHandles, so the
             // hit-test matches exactly where the handle is actually drawn
-            Point thighAxisMidLocal = { (app->robotScene.robot.innerCircle.x + app->robotScene.robot.kneeCircle.x) * 0.5f,
+            PointF thighAxisMidLocal = { (app->robotScene.robot.innerCircle.x + app->robotScene.robot.kneeCircle.x) * 0.5f,
                                          (app->robotScene.robot.innerCircle.y + app->robotScene.robot.kneeCircle.y) * 0.5f };
 
             Fillet thigh1Fillet = filletFromAttachAngle(app->robotScene.robot.innerCircle, app->robotScene.robot.innerRadius,
                                                          app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeRadius,
                                                          app->robotScene.robot.thighArc1Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC_R);
-            Point thigh1NearLocal = circleTowardPoint(thigh1Fillet.center, thigh1Fillet.radius, thighAxisMidLocal);
-            Point thigh1MidLocal = circleAtAxisMid(thigh1Fillet.center, thigh1Fillet.radius, app->robotScene.robot.innerCircle, app->robotScene.robot.kneeCircle, thigh1NearLocal);
+            PointF thigh1NearLocal = circleTowardPoint(thigh1Fillet.center, thigh1Fillet.radius, thighAxisMidLocal);
+            PointF thigh1MidLocal = circleAtAxisMid(thigh1Fillet.center, thigh1Fillet.radius, app->robotScene.robot.innerCircle, app->robotScene.robot.kneeCircle, thigh1NearLocal);
 
             // thighArc2Angle uses the concave construction (bulges inward
             // instead of outward) -- see app.h's comment. circleTowardPoint
@@ -132,39 +129,39 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             Fillet thigh2Fillet = filletFromAttachAngleConcave(app->robotScene.robot.innerCircle, app->robotScene.robot.innerRadius,
                                                                 app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeRadius,
                                                                 app->robotScene.robot.thighArc2Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC2_CONCAVE_R);
-            Point thigh2NearLocal = circleTowardPoint(thigh2Fillet.center, thigh2Fillet.radius, thighAxisMidLocal);
-            Point thigh2MidLocal = circleAtAxisMid(thigh2Fillet.center, thigh2Fillet.radius, app->robotScene.robot.innerCircle, app->robotScene.robot.kneeCircle, thigh2NearLocal);
+            PointF thigh2NearLocal = circleTowardPoint(thigh2Fillet.center, thigh2Fillet.radius, thighAxisMidLocal);
+            PointF thigh2MidLocal = circleAtAxisMid(thigh2Fillet.center, thigh2Fillet.radius, app->robotScene.robot.innerCircle, app->robotScene.robot.kneeCircle, thigh2NearLocal);
 
-            Point thigh1World = jointToWorld(thigh1MidLocal, hipPivot, hipAngle, center, app->robotScene.robot.angle);
-            Point thigh2World = jointToWorld(thigh2MidLocal, hipPivot, hipAngle, center, app->robotScene.robot.angle);
+            PointF thigh1World = jointToWorld(thigh1MidLocal, hipPivot, hipAngle, center, app->robotScene.robot.angle);
+            PointF thigh2World = jointToWorld(thigh2MidLocal, hipPivot, hipAngle, center, app->robotScene.robot.angle);
 
             // same leg-local frame the drag math in WM_MOUSEMOVE uses --
             // computed once here so both thigh handles' click-capture can
             // read the mouse's perpendicular-to-axis position at the
             // moment the drag starts
-            Point legLocalMouseDown = inverseRotate(inverseRotate(mouse, center, app->robotScene.robot.angle), hipPivot, hipAngle);
+            PointF legLocalMouseDown = inverseRotate(inverseRotate(mouse, center, app->robotScene.robot.angle), hipPivot, hipAngle);
 
             // the shin (ankle, shin handles) hangs off the knee, which
             // itself hangs off the hip -- two nested joint rotations
             // before it lands in world space
-            Point kneePivot = app->robotScene.robot.kneeCircle;
+            PointF kneePivot = app->robotScene.robot.kneeCircle;
             float kneeAngle = app->robotScene.robot.kneeAngle;
 
-            Point ankleWorld = nestedJointToWorld(app->robotScene.robot.ankleCircle, kneePivot, kneeAngle, hipPivot, hipAngle, center, app->robotScene.robot.angle);
+            PointF ankleWorld = nestedJointToWorld(app->robotScene.robot.ankleCircle, kneePivot, kneeAngle, hipPivot, hipAngle, center, app->robotScene.robot.angle);
 
             // shin arc handles: same tangent-fillet + circleAtAxisMid
             // construction used for the thigh handles above (and in
             // renderer.c's drawShinHandles), just between kneeCircle and
             // ankleCircle instead of innerCircle and kneeCircle, so the
             // hit-test matches exactly where the handle is actually drawn
-            Point shinAxisMidLocal = { (app->robotScene.robot.kneeCircle.x + app->robotScene.robot.ankleCircle.x) * 0.5f,
+            PointF shinAxisMidLocal = { (app->robotScene.robot.kneeCircle.x + app->robotScene.robot.ankleCircle.x) * 0.5f,
                                         (app->robotScene.robot.kneeCircle.y + app->robotScene.robot.ankleCircle.y) * 0.5f };
 
             Fillet shin1Fillet = filletFromAttachAngle(app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeRadius,
                                                         app->robotScene.robot.ankleCircle, app->robotScene.robot.ankleRadius,
                                                         app->robotScene.robot.shinArc1Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC_R);
-            Point shin1NearLocal = circleTowardPoint(shin1Fillet.center, shin1Fillet.radius, shinAxisMidLocal);
-            Point shin1MidLocal = circleAtAxisMid(shin1Fillet.center, shin1Fillet.radius, app->robotScene.robot.kneeCircle, app->robotScene.robot.ankleCircle, shin1NearLocal);
+            PointF shin1NearLocal = circleTowardPoint(shin1Fillet.center, shin1Fillet.radius, shinAxisMidLocal);
+            PointF shin1MidLocal = circleAtAxisMid(shin1Fillet.center, shin1Fillet.radius, app->robotScene.robot.kneeCircle, app->robotScene.robot.ankleCircle, shin1NearLocal);
 
             // shinArc2Angle uses the concave construction (bulges inward
             // instead of outward -- see app.h's comment), same as
@@ -172,17 +169,17 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             Fillet shin2Fillet = filletFromAttachAngleConcave(app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeRadius,
                                                                app->robotScene.robot.ankleCircle, app->robotScene.robot.ankleRadius,
                                                                app->robotScene.robot.shinArc2Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC2_CONCAVE_R);
-            Point shin2NearLocal = circleTowardPoint(shin2Fillet.center, shin2Fillet.radius, shinAxisMidLocal);
-            Point shin2MidLocal = circleAtAxisMid(shin2Fillet.center, shin2Fillet.radius, app->robotScene.robot.kneeCircle, app->robotScene.robot.ankleCircle, shin2NearLocal);
+            PointF shin2NearLocal = circleTowardPoint(shin2Fillet.center, shin2Fillet.radius, shinAxisMidLocal);
+            PointF shin2MidLocal = circleAtAxisMid(shin2Fillet.center, shin2Fillet.radius, app->robotScene.robot.kneeCircle, app->robotScene.robot.ankleCircle, shin2NearLocal);
 
-            Point shin1World = nestedJointToWorld(shin1MidLocal, kneePivot, kneeAngle, hipPivot, hipAngle, center, app->robotScene.robot.angle);
-            Point shin2World = nestedJointToWorld(shin2MidLocal, kneePivot, kneeAngle, hipPivot, hipAngle, center, app->robotScene.robot.angle);
+            PointF shin1World = nestedJointToWorld(shin1MidLocal, kneePivot, kneeAngle, hipPivot, hipAngle, center, app->robotScene.robot.angle);
+            PointF shin2World = nestedJointToWorld(shin2MidLocal, kneePivot, kneeAngle, hipPivot, hipAngle, center, app->robotScene.robot.angle);
 
             // same leg-local frame the drag math in WM_MOUSEMOVE uses --
             // computed once here so both shin handles' click-capture can
             // read the mouse's perpendicular-to-axis position (relative to
             // the knee->ankle axis) at the moment the drag starts
-            Point shinLocalMouseDown = inverseRotate(legLocalMouseDown, kneePivot, kneeAngle);
+            PointF shinLocalMouseDown = inverseRotate(legLocalMouseDown, kneePivot, kneeAngle);
 
             if (isNear(mouse, seamArc1HandleWorld, ARC_HANDLE_RADIUS))
             {
@@ -211,7 +208,7 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 // remember the whole leg's offset from the hip right now,
                 // so dragging the hip can carry it along as one rigid
                 // piece instead of leaving it behind
-                Point hip = app->robotScene.robot.innerCircle;
+                PointF hip = app->robotScene.robot.innerCircle;
 
                 app->hipDragKneeOffset.x = app->robotScene.robot.kneeCircle.x - hip.x;
                 app->hipDragKneeOffset.y = app->robotScene.robot.kneeCircle.y - hip.y;
@@ -232,7 +229,7 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 // remember the shin's offset from the knee right now, so
                 // it can be pinned to this exact shape/length for the
                 // whole drag instead of drifting frame by frame
-                Point knee = app->robotScene.robot.kneeCircle;
+                PointF knee = app->robotScene.robot.kneeCircle;
 
                 app->kneeDragAnkleOffset.x = app->robotScene.robot.ankleCircle.x - knee.x;
                 app->kneeDragAnkleOffset.y = app->robotScene.robot.ankleCircle.y - knee.y;
@@ -305,13 +302,10 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
 
         case WM_MOUSEMOVE:
         {
-            float mx = (float)LOWORD(lParam);
-            float my = (float)HIWORD(lParam);
+            int mx = LOWORD(lParam);
+            int my = HIWORD(lParam);
 
-            float glX, glY;
-			screenToGL(hwnd, mx, my, &glX, &glY);
-			app->mouseGL.x = glX;
-			app->mouseGL.y = glY;
+            screenToGL(hwnd, mx, my, &app->mouseGL.x, &app->mouseGL.y);
 
             DWORD now = GetTickCount();
 
@@ -325,20 +319,20 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 app->lastLogTime = now;
             }
 
-            Point mouse = app->mouseGL;
+            PointF mouse = app->mouseGL;
 
-            Point center = getCenter(app->robotScene.robot);
+            PointF center = getCenter(app->robotScene.robot);
             float angle = app->robotScene.robot.angle;
 
             // hover state for the joint circle handles is tracked here,
             // continuously, regardless of whether anything is being
             // dragged -- that's what lets them highlight yellow just
             // from the mouse passing near them
-            Point innerWorld = rotatePoint(app->robotScene.robot.innerCircle, center, angle);
-            Point kneeWorld  = jointToWorld(app->robotScene.robot.kneeCircle, app->robotScene.robot.innerCircle, app->robotScene.robot.hipAngle, center, angle);
-            Point ankleWorld = nestedJointToWorld(app->robotScene.robot.ankleCircle, app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeAngle, app->robotScene.robot.innerCircle, app->robotScene.robot.hipAngle, center, angle);
-            Point headWorld  = rotatePoint((Point){app->robotScene.robot.headX, app->robotScene.robot.y}, center, angle);
-            Point buttWorld  = rotatePoint((Point){app->robotScene.robot.buttX, app->robotScene.robot.y}, center, angle);
+            PointF innerWorld = rotatePoint(app->robotScene.robot.innerCircle, center, angle);
+            PointF kneeWorld  = jointToWorld(app->robotScene.robot.kneeCircle, app->robotScene.robot.innerCircle, app->robotScene.robot.hipAngle, center, angle);
+            PointF ankleWorld = nestedJointToWorld(app->robotScene.robot.ankleCircle, app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeAngle, app->robotScene.robot.innerCircle, app->robotScene.robot.hipAngle, center, angle);
+            PointF headWorld  = rotatePoint((PointF){app->robotScene.robot.headX, app->robotScene.robot.y}, center, angle);
+            PointF buttWorld  = rotatePoint((PointF){app->robotScene.robot.buttX, app->robotScene.robot.y}, center, angle);
 
             app->hoverHip   = isNear(mouse, innerWorld, HIP_HANDLE_RADIUS);
             app->hoverKnee  = isNear(mouse, kneeWorld, KNEE_HANDLE_RADIUS);
@@ -358,49 +352,49 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             // (differently-scoped) drag-only versions of the same
             // computation further down.
             {
-                Point headLocalHover = { app->robotScene.robot.headX, app->robotScene.robot.y };
-                Point buttLocalHover = { app->robotScene.robot.buttX, app->robotScene.robot.y };
-                Point bodyMidLocalHover = { (headLocalHover.x + buttLocalHover.x) * 0.5f, (headLocalHover.y + buttLocalHover.y) * 0.5f };
+                PointF headLocalHover = { app->robotScene.robot.headX, app->robotScene.robot.y };
+                PointF buttLocalHover = { app->robotScene.robot.buttX, app->robotScene.robot.y };
+                PointF bodyMidLocalHover = { (headLocalHover.x + buttLocalHover.x) * 0.5f, (headLocalHover.y + buttLocalHover.y) * 0.5f };
 
                 Fillet seamArc1FilletHover = filletFromAttachAngle(headLocalHover, app->robotScene.robot.headRadius, buttLocalHover, app->robotScene.robot.buttRadius, app->robotScene.robot.seamArc1Angle, MIN_ARC_R, MAX_ARC_R);
                 Fillet seamArc2FilletHover = filletFromAttachAngle(headLocalHover, app->robotScene.robot.headRadius, buttLocalHover, app->robotScene.robot.buttRadius, app->robotScene.robot.seamArc2Angle, MIN_ARC_R, MAX_ARC_R);
 
-                Point seamArc1NearLocalHover = circleTowardPoint(seamArc1FilletHover.center, seamArc1FilletHover.radius, bodyMidLocalHover);
-                Point seamArc2NearLocalHover = circleTowardPoint(seamArc2FilletHover.center, seamArc2FilletHover.radius, bodyMidLocalHover);
+                PointF seamArc1NearLocalHover = circleTowardPoint(seamArc1FilletHover.center, seamArc1FilletHover.radius, bodyMidLocalHover);
+                PointF seamArc2NearLocalHover = circleTowardPoint(seamArc2FilletHover.center, seamArc2FilletHover.radius, bodyMidLocalHover);
 
-                Point seamArc1MidLocalHover = circleAtX(seamArc1FilletHover.center, seamArc1FilletHover.radius, bodyMidLocalHover.x, seamArc1NearLocalHover);
-                Point seamArc2MidLocalHover = circleAtX(seamArc2FilletHover.center, seamArc2FilletHover.radius, bodyMidLocalHover.x, seamArc2NearLocalHover);
+                PointF seamArc1MidLocalHover = circleAtX(seamArc1FilletHover.center, seamArc1FilletHover.radius, bodyMidLocalHover.x, seamArc1NearLocalHover);
+                PointF seamArc2MidLocalHover = circleAtX(seamArc2FilletHover.center, seamArc2FilletHover.radius, bodyMidLocalHover.x, seamArc2NearLocalHover);
 
-                Point seamArc1HandleWorldHover = rotatePoint(seamArc1MidLocalHover, center, angle);
-                Point seamArc2HandleWorldHover = rotatePoint(seamArc2MidLocalHover, center, angle);
+                PointF seamArc1HandleWorldHover = rotatePoint(seamArc1MidLocalHover, center, angle);
+                PointF seamArc2HandleWorldHover = rotatePoint(seamArc2MidLocalHover, center, angle);
 
-                Point thighAxisMidLocalHover = { (app->robotScene.robot.innerCircle.x + app->robotScene.robot.kneeCircle.x) * 0.5f,
+                PointF thighAxisMidLocalHover = { (app->robotScene.robot.innerCircle.x + app->robotScene.robot.kneeCircle.x) * 0.5f,
                                                   (app->robotScene.robot.innerCircle.y + app->robotScene.robot.kneeCircle.y) * 0.5f };
 
                 Fillet thigh1FilletHover = filletFromAttachAngle(app->robotScene.robot.innerCircle, app->robotScene.robot.innerRadius, app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeRadius, app->robotScene.robot.thighArc1Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC_R);
-                Point thigh1NearLocalHover = circleTowardPoint(thigh1FilletHover.center, thigh1FilletHover.radius, thighAxisMidLocalHover);
-                Point thigh1MidLocalHover = circleAtAxisMid(thigh1FilletHover.center, thigh1FilletHover.radius, app->robotScene.robot.innerCircle, app->robotScene.robot.kneeCircle, thigh1NearLocalHover);
+                PointF thigh1NearLocalHover = circleTowardPoint(thigh1FilletHover.center, thigh1FilletHover.radius, thighAxisMidLocalHover);
+                PointF thigh1MidLocalHover = circleAtAxisMid(thigh1FilletHover.center, thigh1FilletHover.radius, app->robotScene.robot.innerCircle, app->robotScene.robot.kneeCircle, thigh1NearLocalHover);
 
                 Fillet thigh2FilletHover = filletFromAttachAngleConcave(app->robotScene.robot.innerCircle, app->robotScene.robot.innerRadius, app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeRadius, app->robotScene.robot.thighArc2Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC2_CONCAVE_R);
-                Point thigh2NearLocalHover = circleTowardPoint(thigh2FilletHover.center, thigh2FilletHover.radius, thighAxisMidLocalHover);
-                Point thigh2MidLocalHover = circleAtAxisMid(thigh2FilletHover.center, thigh2FilletHover.radius, app->robotScene.robot.innerCircle, app->robotScene.robot.kneeCircle, thigh2NearLocalHover);
+                PointF thigh2NearLocalHover = circleTowardPoint(thigh2FilletHover.center, thigh2FilletHover.radius, thighAxisMidLocalHover);
+                PointF thigh2MidLocalHover = circleAtAxisMid(thigh2FilletHover.center, thigh2FilletHover.radius, app->robotScene.robot.innerCircle, app->robotScene.robot.kneeCircle, thigh2NearLocalHover);
 
-                Point thigh1WorldHover = jointToWorld(thigh1MidLocalHover, app->robotScene.robot.innerCircle, app->robotScene.robot.hipAngle, center, angle);
-                Point thigh2WorldHover = jointToWorld(thigh2MidLocalHover, app->robotScene.robot.innerCircle, app->robotScene.robot.hipAngle, center, angle);
+                PointF thigh1WorldHover = jointToWorld(thigh1MidLocalHover, app->robotScene.robot.innerCircle, app->robotScene.robot.hipAngle, center, angle);
+                PointF thigh2WorldHover = jointToWorld(thigh2MidLocalHover, app->robotScene.robot.innerCircle, app->robotScene.robot.hipAngle, center, angle);
 
-                Point shinAxisMidLocalHover = { (app->robotScene.robot.kneeCircle.x + app->robotScene.robot.ankleCircle.x) * 0.5f,
+                PointF shinAxisMidLocalHover = { (app->robotScene.robot.kneeCircle.x + app->robotScene.robot.ankleCircle.x) * 0.5f,
                                                  (app->robotScene.robot.kneeCircle.y + app->robotScene.robot.ankleCircle.y) * 0.5f };
 
                 Fillet shin1FilletHover = filletFromAttachAngle(app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeRadius, app->robotScene.robot.ankleCircle, app->robotScene.robot.ankleRadius, app->robotScene.robot.shinArc1Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC_R);
-                Point shin1NearLocalHover = circleTowardPoint(shin1FilletHover.center, shin1FilletHover.radius, shinAxisMidLocalHover);
-                Point shin1MidLocalHover = circleAtAxisMid(shin1FilletHover.center, shin1FilletHover.radius, app->robotScene.robot.kneeCircle, app->robotScene.robot.ankleCircle, shin1NearLocalHover);
+                PointF shin1NearLocalHover = circleTowardPoint(shin1FilletHover.center, shin1FilletHover.radius, shinAxisMidLocalHover);
+                PointF shin1MidLocalHover = circleAtAxisMid(shin1FilletHover.center, shin1FilletHover.radius, app->robotScene.robot.kneeCircle, app->robotScene.robot.ankleCircle, shin1NearLocalHover);
 
                 Fillet shin2FilletHover = filletFromAttachAngleConcave(app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeRadius, app->robotScene.robot.ankleCircle, app->robotScene.robot.ankleRadius, app->robotScene.robot.shinArc2Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC2_CONCAVE_R);
-                Point shin2NearLocalHover = circleTowardPoint(shin2FilletHover.center, shin2FilletHover.radius, shinAxisMidLocalHover);
-                Point shin2MidLocalHover = circleAtAxisMid(shin2FilletHover.center, shin2FilletHover.radius, app->robotScene.robot.kneeCircle, app->robotScene.robot.ankleCircle, shin2NearLocalHover);
+                PointF shin2NearLocalHover = circleTowardPoint(shin2FilletHover.center, shin2FilletHover.radius, shinAxisMidLocalHover);
+                PointF shin2MidLocalHover = circleAtAxisMid(shin2FilletHover.center, shin2FilletHover.radius, app->robotScene.robot.kneeCircle, app->robotScene.robot.ankleCircle, shin2NearLocalHover);
 
-                Point shin1WorldHover = nestedJointToWorld(shin1MidLocalHover, app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeAngle, app->robotScene.robot.innerCircle, app->robotScene.robot.hipAngle, center, angle);
-                Point shin2WorldHover = nestedJointToWorld(shin2MidLocalHover, app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeAngle, app->robotScene.robot.innerCircle, app->robotScene.robot.hipAngle, center, angle);
+                PointF shin1WorldHover = nestedJointToWorld(shin1MidLocalHover, app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeAngle, app->robotScene.robot.innerCircle, app->robotScene.robot.hipAngle, center, angle);
+                PointF shin2WorldHover = nestedJointToWorld(shin2MidLocalHover, app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeAngle, app->robotScene.robot.innerCircle, app->robotScene.robot.hipAngle, center, angle);
 
                 // priority mirrors WM_LBUTTONDOWN's hit-test order
                 // (seamArc1, seamArc2, hip, knee, thigh1, thigh2, ankle,
@@ -453,10 +447,10 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 !app->draggingAnkle && !app->draggingShin1 && !app->draggingShin2)
                 break;
 
-            Point localMouse = inverseRotate(mouse, center, angle);
+            PointF localMouse = inverseRotate(mouse, center, angle);
 
-            Point headLocal = { app->robotScene.robot.headX, app->robotScene.robot.y };
-            Point buttLocal = { app->robotScene.robot.buttX, app->robotScene.robot.y };
+            PointF headLocal = { app->robotScene.robot.headX, app->robotScene.robot.y };
+            PointF buttLocal = { app->robotScene.robot.buttX, app->robotScene.robot.y };
 
             // the seam handle now sits at the arc's visible middle/bulge
             // point rather than the head-circle tangent point, so the
@@ -534,7 +528,7 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             // left behind
             if (app->draggingInner)
             {
-                Point newInner = localMouse;
+                PointF newInner = localMouse;
 
                 app->robotScene.robot.kneeCircle.x = newInner.x + app->hipDragKneeOffset.x;
                 app->robotScene.robot.kneeCircle.y = newInner.y + app->hipDragKneeOffset.y;
@@ -565,14 +559,14 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             // the leg chain sits in a frame additionally rotated by hipAngle
             // around innerCircle, so undo that rotation too before storing
             // the raw local coordinates for knee/thigh/ankle/shin
-            Point legLocalMouse = inverseRotate(localMouse, app->robotScene.robot.innerCircle, app->robotScene.robot.hipAngle);
+            PointF legLocalMouse = inverseRotate(localMouse, app->robotScene.robot.innerCircle, app->robotScene.robot.hipAngle);
 
             // dragging the knee circle only changes the thigh's length --
             // it's constrained to slide along the hip->knee axis instead
             // of moving freely, so bending the leg is left to hipAngle
             if (app->draggingKnee)
             {
-                Point newKnee = constrainToAxis(
+                PointF newKnee = constrainToAxis(
                     app->robotScene.robot.innerCircle,
                     app->robotScene.robot.kneeCircle,
                     legLocalMouse,
@@ -670,7 +664,7 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             // the shin sits in a frame additionally rotated by kneeAngle
             // around kneeCircle, so undo that rotation too before storing
             // the raw local coordinates for ankle/shin
-            Point shinLocalMouse = inverseRotate(legLocalMouse, app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeAngle);
+            PointF shinLocalMouse = inverseRotate(legLocalMouse, app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeAngle);
 
             // same idea for the ankle circle: constrained to the
             // knee->ankle axis so dragging it only changes the shin's
@@ -768,14 +762,14 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             float gx, gy;
             screenToGL(hwnd, pt.x, pt.y, &gx, &gy);
 
-            Point mouse = { gx, gy };
+            PointF mouse = { gx, gy };
 
-            Point center = getCenter(app->robotScene.robot);
-            Point innerWorld = rotatePoint(app->robotScene.robot.innerCircle, center, app->robotScene.robot.angle);
-            Point kneeWorld = jointToWorld(app->robotScene.robot.kneeCircle, app->robotScene.robot.innerCircle, app->robotScene.robot.hipAngle, center, app->robotScene.robot.angle);
-            Point ankleWorld = nestedJointToWorld(app->robotScene.robot.ankleCircle, app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeAngle, app->robotScene.robot.innerCircle, app->robotScene.robot.hipAngle, center, app->robotScene.robot.angle);
-            Point headWorld = rotatePoint((Point){app->robotScene.robot.headX, app->robotScene.robot.y}, center, app->robotScene.robot.angle);
-            Point buttWorld = rotatePoint((Point){app->robotScene.robot.buttX, app->robotScene.robot.y}, center, app->robotScene.robot.angle);
+            PointF center = getCenter(app->robotScene.robot);
+            PointF innerWorld = rotatePoint(app->robotScene.robot.innerCircle, center, app->robotScene.robot.angle);
+            PointF kneeWorld = jointToWorld(app->robotScene.robot.kneeCircle, app->robotScene.robot.innerCircle, app->robotScene.robot.hipAngle, center, app->robotScene.robot.angle);
+            PointF ankleWorld = nestedJointToWorld(app->robotScene.robot.ankleCircle, app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeAngle, app->robotScene.robot.innerCircle, app->robotScene.robot.hipAngle, center, app->robotScene.robot.angle);
+            PointF headWorld = rotatePoint((PointF){app->robotScene.robot.headX, app->robotScene.robot.y}, center, app->robotScene.robot.angle);
+            PointF buttWorld = rotatePoint((PointF){app->robotScene.robot.buttX, app->robotScene.robot.y}, center, app->robotScene.robot.angle);
 
             float step = 2.0f;
             float radiusStep = 0.01f;
