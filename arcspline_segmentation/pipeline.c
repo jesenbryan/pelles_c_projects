@@ -116,10 +116,20 @@ static void runPipelineOnImage(Image* img, const char* sourceLabel, BOOL stretch
 
             int sx, sy, ex, ey;
             int found = find_start_end_pixels(compBin, w, h, &sx, &sy, &ex, &ey);
-            if (found != 2) continue;   // closed loop or a noise speck - not an open curve, skip it
+            if (found != 2 && found != 3) continue;   // empty/noise speck - nothing to trace
+
+            // found == 3: closed loop (e.g. a circle) or an ambiguous shape
+            // with no real second endpoint - find_start_end_pixels already
+            // picked a single pixel to start from and set ex/ey to a
+            // sentinel (-1,-1) that tracePath can never actually reach, so
+            // it walks the whole ring instead of stopping after one point.
+            BOOL isClosedLoop = (found == 3);
 
             if (!haveMarkers) {
-                setEndpointMarkers(w, h, sx, sy, ex, ey, stretched);
+                // A closed loop has no real start/end to mark - drop both
+                // markers on the same pick point instead of using the
+                // tracePath sentinel coordinates (which aren't a real pixel).
+                setEndpointMarkers(w, h, sx, sy, isClosedLoop ? sx : ex, isClosedLoop ? sy : ey, stretched);
                 haveMarkers = TRUE;
             }
 
@@ -127,6 +137,19 @@ static void runPipelineOnImage(Image* img, const char* sourceLabel, BOOL stretch
             componentPaths[componentPathCount++] = path;
 
             int numPoints = tracePath(compBin, w, h, sx, sy, ex, ey, path, 10000);
+
+            // tracePath stops one pixel short of exactly closing the ring
+            // (the start pixel is marked visited from its very first step,
+            // so it can never step back onto it) - append it again so the
+            // path/arc-fit sees a properly closed shape instead of a
+            // near-miss with a visible seam.
+            if (isClosedLoop && numPoints > 0 && numPoints < 10000)
+            {
+                path[numPoints].x = sx;
+                path[numPoints].y = sy;
+                numPoints++;
+            }
+
             debugPrintPath(path, numPoints);
 
             ArcSegment segs[MAX_ARC_SEGMENTS];

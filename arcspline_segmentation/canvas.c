@@ -774,7 +774,7 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	    else if (LOWORD(wParam) == ID_SAVE)
 	    {
 	        // If comparison mode is on and segments exist, save reconstructed drawing
-	        if (canvas.comparisonMode && canvas.showSegments && canvas.segmentResultCount > 0)
+	        if (canvas.comparisonMode && canvas.segmentResultCount > 0)
 	        {
 	            Image* img = (Image*)malloc(sizeof(Image));
 	            if (img)
@@ -825,8 +825,11 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	    glLoadIdentity();
 	    glTranslatef(-canvas.panX, -canvas.panY, 0.0f);   // NEW: apply camera pan to everything below
 
-	    // Only show background image if NOT in active comparison mode
-	    BOOL isComparisonActive = canvas.comparisonMode && canvas.showSegments && canvas.segmentResultCount > 0;
+	    // Only show background image if NOT in active comparison mode.
+	    // Deliberately NOT gated on canvas.showSegments - Comparison Mode
+	    // has to work on its own whether or not "View Segments" is also
+	    // checked, as long as something has been traced.
+	    BOOL isComparisonActive = canvas.comparisonMode && canvas.segmentResultCount > 0;
 
 	    // Robot layer has no drawable content of its own yet (it's reserved
 	    // for a separate project to be embedded here later), so no new
@@ -960,12 +963,15 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             glDisable(GL_BLEND);
         }
 
-		if (canvas.showSegments && canvas.segmentResultCount > 0)
+		// Rendered when EITHER "View Segments" is checked OR Comparison Mode
+		// is active - the two controls are independent, so Comparison Mode
+		// must be able to show the traced arcs on its own without also
+		// requiring View Segments to be checked.
+		if ((canvas.showSegments || isComparisonActive) && canvas.segmentResultCount > 0)
 		{
 		    glEnable(GL_BLEND);
 		    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-		    BOOL isComparisonActive = canvas.comparisonMode && canvas.segmentResultCount > 0;
 		    float ghostHalfW = (0.01f * canvas.zoom);  // Always use same thickness
 		    float ghostAlpha = isComparisonActive ? 0.95f : 0.35f;
 		    if (isRobotLayerActive) ghostAlpha *= 0.3f;  // extra-dim: Environment reference while on Robot layer

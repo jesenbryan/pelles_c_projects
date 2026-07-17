@@ -142,6 +142,16 @@ LRESULT CALLBACK WndProcUI(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		else if (LOWORD(wParam) == ID_TRACE)
 		{
 		    RunTracePipeline();
+
+		    // Trace has to be self-sufficient: pressing it alone should show
+		    // a visible result immediately, not silently compute segments
+		    // that stay invisible until View Segments is separately checked.
+		    // Sync the checkbox too, so its displayed state matches reality.
+		    if (canvas.segmentResultCount > 0)
+		    {
+		        canvas.showSegments = TRUE;
+		        SendMessage(hViewSegBtn, BM_SETCHECK, BST_CHECKED, 0);
+		    }
 		    if (hWndGL) InvalidateRect(hWndGL, NULL, FALSE);
 		}
 		else if (LOWORD(wParam) == ID_VIEW_SEGMENTS)
@@ -151,10 +161,12 @@ LRESULT CALLBACK WndProcUI(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		    // separate bool - the button IS the toggle state.
 		    BOOL nowChecked = (SendMessage(hViewSegBtn, BM_GETCHECK, 0, 0) == BST_CHECKED);
 
-		    if (nowChecked)
+		    if (nowChecked && canvas.segmentResultCount == 0)
 		    {
-		        RunPendingUploadTrace();   // trace/segment the uploaded BMP on demand,
-		                                   // no-op if already traced or nothing was uploaded
+		        // Nothing traced yet - trace on demand (canvas drawing takes
+		        // priority, falls back to a pending uploaded BMP) so View
+		        // Segments works standalone without requiring Trace first.
+		        RunTracePipeline();
 		    }
 		    canvas.showSegments = nowChecked;
 		    if (hWndGL) InvalidateRect(hWndGL, NULL, FALSE);
@@ -163,6 +175,14 @@ LRESULT CALLBACK WndProcUI(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		{
 		    // Toggle between showing original strokes vs. reconstructed arc line
 		    BOOL nowChecked = (SendMessage(hComparisonBtn, BM_GETCHECK, 0, 0) == BST_CHECKED);
+
+		    if (nowChecked && canvas.segmentResultCount == 0)
+		    {
+		        // Same as View Segments: trace on demand so Comparison Mode
+		        // is also usable on its own, without needing Trace or View
+		        // Segments pressed first.
+		        RunTracePipeline();
+		    }
 		    canvas.comparisonMode = nowChecked;
 		    if (hWndGL) InvalidateRect(hWndGL, NULL, FALSE);
 		}
