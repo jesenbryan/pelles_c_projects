@@ -2,10 +2,10 @@
 <settings version="1.0">
 	<category name="main.c">
 		<category name="Window">
-			<property name="Left" type="integer">156</property>
-			<property name="Top" type="integer">156</property>
-			<property name="Right" type="integer">1247</property>
-			<property name="Bottom" type="integer">674</property>
+			<property name="Left" type="integer">26</property>
+			<property name="Top" type="integer">26</property>
+			<property name="Right" type="integer">1466</property>
+			<property name="Bottom" type="integer">544</property>
 			<property name="Maximized" type="integer">0</property>
 			<property name="Active" type="integer">0</property>
 		</category>
@@ -15,20 +15,20 @@
 	<category name="skeleton_graph.c" />
 	<category name="ui.c">
 		<category name="Window">
-			<property name="Left" type="integer">130</property>
-			<property name="Top" type="integer">130</property>
-			<property name="Right" type="integer">1221</property>
-			<property name="Bottom" type="integer">648</property>
+			<property name="Left" type="integer">52</property>
+			<property name="Top" type="integer">52</property>
+			<property name="Right" type="integer">1492</property>
+			<property name="Bottom" type="integer">570</property>
 			<property name="Maximized" type="integer">0</property>
 			<property name="Active" type="integer">0</property>
 		</category>
 	</category>
 	<category name="render.c">
 		<category name="Window">
-			<property name="Left" type="integer">182</property>
-			<property name="Top" type="integer">182</property>
-			<property name="Right" type="integer">1273</property>
-			<property name="Bottom" type="integer">700</property>
+			<property name="Left" type="integer">78</property>
+			<property name="Top" type="integer">78</property>
+			<property name="Right" type="integer">1518</property>
+			<property name="Bottom" type="integer">596</property>
 			<property name="Maximized" type="integer">0</property>
 			<property name="Active" type="integer">0</property>
 		</category>
@@ -55,10 +55,10 @@
 	<category name="path_trace.h" />
 	<category name="render.h">
 		<category name="Window">
-			<property name="Left" type="integer">208</property>
-			<property name="Top" type="integer">208</property>
-			<property name="Right" type="integer">1299</property>
-			<property name="Bottom" type="integer">726</property>
+			<property name="Left" type="integer">130</property>
+			<property name="Top" type="integer">130</property>
+			<property name="Right" type="integer">1570</property>
+			<property name="Bottom" type="integer">648</property>
 			<property name="Maximized" type="integer">0</property>
 			<property name="Active" type="integer">0</property>
 		</category>

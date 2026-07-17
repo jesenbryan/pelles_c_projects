@@ -2,30 +2,30 @@
 <settings version="1.0">
 	<category name="save.c">
 		<category name="Window">
-			<property name="Left" type="integer">4294967287</property>
-			<property name="Top" type="integer">4294967258</property>
-			<property name="Right" type="integer">1651</property>
-			<property name="Bottom" type="integer">726</property>
+			<property name="Left" type="integer">4294967288</property>
+			<property name="Top" type="integer">4294967265</property>
+			<property name="Right" type="integer">1463</property>
+			<property name="Bottom" type="integer">699</property>
 			<property name="Maximized" type="integer">1</property>
 			<property name="Active" type="integer">1</property>
 		</category>
 	</category>
 	<category name="input.c">
 		<category name="Window">
-			<property name="Left" type="integer">160</property>
-			<property name="Top" type="integer">160</property>
-			<property name="Right" type="integer">1391</property>
-			<property name="Bottom" type="integer">697</property>
+			<property name="Left" type="integer">182</property>
+			<property name="Top" type="integer">182</property>
+			<property name="Right" type="integer">1273</property>
+			<property name="Bottom" type="integer">700</property>
 			<property name="Maximized" type="integer">0</property>
 			<property name="Active" type="integer">0</property>
 		</category>
 	</category>
 	<category name="app_init.h">
 		<category name="Window">
-			<property name="Left" type="integer">64</property>
-			<property name="Top" type="integer">64</property>
-			<property name="Right" type="integer">1295</property>
-			<property name="Bottom" type="integer">601</property>
+			<property name="Left" type="integer">208</property>
+			<property name="Top" type="integer">208</property>
+			<property name="Right" type="integer">1299</property>
+			<property name="Bottom" type="integer">726</property>
 			<property name="Maximized" type="integer">0</property>
 			<property name="Active" type="integer">0</property>
 		</category>
@@ -33,10 +33,10 @@
 	<category name="robot.c" />
 	<category name="renderer.c">
 		<category name="Window">
-			<property name="Left" type="integer">192</property>
-			<property name="Top" type="integer">192</property>
-			<property name="Right" type="integer">1423</property>
-			<property name="Bottom" type="integer">729</property>
+			<property name="Left" type="integer">0</property>
+			<property name="Top" type="integer">0</property>
+			<property name="Right" type="integer">1091</property>
+			<property name="Bottom" type="integer">518</property>
 			<property name="Maximized" type="integer">0</property>
 			<property name="Active" type="integer">0</property>
 		</category>
@@ -45,10 +45,10 @@
 	<category name="platform_win32.c" />
 	<category name="save.h">
 		<category name="Window">
-			<property name="Left" type="integer">128</property>
-			<property name="Top" type="integer">128</property>
-			<property name="Right" type="integer">1359</property>
-			<property name="Bottom" type="integer">665</property>
+			<property name="Left" type="integer">26</property>
+			<property name="Top" type="integer">26</property>
+			<property name="Right" type="integer">1117</property>
+			<property name="Bottom" type="integer">544</property>
 			<property name="Maximized" type="integer">0</property>
 			<property name="Active" type="integer">0</property>
 		</category>
@@ -62,40 +62,40 @@
 	<category name="geometry.h" />
 	<category name="app.h">
 		<category name="Window">
-			<property name="Left" type="integer">224</property>
-			<property name="Top" type="integer">224</property>
-			<property name="Right" type="integer">1455</property>
-			<property name="Bottom" type="integer">761</property>
+			<property name="Left" type="integer">52</property>
+			<property name="Top" type="integer">52</property>
+			<property name="Right" type="integer">1143</property>
+			<property name="Bottom" type="integer">570</property>
 			<property name="Maximized" type="integer">0</property>
 			<property name="Active" type="integer">0</property>
 		</category>
 	</category>
 	<category name="app_init.c">
 		<category name="Window">
-			<property name="Left" type="integer">96</property>
-			<property name="Top" type="integer">96</property>
-			<property name="Right" type="integer">1327</property>
-			<property name="Bottom" type="integer">633</property>
+			<property name="Left" type="integer">78</property>
+			<property name="Top" type="integer">78</property>
+			<property name="Right" type="integer">1169</property>
+			<property name="Bottom" type="integer">596</property>
 			<property name="Maximized" type="integer">0</property>
 			<property name="Active" type="integer">0</property>
 		</category>
 	</category>
 	<category name="main.c">
 		<category name="Window">
-			<property name="Left" type="integer">0</property>
-			<property name="Top" type="integer">0</property>
-			<property name="Right" type="integer">1231</property>
-			<property name="Bottom" type="integer">537</property>
+			<property name="Left" type="integer">104</property>
+			<property name="Top" type="integer">104</property>
+			<property name="Right" type="integer">1195</property>
+			<property name="Bottom" type="integer">622</property>
 			<property name="Maximized" type="integer">0</property>
 			<property name="Active" type="integer">0</property>
 		</category>
 	</category>
 	<category name="renderer.h">
 		<category name="Window">
-			<property name="Left" type="integer">32</property>
-			<property name="Top" type="integer">32</property>
-			<property name="Right" type="integer">1263</property>
-			<property name="Bottom" type="integer">569</property>
+			<property name="Left" type="integer">130</property>
+			<property name="Top" type="integer">130</property>
+			<property name="Right" type="integer">1221</property>
+			<property name="Bottom" type="integer">648</property>
 			<property name="Maximized" type="integer">0</property>
 			<property name="Active" type="integer">0</property>
 		</category>

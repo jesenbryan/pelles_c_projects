@@ -1,47 +1,24 @@
-SEMNI ROBOT - GEOMETRIC PARAMETERS
-===================================
-
-BODY (Head and Butt Circles)
-----------------------------
-Head Circle:     C_h = (-0.600000, -0.770000),  r_h = 0.081000
-Butt Circle:     C_b = (0.600000, -0.770000),  r_b = 0.288500
-
-BODY SEAMS (Circular Arcs)
----------------------------
-Seam Arc 1:      theta_1 = 122.854446 deg  (attached to head circle)
-Seam Arc 2:      theta_2 = 237.145584 deg  (attached to head circle)
-
-HIP JOINT (Inner Circle)
-------------------------
-Hip Center:      C_hip = (0.000000, -0.770000),  r_hip = 0.120000
-Hip Rotation:    alpha_hip = -836.000000 deg
-
-THIGH (Hip to Knee)
--------------------
-Knee Center:     C_knee = (0.000000, -1.291971),  r_knee = 0.080000
-Thigh Arc 1:     theta_3 = 161.913239 deg  (attached to hip, convex)
-Thigh Arc 2:     theta_4 = -19.956024 deg  (attached to hip, concave)
-
-SHIN (Knee to Ankle)
---------------------
-Ankle Center:    C_ankle = (0.000000, -1.590574),  r_ankle = 0.050000
-Knee Rotation:   alpha_knee = 36.000000 deg
-Shin Arc 1:      theta_5 = 169.821564 deg  (attached to knee, convex)
-Shin Arc 2:      theta_6 = -22.810974 deg  (attached to knee, concave)
-
-WHOLE BODY
-----------
-Body Rotation:   alpha_body = 178.000000 deg
-
-COORDINATE TRANSFORMATION
--------------------------
-Global position = Local position rotated by alpha_body around body center
-Leg chain position = Hip-relative coords rotated by alpha_hip, then body-rotated
-Shin position = Knee-relative coords rotated by alpha_knee, then hip+body-rotated
-
-KEY EQUATIONS
--------------
-1. Body center: (0, -0.770000)
-2. Body axis length: |C_h - C_b| = 1.200000
-3. Hip-Knee distance: sqrt[(C_knee - C_hip)^2] = 0.521971
-4. Knee-Ankle distance: sqrt[(C_ankle - C_knee)^2] = 0.298603
+HEAD_X=-0.600000
+HEAD_Y=-0.420000
+HEAD_RADIUS=0.081000
+BUTT_X=0.600000
+BUTT_Y=-0.420000
+BUTT_RADIUS=0.288500
+SEAM_ARC1_ANGLE=122.854446
+SEAM_ARC2_ANGLE=237.145584
+HIP_X=0.000000
+HIP_Y=-0.420000
+HIP_RADIUS=0.120000
+HIP_ANGLE=-760.000000
+KNEE_X=0.000000
+KNEE_Y=-0.941971
+KNEE_RADIUS=0.080000
+KNEE_ANGLE=-26.000000
+THIGH_ARC1_ANGLE=161.913239
+THIGH_ARC2_ANGLE=-19.956024
+ANKLE_X=0.000000
+ANKLE_Y=-1.240574
+ANKLE_RADIUS=0.050000
+SHIN_ARC1_ANGLE=169.821564
+SHIN_ARC2_ANGLE=-22.810974
+BODY_ANGLE=88.000000

@@ -17,6 +17,11 @@
 // travel somewhere get kept.
 #define MIN_EDGE_POINTS 4
 
+// Cap on distinct node clusters findRealJunctions() tracks per call -
+// generously sized for how many endpoints/junctions a single component's
+// edges could plausibly produce.
+#define MAX_JUNCTION_NODES 256
+
 typedef struct { int dx, dy; } Off2D;
 
 static const Off2D NB[8] = {
@@ -140,34 +145,96 @@ int traceClosedLoop(uint8_t* compBin, int w, int h, Point* outPath, int maxPoint
     return 0;
 }
 
-int findJunctionPixels(uint8_t* compBin, int w, int h, int outX[], int outY[], int maxOut)
+// Shared by findRealJunctions()/findRealEndpoints(): clusters every kept
+// edge's two endpoint pixels into logical nodes (nearby hits within ~4px
+// are treated as the same physical point) and counts how many edge-ends
+// land in each cluster. A self-closing edge (closed loop) contributes
+// nothing - its "start" and "end" are the same seam pixel, not a real
+// node either endpoint- or junction-wise.
+static int buildEdgeNodeTable(Point* const edgePaths[], const int edgeLengths[], int edgeCount,
+                               int nodeX[], int nodeY[], int nodeHits[], int maxNodes)
 {
-    int count = 0;
+    int nodeCount = 0;
 
-    for (int y = 0; y < h; y++) {
-        for (int x = 0; x < w; x++) {
-            if (!compBin[y * w + x]) continue;
-            if (degreeAt(compBin, w, h, x, y) < 3) continue;
+    for (int e = 0; e < edgeCount; e++)
+    {
+        if (edgeLengths[e] < 1) continue;
 
-            // Merge with an already-recorded junction from the same blob
-            // instead of adding a near-duplicate marker right next to it.
-            int merged = 0;
-            for (int i = 0; i < count; i++) {
-                int dx = x - outX[i];
-                int dy = y - outY[i];
-                if (dx * dx + dy * dy <= 16) { merged = 1; break; }   // within ~4px
+        Point a = edgePaths[e][0];
+        Point b = edgePaths[e][edgeLengths[e] - 1];
+
+        if (a.x == b.x && a.y == b.y) continue;
+
+        Point ends[2] = { a, b };
+        for (int k = 0; k < 2; k++)
+        {
+            int found = -1;
+            for (int i = 0; i < nodeCount; i++) {
+                int dx = ends[k].x - nodeX[i];
+                int dy = ends[k].y - nodeY[i];
+                if (dx * dx + dy * dy <= 16) { found = i; break; }   // within ~4px - same node
             }
-            if (merged) continue;
-
-            if (count < maxOut) {
-                outX[count] = x;
-                outY[count] = y;
-                count++;
+            if (found == -1 && nodeCount < maxNodes) {
+                nodeX[nodeCount] = ends[k].x;
+                nodeY[nodeCount] = ends[k].y;
+                nodeHits[nodeCount] = 0;
+                found = nodeCount++;
             }
+            if (found != -1) nodeHits[found]++;
         }
     }
 
-    return count;
+    return nodeCount;
+}
+
+int findRealJunctions(Point* const edgePaths[], const int edgeLengths[], int edgeCount,
+                       int outX[], int outY[], int maxOut)
+{
+    if (edgeCount < 2) return 0;   // nothing can branch with only 0 or 1 edge
+
+    int nodeX[MAX_JUNCTION_NODES], nodeY[MAX_JUNCTION_NODES], nodeHits[MAX_JUNCTION_NODES];
+    int nodeCount = buildEdgeNodeTable(edgePaths, edgeLengths, edgeCount,
+                                        nodeX, nodeY, nodeHits, MAX_JUNCTION_NODES);
+
+    int written = 0;
+    for (int i = 0; i < nodeCount && written < maxOut; i++)
+    {
+        // A node touched by only 1 edge-end is a plain endpoint. Exactly 2
+        // can happen where a short spurious branch got filtered out
+        // elsewhere, leaving what looks like a pass-through - still not a
+        // real junction. 3 or more genuinely-kept edges meeting at one
+        // point is the real thing.
+        if (nodeHits[i] >= 3) {
+            outX[written] = nodeX[i];
+            outY[written] = nodeY[i];
+            written++;
+        }
+    }
+
+    return written;
+}
+
+int findRealEndpoints(Point* const edgePaths[], const int edgeLengths[], int edgeCount,
+                       int outX[], int outY[], int maxOut)
+{
+    if (edgeCount < 1) return 0;
+
+    int nodeX[MAX_JUNCTION_NODES], nodeY[MAX_JUNCTION_NODES], nodeHits[MAX_JUNCTION_NODES];
+    int nodeCount = buildEdgeNodeTable(edgePaths, edgeLengths, edgeCount,
+                                        nodeX, nodeY, nodeHits, MAX_JUNCTION_NODES);
+
+    int written = 0;
+    for (int i = 0; i < nodeCount && written < maxOut; i++)
+    {
+        // Exactly 1 edge touching this node - a real, single-sided end.
+        if (nodeHits[i] == 1) {
+            outX[written] = nodeX[i];
+            outY[written] = nodeY[i];
+            written++;
+        }
+    }
+
+    return written;
 }
 
 int traceComponentEdges(uint8_t* compBin, int w, int h,

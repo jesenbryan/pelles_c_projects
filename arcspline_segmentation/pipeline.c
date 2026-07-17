@@ -128,16 +128,6 @@ static void runPipelineOnImage(Image* img, const char* sourceLabel, BOOL stretch
             memset(compBin, 0, (size_t)w * h);
             extractComponent(remaining, compBin, w, h, x, y);
 
-            // Branch/junction points (degree >= 3) in this component - a
-            // Y/T/X-shaped stroke, or a line touching a circle. Collected
-            // before tracing since traceComponentEdges below consumes/marks
-            // up the component as it walks edges, but junction detection
-            // itself only reads compBin.
-            int jx[MAX_JUNCTIONS_PER_COMPONENT], jy[MAX_JUNCTIONS_PER_COMPONENT];
-            int jCount = findJunctionPixels(compBin, w, h, jx, jy, MAX_JUNCTIONS_PER_COMPONENT);
-            for (int j = 0; j < jCount; j++)
-                addBranchMarker(w, h, jx[j], jy[j], stretched);
-
             // Decompose this component into independently-traceable edges:
             //   - a simple open stroke -> exactly one edge (same result the
             //     old find_start_end_pixels + tracePath pair produced)
@@ -158,13 +148,43 @@ static void runPipelineOnImage(Image* img, const char* sourceLabel, BOOL stretch
                 continue;   // noise speck - nothing traceable
             }
 
+            // Branch/junction points - checked against the edges actually
+            // kept above (not raw pixel degree), so thinning artifacts that
+            // already got filtered out of the edge list can't masquerade
+            // as a junction here. Only meaningful with 2+ edges.
+            int jx[MAX_JUNCTIONS_PER_COMPONENT], jy[MAX_JUNCTIONS_PER_COMPONENT];
+            int jCount = findRealJunctions(edgeBufs, edgeLens, edgeCount,
+                                            jx, jy, MAX_JUNCTIONS_PER_COMPONENT);
+            for (int j = 0; j < jCount; j++)
+                addBranchMarker(w, h, jx[j], jy[j], stretched);
+
             if (!haveMarkers) {
-                // Red/blue start-end markers only really mean something for
-                // a simple open curve - use the first edge's two ends (for
-                // a closed loop these coincide, which is fine/expected).
-                Point* first = edgeBufs[0];
-                setEndpointMarkers(w, h, first[0].x, first[0].y,
-                                   first[edgeLens[0] - 1].x, first[edgeLens[0] - 1].y, stretched);
+                // Red/blue start-end markers should reflect the curve's
+                // TRUE far ends, not just the first traced edge's own two
+                // points - a thinning-noise artifact partway along an
+                // otherwise simple curve can split it into several kept
+                // edges (each individually long enough to survive
+                // MIN_EDGE_POINTS), so edgeBufs[0]'s own "end" can be just
+                // that internal split rather than the curve's real end.
+                // findRealEndpoints looks across every edge instead, so it
+                // finds the real ends regardless of how many pieces the
+                // curve got split into.
+                int endX[2], endY[2];
+                int endCount = findRealEndpoints(edgeBufs, edgeLens, edgeCount, endX, endY, 2);
+
+                if (endCount >= 2) {
+                    setEndpointMarkers(w, h, endX[0], endY[0], endX[1], endY[1], stretched);
+                } else if (endCount == 1) {
+                    setEndpointMarkers(w, h, endX[0], endY[0], endX[0], endY[0], stretched);
+                } else {
+                    // No single-edge-touching node at all - a pure closed
+                    // loop (its self-closing edge was skipped entirely by
+                    // buildEdgeNodeTable). Fall back to the first edge's
+                    // own ends, which coincide for a true closed loop.
+                    Point* first = edgeBufs[0];
+                    setEndpointMarkers(w, h, first[0].x, first[0].y,
+                                       first[edgeLens[0] - 1].x, first[edgeLens[0] - 1].y, stretched);
+                }
                 haveMarkers = TRUE;
             }
 

@@ -8,14 +8,41 @@
 // First and last point are the same pixel, indicating closure.
 int traceClosedLoop(uint8_t* compBin, int w, int h, Point* outPath, int maxPoints);
 
-// Finds branch/junction pixels (degree >= 3) in a component - the points
-// where a traced shape splits into multiple edges (a Y or T or X shape,
-// e.g. a line touching a circle). A real junction is usually a small
-// blob of several touching high-degree pixels rather than exactly one,
-// so nearby hits are merged into a single output point per cluster.
-// Returns the number of junction points written (<= maxOut), filling
-// outX/outY with their pixel coordinates.
-int findJunctionPixels(uint8_t* compBin, int w, int h, int outX[], int outY[], int maxOut);
+// Finds real branch/junction points among edges already produced by
+// traceComponentEdges() for one component - a node is a genuine junction
+// only if 3 or more of those edges actually end there.
+//
+// Deliberately does NOT look at raw pixel degree (checking for pixels
+// with 3+ foreground neighbors): Zhang-Suen thinning routinely leaves
+// short 1-3px "spur" artifacts on an otherwise perfectly simple curve,
+// each of which reads as a local degree-3 pixel even though nothing
+// actually branches there. traceComponentEdges already filters those
+// spurs out (via MIN_EDGE_POINTS) when building its edge list, so
+// counting edge ENDPOINTS instead of raw pixel degree automatically
+// inherits that same filtering - a spur that got dropped as too short
+// can't contribute a false junction here.
+//
+// edgePaths[e]/edgeLengths[e] for e in [0, edgeCount) must be the exact
+// output of a traceComponentEdges() call on the same component. A
+// self-closing edge (closed loop, first point == last point) is treated
+// as a seam, not a junction, and contributes nothing. Nearby node hits
+// (within a few pixels, same physical point) are merged before counting.
+// Returns the number of junction points written (<= maxOut).
+int findRealJunctions(Point* const edgePaths[], const int edgeLengths[], int edgeCount,
+                       int outX[], int outY[], int maxOut);
+
+// Companion to findRealJunctions(): finds true endpoint nodes (touched by
+// exactly 1 kept edge) among the same edge set. Same reasoning applies in
+// reverse - a spurious mid-curve thinning artifact can split one visually
+// continuous stroke into two or more kept edges (each individually long
+// enough to survive MIN_EDGE_POINTS), so picking markers off just the
+// first edge's own two ends can land the "far" marker at that artificial
+// split instead of the curve's true far end. This looks at every edge's
+// endpoints instead, so it finds the real ones regardless of how many
+// pieces the curve got split into internally.
+// Returns the number of endpoint nodes written (<= maxOut).
+int findRealEndpoints(Point* const edgePaths[], const int edgeLengths[], int edgeCount,
+                       int outX[], int outY[], int maxOut);
 
 // Decomposes ONE already-isolated connected skeleton component (compBin -
 // same w*h size as the source image, containing just this component's
