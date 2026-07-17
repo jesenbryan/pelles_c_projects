@@ -166,30 +166,9 @@ static void sampleArcPoints(ArcSegment* seg, PointF* outPts, int* outCount, int 
     double a0 = atan2(p0.y - c.cy, p0.x - c.cx);
     double a1 = atan2(p1.y - c.cy, p1.x - c.cx);
 
-    // A closed loop (e.g. a full circle traced end-to-end) lands back on
-    // (almost) its own starting pixel, so p0 and p1 - and therefore a0 and
-    // a1 - are nearly identical. The "shortest angular path" below exists
-    // to pick the right direction for a genuine partial arc, but applied
-    // here it collapses what should be a full 360-degree sweep into a
-    // near-zero-length arc. Detect that case via point distance (more
-    // reliable than comparing two very-close angles) and force a full turn.
-    double closeDx = (double)p1.x - (double)p0.x;
-    double closeDy = (double)p1.y - (double)p0.y;
-    BOOL isFullLoop = (seg->count > 8) && (closeDx * closeDx + closeDy * closeDy) < 4.0; // within ~2px
-
-    double diff;
-    if (isFullLoop)
-    {
-        // Which direction doesn't matter - a full circle looks the same
-        // swept either way - so any consistent sign works here.
-        diff = 2.0 * ARC_PI;
-    }
-    else
-    {
-        diff = a1 - a0;
-        while (diff > ARC_PI)  diff -= 2.0 * ARC_PI;
-        while (diff < -ARC_PI) diff += 2.0 * ARC_PI;
-    }
+    double diff = a1 - a0;
+    while (diff > ARC_PI)  diff -= 2.0 * ARC_PI;
+    while (diff < -ARC_PI) diff += 2.0 * ARC_PI;
 
     int steps = (maxOut < 24) ? maxOut : 24;
 

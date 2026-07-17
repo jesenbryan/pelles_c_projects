@@ -1160,6 +1160,43 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         glListBase(fontBase - 32);
         glCallLists((GLsizei)strlen(zoomStr), GL_UNSIGNED_BYTE, zoomStr);
         glPopAttrib();
+
+        // NEW: persistent top-left mode/layer indicator - otherwise the
+        // only way to tell Design/Robot/Environment apart is to open the
+        // Mode menu and see which item is checked.
+        {
+            char modeStr[64];
+            float mr, mg, mb;
+
+            if (appMode == APP_MODE_SIMULATION) {
+                wsprintfA(modeStr, "Mode: Simulation");
+                mr = 0.5f; mg = 0.3f; mb = 0.7f;   // purple
+            } else if (designLayer == LAYER_ROBOT) {
+                wsprintfA(modeStr, "Mode: Design - Robot");
+                mr = 0.85f; mg = 0.45f; mb = 0.0f; // orange, matches the endpoint-snap highlight
+            } else {
+                wsprintfA(modeStr, "Mode: Design - Environment");
+                mr = 0.1f; mg = 0.55f; mb = 0.15f; // green
+            }
+
+            // Small color swatch ahead of the text so the mode reads at a
+            // glance without needing to read the label itself.
+            glColor3f(mr, mg, mb);
+            glBegin(GL_QUADS);
+                glVertex2f(10.0f, (float)glWindowHeight - 24.0f);
+                glVertex2f(20.0f, (float)glWindowHeight - 24.0f);
+                glVertex2f(20.0f, (float)glWindowHeight - 14.0f);
+                glVertex2f(10.0f, (float)glWindowHeight - 14.0f);
+            glEnd();
+
+            glColor3f(0.2f, 0.2f, 0.2f);
+            glRasterPos2i(26, glWindowHeight - 22);
+            glPushAttrib(GL_LIST_BIT);
+            glListBase(fontBase - 32);
+            glCallLists((GLsizei)strlen(modeStr), GL_UNSIGNED_BYTE, modeStr);
+            glPopAttrib();
+        }
+
         glMatrixMode(GL_PROJECTION); glPopMatrix();
         glMatrixMode(GL_MODELVIEW); glPopMatrix();
 
