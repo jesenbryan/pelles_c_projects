@@ -41,8 +41,15 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmd, int nShow)
 
     // Mode menu: Design vs Simulation, mutually exclusive (radio-style
     // checkmarks maintained in WndProcGL's WM_COMMAND handler).
+    // "Design Mode" is itself a submenu: picking either sub-item both
+    // switches appMode to Design and selects which layer is being edited.
     HMENU hModeMenu = CreatePopupMenu();
-    AppendMenuW(hModeMenu, MF_STRING | MF_CHECKED, ID_MODE_DESIGN, L"Design Mode");
+
+    HMENU hDesignMenu = CreatePopupMenu();
+    AppendMenuW(hDesignMenu, MF_STRING | MF_CHECKED, ID_LAYER_ROBOT, L"Robot (semni)");
+    AppendMenuW(hDesignMenu, MF_STRING, ID_LAYER_ENVIRONMENT, L"Environment");
+    AppendMenuW(hModeMenu, MF_POPUP, (UINT_PTR)hDesignMenu, L"Design Mode");
+
     AppendMenuW(hModeMenu, MF_STRING, ID_MODE_SIMULATION, L"Simulation Mode");
     AppendMenuW(hMenu, MF_POPUP, (UINT_PTR)hModeMenu, L"Mode");
 

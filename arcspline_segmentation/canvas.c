@@ -13,6 +13,7 @@ GLuint fontBase = 0;
 
 CanvasState canvas = { .zoom = 1.0f };
 AppMode appMode = APP_MODE_DESIGN;
+DesignLayer designLayer = LAYER_ROBOT;
 
 float segmentPointsWorld[MAX_SEGMENT_POINTS * 2];   // NEW
 int   segmentStarts[MAX_ARC_SEGMENTS];              // NEW
@@ -86,6 +87,7 @@ float points[MAX_POINTS];
 int strokeStarts[MAX_STROKES];
 float strokeThickness[MAX_STROKES];
 COLORREF strokeColor[MAX_STROKES];
+DesignLayer strokeLayer[MAX_STROKES];
 BOOL drawing = FALSE;
 
 static HGLRC hRC;
@@ -332,6 +334,13 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
             BOOL wantVisible = inHotZone || inUIWindow;
 
+            // Robot layer has no drawing tools of its own yet (reserved for
+            // a separate project) - keep the Clear/Trace/etc. panel from
+            // popping up at all while it's the active design layer, even
+            // if the cursor is sitting in its hot corner.
+            if (appMode == APP_MODE_DESIGN && designLayer == LAYER_ROBOT)
+                wantVisible = FALSE;
+
             if (wantVisible && !uiShown)
             {
                 // Just entered the hot zone: position it flush against the
@@ -400,11 +409,15 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
     }
     case WM_LBUTTONDOWN:
     {
+        // Robot layer is a blank placeholder for now (a separate project
+        // will live here later) - no drawing while it's active.
+        if (appMode == APP_MODE_DESIGN && designLayer == LAYER_ROBOT) return 0;
         if (canvas.strokeCount >= MAX_STROKES) return 0;
         drawing = TRUE;
         strokeStarts[canvas.strokeCount] = canvas.pointCount;
         strokeColor[canvas.strokeCount] = brushColor;
         strokeThickness[canvas.strokeCount] = thickness;
+        strokeLayer[canvas.strokeCount] = designLayer;
         canvas.strokeCount++;
 
         float x = (float)LOWORD(lParam);
@@ -646,15 +659,29 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	        SendMessage(hWndUI, WM_COMMAND, MAKEWPARAM(ID_VIEW_SEGMENTS, BN_CLICKED), 0);
 	        if (hWndGL) InvalidateRect(hWndGL, NULL, FALSE);
 	    }
-	    else if (LOWORD(wParam) == ID_MODE_DESIGN || LOWORD(wParam) == ID_MODE_SIMULATION)
+	    else if (LOWORD(wParam) == ID_LAYER_ROBOT || LOWORD(wParam) == ID_LAYER_ENVIRONMENT || LOWORD(wParam) == ID_MODE_SIMULATION)
 	    {
-	        appMode = (LOWORD(wParam) == ID_MODE_DESIGN) ? APP_MODE_DESIGN : APP_MODE_SIMULATION;
-
-	        // Radio-style checkmarks: only the active mode stays checked.
-	        // "Mode" is the second top-level popup (index 1, after "File").
+	        // "Mode" is the second top-level popup (index 1, after "File");
+	        // "Design Mode" is the first item within it (index 0) and is
+	        // itself a submenu holding the two layer choices.
 	        HMENU hMenuBar = GetMenu(hWnd);
 	        HMENU hModeMenu = GetSubMenu(hMenuBar, 1);
-	        CheckMenuItem(hModeMenu, ID_MODE_DESIGN, MF_BYCOMMAND | (appMode == APP_MODE_DESIGN ? MF_CHECKED : MF_UNCHECKED));
+	        HMENU hDesignMenu = GetSubMenu(hModeMenu, 0);
+
+	        if (LOWORD(wParam) == ID_MODE_SIMULATION)
+	        {
+	            appMode = APP_MODE_SIMULATION;
+	        }
+	        else
+	        {
+	            // Picking either layer both enters Design mode and selects
+	            // which layer new strokes/edits go to.
+	            appMode = APP_MODE_DESIGN;
+	            designLayer = (LOWORD(wParam) == ID_LAYER_ROBOT) ? LAYER_ROBOT : LAYER_ENVIRONMENT;
+	            CheckMenuItem(hDesignMenu, ID_LAYER_ROBOT, MF_BYCOMMAND | (designLayer == LAYER_ROBOT ? MF_CHECKED : MF_UNCHECKED));
+	            CheckMenuItem(hDesignMenu, ID_LAYER_ENVIRONMENT, MF_BYCOMMAND | (designLayer == LAYER_ENVIRONMENT ? MF_CHECKED : MF_UNCHECKED));
+	        }
+
 	        CheckMenuItem(hModeMenu, ID_MODE_SIMULATION, MF_BYCOMMAND | (appMode == APP_MODE_SIMULATION ? MF_CHECKED : MF_UNCHECKED));
 
 	        if (hWndGL) InvalidateRect(hWndGL, NULL, FALSE);
@@ -715,14 +742,25 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
 	    // Only show background image if NOT in active comparison mode
 	    BOOL isComparisonActive = canvas.comparisonMode && canvas.showSegments && canvas.segmentResultCount > 0;
-	    
+
+	    // Robot layer has no drawable content of its own yet (it's reserved
+	    // for a separate project to be embedded here later), so no new
+	    // strokes can be added while it's active (see WM_LBUTTONDOWN).
+	    // But the Environment layer still renders underneath as a dimmed
+	    // reference, same as when Environment is dimmed while Robot is
+	    // hypothetically active in the other direction — only the currently
+	    // edited layer is shown at full opacity.
+	    BOOL isRobotLayerActive = (appMode == APP_MODE_DESIGN && designLayer == LAYER_ROBOT);
+
 	    if (canvas.hasBackgroundImage && !isComparisonActive)
 	    {
 	        // FIXED bounds (computed once at upload time) — canvas.zoom now
 	        // actually affects this via the ortho projection, same as strokes
 	        glEnable(GL_TEXTURE_2D);
+	        glEnable(GL_BLEND);
+	        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 	        glBindTexture(GL_TEXTURE_2D, canvasTexture);
-	        glColor3f(1.0f, 1.0f, 1.0f);
+	        glColor4f(1.0f, 1.0f, 1.0f, isRobotLayerActive ? 0.25f : 1.0f);
 
 	        glBegin(GL_QUADS);
 	            glTexCoord2f(0.0f, 0.0f); glVertex2f(bgLeft,  bgBottom);
@@ -731,6 +769,7 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	            glTexCoord2f(0.0f, 1.0f); glVertex2f(bgLeft,  bgTop);
 	        glEnd();
 
+	        glDisable(GL_BLEND);
 	        glDisable(GL_TEXTURE_2D);
 	    }
 
@@ -738,7 +777,7 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
         // Only apply comparison mode (hide/fade strokes) if segments are actually being shown
-        
+
         if (!isComparisonActive)
         {
             for (int s = 0; s < canvas.strokeCount; s++)
@@ -749,7 +788,17 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 if (count < 2) continue;
 
                 COLORREF c = strokeColor[s];
-                glColor3f(GetRValue(c)/255.0f, GetGValue(c)/255.0f, GetBValue(c)/255.0f);
+
+                // In Design mode, dim strokes belonging to the layer that
+                // isn't currently being edited (Robot vs Environment) so
+                // it stays visible as reference without competing with the
+                // active layer. Simulation mode shows everything at full
+                // opacity.
+                float strokeAlpha = 1.0f;
+                if (appMode == APP_MODE_DESIGN && strokeLayer[s] != designLayer)
+                    strokeAlpha = 0.25f;
+
+                glColor4f(GetRValue(c)/255.0f, GetGValue(c)/255.0f, GetBValue(c)/255.0f, strokeAlpha);
 
                 float halfW = (strokeThickness[s] * canvas.zoom) / (float)glWindowWidth;
 
@@ -796,6 +845,7 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		    BOOL isComparisonActive = canvas.comparisonMode && canvas.segmentResultCount > 0;
 		    float ghostHalfW = (0.01f * canvas.zoom);  // Always use same thickness
 		    float ghostAlpha = isComparisonActive ? 0.95f : 0.35f;
+		    if (isRobotLayerActive) ghostAlpha *= 0.3f;  // extra-dim: Environment reference while on Robot layer
 
 		    for (int s = 0; s < canvas.segmentResultCount; s++)
 		    {
@@ -803,7 +853,7 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		        int count = segmentCounts[s];
 		        if (count < 2) continue;
 
-		        BOOL isHovered = (s == hoveredSegment);   // NEW
+		        BOOL isHovered = (s == hoveredSegment) && !isRobotLayerActive;   // NEW
 
 		        float r, g, b;
 		        if (isComparisonActive) {
@@ -867,7 +917,7 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		        float cx = segmentCircleCenterWorld[s * 2];
 		        float cy = segmentCircleCenterWorld[s * 2 + 1];
 
-		        BOOL isHovered = (s == hoveredSegment);   // NEW
+		        BOOL isHovered = (s == hoveredSegment) && !isRobotLayerActive;   // NEW
 
 		        float gr, gg, gb;
 		        segmentGhostColor(s, &gr, &gg, &gb);
@@ -880,7 +930,7 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		            glEnable(GL_LINE_STIPPLE);
 		            glLineStipple(1, 0x00FF);            // dotted outline otherwise
 		            glLineWidth(1.0f);
-		            glColor4f(gr, gg, gb, 0.6f);
+		            glColor4f(gr, gg, gb, isRobotLayerActive ? 0.18f : 0.6f);
 		        }
 
 		        glBegin(GL_LINE_LOOP);

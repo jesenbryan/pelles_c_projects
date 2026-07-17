@@ -15,8 +15,9 @@
 #define ID_VIEW_SEGMENTS 5
 #define ID_SAVE   6
 #define ID_COMPARISON 7
-#define ID_MODE_DESIGN     8
-#define ID_MODE_SIMULATION 9
+#define ID_MODE_SIMULATION  9
+#define ID_LAYER_ROBOT       10
+#define ID_LAYER_ENVIRONMENT 11
 
 // App-wide mode, switched from the "Mode" menu on the GL window.
 // Design = draw/trace/edit arc-spline paths (current behavior).
@@ -27,6 +28,17 @@ typedef enum {
 } AppMode;
 
 extern AppMode appMode;
+
+// Sub-mode of APP_MODE_DESIGN, picked from the "Design Mode" submenu
+// (Mode > Design Mode > Robot (semni) / Environment). Every stroke is
+// tagged with the layer that was active when it was drawn (see
+// strokeLayer[]) so the two can be edited and rendered independently.
+typedef enum {
+    LAYER_ROBOT = 0,
+    LAYER_ENVIRONMENT
+} DesignLayer;
+
+extern DesignLayer designLayer;
 
 // Canvas state that should always reset together (see ResetCanvas)
 typedef struct {
@@ -59,6 +71,7 @@ extern int pointCount;
 extern int strokeStarts[MAX_STROKES];
 extern float strokeThickness[MAX_STROKES];
 extern COLORREF strokeColor[MAX_STROKES];
+extern DesignLayer strokeLayer[MAX_STROKES];  // which design layer each stroke belongs to
 extern int strokeCount;
 extern BOOL drawing;
 extern GLuint fontBase;
