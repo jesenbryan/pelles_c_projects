@@ -66,6 +66,8 @@ void applyEditorModeVisibility(EditorModeState* modeState)
         ShowWindow(app.ui.hScaleLabel, semniActive ? SW_SHOW : SW_HIDE);
     if (app.ui.hScaleSlider)
         ShowWindow(app.ui.hScaleSlider, semniActive ? SW_SHOW : SW_HIDE);
+    if (app.ui.hViewSegmentsButton)
+        ShowWindow(app.ui.hViewSegmentsButton, semniActive ? SW_SHOW : SW_HIDE);
     if (app.ui.hHoverLabel)
         ShowWindow(app.ui.hHoverLabel, semniActive ? SW_SHOW : SW_HIDE);
 

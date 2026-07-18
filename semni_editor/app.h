@@ -9,6 +9,7 @@
 #define ID_STANDING_POSITION_BUTTON 1003
 #define ID_HOME_POSITION_BUTTON 1004
 #define ID_SCALE_SLIDER 1005
+#define ID_VIEW_SEGMENTS_BUTTON 1006
 
 // ---- robot model (the "Semni") ----
 
@@ -121,6 +122,13 @@ typedef struct {
     HWND hScaleLabel;
     HWND hScaleSlider;
 
+    // "View Segments" toggle -- same idea as the ArcSpline canvas's own
+    // View Segments button (ui.c), reveals the full circle each fillet
+    // arc (seam/thigh/shin) was trimmed from. Drawn checkbox-as-button
+    // (BS_AUTOCHECKBOX | BS_PUSHLIKE), so the button IS the toggle state
+    // -- see WM_COMMAND's ID_VIEW_SEGMENTS_BUTTON handling in input.c.
+    HWND hViewSegmentsButton;
+
     // bottom-left status label -- shows the friendly name of whichever
     // handle the mouse is currently hovering (e.g. "Thigh Arc 1"), blank
     // when nothing is hovered. Updated every WM_MOUSEMOVE.
@@ -212,6 +220,11 @@ typedef struct {
 
     PointF mouseGL;
     DWORD lastLogTime;
+
+    // "View Segments" state for the Semni robot editor (see
+    // hViewSegmentsButton above) -- when set, drawSemniCircleSegments
+    // (renderer.c) overlays the full circle behind every fillet arc.
+    int showCircleSegments;
 } AppState;
 
 // The single running instance of the Semni app's state, defined in main.c.

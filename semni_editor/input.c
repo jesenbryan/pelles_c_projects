@@ -1041,6 +1041,12 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             int xSlider = rect.right - margin - sliderWidth;
             int xScaleLabel = xSlider - btnSpacing - scaleLabelWidth;
 
+            // Fourth row: View Segments toggle, right-aligned, spanning
+            // the same width as the slider row above it.
+            int viewSegWidth = 190;
+            int yViewSeg = yScale + sliderHeight + btnSpacing;
+            int xViewSeg = rect.right - margin - viewSegWidth;
+
             SetWindowPos(app->ui.hStandingPositionButton, NULL,
                  xStanding, yTop, 0, 0,
                  SWP_NOZORDER | SWP_NOSIZE);
@@ -1063,6 +1069,10 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
 
             SetWindowPos(app->ui.hScaleSlider, NULL,
                  xSlider, yScale, 0, 0,
+                 SWP_NOZORDER | SWP_NOSIZE);
+
+            SetWindowPos(app->ui.hViewSegmentsButton, NULL,
+                 xViewSeg, yViewSeg, 0, 0,
                  SWP_NOZORDER | SWP_NOSIZE);
 
             // bottom-left hover status label
@@ -1151,6 +1161,25 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
              SendMessage(app->ui.hScaleSlider, TBM_SETRANGE, TRUE, MAKELONG(25, 100));
              SendMessage(app->ui.hScaleSlider, TBM_SETPOS, TRUE, 50);
 
+             // View Segments toggle: every curve on Semni (seam/thigh/shin
+             // arcs) is a trimmed segment of some circle -- this reveals
+             // the full circle behind each one. BS_AUTOCHECKBOX |
+             // BS_PUSHLIKE gives it the same "stays visually pressed while
+             // checked" look as the ArcSpline canvas's own View Segments
+             // button (ui.c), and the button IS the toggle state (read via
+             // BM_GETCHECK in WM_COMMAND below) rather than a separately
+             // tracked bool driving it.
+             app->ui.hViewSegmentsButton = CreateWindow(
+                L"BUTTON",
+                L"View Segments",
+                WS_VISIBLE | WS_CHILD | BS_AUTOCHECKBOX | BS_PUSHLIKE,
+                10, 130, 190, 30,
+                hwnd,
+                (HMENU)ID_VIEW_SEGMENTS_BUTTON,
+                NULL,
+                NULL
+            );
+
              // bottom-left hover status label
              app->ui.hHoverLabel = CreateWindow(
                 L"STATIC",
@@ -1200,6 +1229,18 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
 				    initHomePosition(app);
 				    SetFocus(app->hwndMain);
 				    break;
+
+                case ID_VIEW_SEGMENTS_BUTTON:
+                {
+                    // BS_AUTOCHECKBOX already flipped its own check state
+                    // before this notification fires, so read it back
+                    // rather than tracking a separate bool -- same pattern
+                    // as the ArcSpline canvas's hViewSegBtn (ui.c).
+                    BOOL nowChecked = (SendMessage(app->ui.hViewSegmentsButton, BM_GETCHECK, 0, 0) == BST_CHECKED);
+                    app->showCircleSegments = nowChecked;
+                    SetFocus(app->hwndMain);
+                    break;
+                }
             }
             break;
     }

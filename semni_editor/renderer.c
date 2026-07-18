@@ -504,11 +504,67 @@ void drawSemniHandles(Semni b, RenderState* rs, float opacity)
                HEAD_BUTT_HANDLE_RADIUS, opacity);
 }
 
+// Dashed/dotted circle outline, used by drawSemniCircleSegments to draw a
+// fillet's full circle without it being mistaken for one of the robot's
+// own solid-line body/arc curves. Same GL_LINE_STIPPLE technique the
+// ArcSpline canvas's View Segments overlay uses (see canvas.c).
+static void drawGhostCircle(PointF center, float radius, float opacity)
+{
+    glEnable(GL_LINE_STIPPLE);
+    glLineStipple(1, 0x00FF);
+
+    glColor4f(0.5f, 0.5f, 0.5f, 0.6f * opacity);
+    drawCircle(center, radius);
+
+    glDisable(GL_LINE_STIPPLE);
+}
+
+void drawSemniCircleSegments(Semni b, float opacity)
+{
+    PointF center = getCenter(b);
+    float angle = b.angle;
+
+    // seam arcs 1/2: fillets between the head and butt circles, computed
+    // in the same pre-body-angle local frame drawSemniBody uses -- only
+    // the fillet's CENTER needs rotating into world space (rotation
+    // preserves distances, so the radius itself is unaffected).
+    PointF headLocal = { b.headX, b.y };
+    PointF buttLocal = { b.buttX, b.y };
+
+    Fillet seamArc1Fillet = filletFromAttachAngle(headLocal, b.headRadius, buttLocal, b.buttRadius, b.seamArc1Angle, MIN_ARC_R, MAX_ARC_R);
+    Fillet seamArc2Fillet = filletFromAttachAngle(headLocal, b.headRadius, buttLocal, b.buttRadius, b.seamArc2Angle, MIN_ARC_R, MAX_ARC_R);
+
+    drawGhostCircle(rotatePoint(seamArc1Fillet.center, center, angle), seamArc1Fillet.radius, opacity);
+    drawGhostCircle(rotatePoint(seamArc2Fillet.center, center, angle), seamArc2Fillet.radius, opacity);
+
+    // thigh arcs 1/2: fillets between innerCircle (hip) and kneeCircle,
+    // computed in the hip-local (pre-hipAngle) frame, same as drawThigh --
+    // jointToWorld carries the center through hipAngle, then bodyAngle.
+    Fillet thigh1Fillet = filletFromAttachAngle(b.innerCircle, b.innerRadius, b.kneeCircle, b.kneeRadius, b.thighArc1Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC_R);
+    Fillet thigh2Fillet = filletFromAttachAngleConcave(b.innerCircle, b.innerRadius, b.kneeCircle, b.kneeRadius, b.thighArc2Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC2_CONCAVE_R);
+
+    drawGhostCircle(jointToWorld(thigh1Fillet.center, b.innerCircle, b.hipAngle, center, angle), thigh1Fillet.radius, opacity);
+    drawGhostCircle(jointToWorld(thigh2Fillet.center, b.innerCircle, b.hipAngle, center, angle), thigh2Fillet.radius, opacity);
+
+    // shin arcs 1/2: fillets between kneeCircle and ankleCircle, computed
+    // in the knee-local (pre-kneeAngle) frame, same as drawShin --
+    // nestedJointToWorld carries the center through kneeAngle, then
+    // hipAngle, then bodyAngle.
+    Fillet shin1Fillet = filletFromAttachAngle(b.kneeCircle, b.kneeRadius, b.ankleCircle, b.ankleRadius, b.shinArc1Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC_R);
+    Fillet shin2Fillet = filletFromAttachAngleConcave(b.kneeCircle, b.kneeRadius, b.ankleCircle, b.ankleRadius, b.shinArc2Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC2_CONCAVE_R);
+
+    drawGhostCircle(nestedJointToWorld(shin1Fillet.center, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle), shin1Fillet.radius, opacity);
+    drawGhostCircle(nestedJointToWorld(shin2Fillet.center, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle), shin2Fillet.radius, opacity);
+}
+
 void drawSemni(Semni b, RenderState* rs, int includeHandles, float opacity)
 {
     drawSemniBody(b, rs, opacity);
     drawThigh(b, rs, opacity);
     drawShin(b, rs, opacity);
+
+    if (rs->showSegments)
+        drawSemniCircleSegments(b, opacity);
 
     // the draggable handles are editor UI, not part of the robot itself --
     // skip them when rendering a frame that's about to be exported
@@ -540,6 +596,8 @@ static void renderRobot(AppState* app, int includeHandles, float opacity)
     rs.hoverAnkle = app->hoverAnkle;
     rs.hoverHead = app->hoverHead;
     rs.hoverButt = app->hoverButt;
+
+    rs.showSegments = app->showCircleSegments;
 
     // sampled live every frame (the render loop runs continuously -- see
     // main.c) rather than cached from WM_MOUSEMOVE's wParam, which would

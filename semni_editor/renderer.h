@@ -27,6 +27,11 @@ typedef struct {
     // hoverHip to preview the shift+scroll hip rotation's reach (thigh,
     // knee, shin, foot) in blue before any rotation actually happens
     int shiftHeld;
+
+    // "View Segments" toggle (app->showCircleSegments) -- when set,
+    // drawSemni also overlays the full circle each fillet arc (seam/
+    // thigh/shin) was trimmed from. See drawSemniCircleSegments below.
+    int showSegments;
 } RenderState;
 
 void renderApp(AppState* app, HDC hdc);
@@ -48,3 +53,12 @@ void renderAppForSave(AppState* app);
 void renderRobotScene(AppState* app, float dimAmount);
 
 void drawSemni(Semni b, RenderState* rs, int includeHandles, float opacity);
+
+// Overlays the full circle behind each fillet arc (seam1/2, thigh1/2,
+// shin1/2) -- every curve on Semni is genuinely just an arc trimmed from
+// some circle (see app.h's seamArc1Angle comment), so this makes that
+// literally visible, the same idea as the ArcSpline canvas's own View
+// Segments overlay (canvas.c). The five body circles (head, butt, hip,
+// knee, ankle) aren't included here since drawSemniBody/drawThigh/drawShin
+// already draw those in full unconditionally.
+void drawSemniCircleSegments(Semni b, float opacity);
