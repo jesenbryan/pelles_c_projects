@@ -62,6 +62,10 @@ void applyEditorModeVisibility(EditorModeState* modeState)
         ShowWindow(app.ui.hSaveButton, semniActive ? SW_SHOW : SW_HIDE);
     if (app.ui.hMirrorButton)
         ShowWindow(app.ui.hMirrorButton, semniActive ? SW_SHOW : SW_HIDE);
+    if (app.ui.hScaleLabel)
+        ShowWindow(app.ui.hScaleLabel, semniActive ? SW_SHOW : SW_HIDE);
+    if (app.ui.hScaleSlider)
+        ShowWindow(app.ui.hScaleSlider, semniActive ? SW_SHOW : SW_HIDE);
     if (app.ui.hHoverLabel)
         ShowWindow(app.ui.hHoverLabel, semniActive ? SW_SHOW : SW_HIDE);
 

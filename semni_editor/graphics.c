@@ -24,6 +24,20 @@ static HGLRC hrc;
 // being able to zoom toward wherever the cursor happens to be.
 static float g_zoom = 1.0f;
 
+// Robot "size" slider value (see ROBOT_SCALE_MIN/MAX in config.h) -- set
+// via graphicsSetRobotScale from the trackbar in input.c. Combined
+// multiplicatively with g_zoom everywhere g_zoom is used below (see
+// effectiveZoom()), rather than kept as a wholly separate transform, so
+// this reuses the exact projection/screenToGL math that already keeps
+// zoomed rendering and hit-testing in sync -- the slider gets that same
+// guarantee for free instead of needing its own parallel bookkeeping.
+static float g_robotScale = 0.5f;
+
+static float effectiveZoom(void)
+{
+    return g_zoom * g_robotScale;
+}
+
 // Manual view pan offset, in world units -- moved by graphicsPan() during
 // a middle-mouse drag (see input.c). Kept separate from g_zoom's "never
 // drift automatically" guarantee: this only ever changes in response to
@@ -55,7 +69,7 @@ static void applyProjection(void)
     glLoadIdentity();
 
     float aspect = (float)g_lastW / (float)g_lastH;
-    float halfY = 1.5f / g_zoom;
+    float halfY = 1.5f / effectiveZoom();
     float halfX = halfY * aspect;
 
     glOrtho(-halfX, halfX, -halfY, halfY, -1, 1);
@@ -123,7 +137,7 @@ void screenToGL(HWND hwnd, int mx, int my, float *x, float *y)
     float nx = (mx / w) * 2.0f - 1.0f;
     float ny = 1.0f - (my / h) * 2.0f;
 
-    float halfY = 1.5f / g_zoom;
+    float halfY = 1.5f / effectiveZoom();
     float halfX = halfY * aspect;
 
     *x = (nx * halfX) + g_panX;
@@ -146,7 +160,7 @@ void graphicsPan(int dxPixels, int dyPixels)
     if (g_lastW == 0 || g_lastH == 0) return;
 
     float aspect = (float)g_lastW / (float)g_lastH;
-    float halfY = 1.5f / g_zoom;
+    float halfY = 1.5f / effectiveZoom();
     float halfX = halfY * aspect;
 
     float worldPerPixelX = (2.0f * halfX) / (float)g_lastW;
@@ -162,4 +176,24 @@ void graphicsGetPan(float* panX, float* panY)
 {
     *panX = g_panX;
     *panY = g_panY;
+}
+
+float graphicsGetZoom(void)
+{
+    return g_zoom;
+}
+
+void graphicsSetRobotScale(float scale)
+{
+    if (scale < ROBOT_SCALE_MIN) scale = ROBOT_SCALE_MIN;
+    if (scale > ROBOT_SCALE_MAX) scale = ROBOT_SCALE_MAX;
+
+    g_robotScale = scale;
+
+    applyProjection();
+}
+
+float graphicsGetRobotScale(void)
+{
+    return g_robotScale;
 }

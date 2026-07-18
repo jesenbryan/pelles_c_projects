@@ -27,3 +27,17 @@ void graphicsPan(int dxPixels, int dyPixels);
 // glTranslatef(-panX, -panY, 0) so drawing and screenToGL's hit-testing
 // (which also adds this offset) stay in agreement.
 void graphicsGetPan(float* panX, float* panY);
+
+// Current Semni view zoom (see graphicsZoom) -- exposed so canvas.c's
+// shared HUD overlay can show it alongside the ArcSpline canvas's own
+// zoom%, since the two modes now zoom independently of each other.
+float graphicsGetZoom(void);
+
+// Sets the robot "size" slider value (see ROBOT_SCALE_MIN/MAX in
+// config.h), clamped to that range. Layered multiplicatively with
+// graphicsZoom's own zoom in the projection math, rather than being a
+// separate transform -- reusing the exact same code path that already
+// keeps rendering and screenToGL's hit-testing in agreement for zoom
+// means the slider gets that same guarantee for free.
+void graphicsSetRobotScale(float scale);
+float graphicsGetRobotScale(void);

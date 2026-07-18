@@ -560,9 +560,29 @@ void canvasRenderFrame(float dimAmount)
     }
 
     // --- BLINK-FREE UI TEXT DRAWING ---
-    int zoomPercent = (int)(100.0f / canvas.zoom);
+    // ArcSpline and Semni each have their own independent zoom (canvas.zoom
+    // vs. graphicsGetZoom()), but only ONE readout should be on screen at
+    // a time -- whichever mode the user is actually in -- rather than both
+    // stacked, since the other one is irrelevant to what you're doing.
+    BOOL semniModeActive = (editorModeState.currentMode == EDITOR_MODE_SEMNI);
+
     char zoomStr[32];
-    wsprintfA(zoomStr, "Zoom: %d%%", zoomPercent);
+    if (semniModeActive)
+    {
+        // NOTE: opposite convention from canvas.zoom below -- graphics.c's
+        // g_zoom is a direct multiplier on top of the base projection (see
+        // graphicsZoom/applyProjection), so a BIGGER g_zoom means zoomed
+        // IN (smaller frustum), unlike canvas.zoom where bigger means
+        // zoomed OUT. Using the same "100 / zoom" formula here made this
+        // readout count down while actually zooming in.
+        int robotZoomPercent = (int)(100.0f * graphicsGetZoom());
+        wsprintfA(zoomStr, "Zoom (Robot): %d%%", robotZoomPercent);
+    }
+    else
+    {
+        int zoomPercent = (int)(100.0f / canvas.zoom);
+        wsprintfA(zoomStr, "Zoom (Sketch): %d%%", zoomPercent);
+    }
 
     glMatrixMode(GL_PROJECTION);
     glPushMatrix(); glLoadIdentity();
@@ -622,8 +642,12 @@ void canvasRenderFrame(float dimAmount)
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-    glColor4f(0.3f, 0.3f, 0.3f, opacity);
-    glRasterPos2i(glWindowWidth - 90, 20);
+    // This zoom readout is global HUD, not ArcSpline-specific content, so
+    // -- same reasoning as the mode indicator below -- it always draws at
+    // full opacity instead of fading with `opacity` when this canvas
+    // happens to be the dimmed/inactive subsystem.
+    glColor4f(0.3f, 0.3f, 0.3f, 1.0f);
+    glRasterPos2i(glWindowWidth - 160, 20);
     glPushAttrib(GL_LIST_BIT);
     glListBase(fontBase - 32);
     glCallLists((GLsizei)strlen(zoomStr), GL_UNSIGNED_BYTE, zoomStr);

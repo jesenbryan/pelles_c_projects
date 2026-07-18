@@ -951,6 +951,20 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
         }
         break;
 
+        case WM_HSCROLL:
+        {
+            // Only message this trackbar sends -- fires on every drag step,
+            // arrow-key nudge, and click-on-the-track, not just release, so
+            // the robot resizes live as the slider moves.
+            if ((HWND)lParam == app->ui.hScaleSlider)
+            {
+                int pos = (int)SendMessage(app->ui.hScaleSlider, TBM_GETPOS, 0, 0);
+                graphicsSetRobotScale(pos / 100.0f);
+                InvalidateRect(hwnd, NULL, FALSE);
+            }
+        }
+        break;
+
         case WM_KEYDOWN:
         {
             if (wParam == VK_LEFT)
@@ -1018,6 +1032,15 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             int xMirror = rect.right - margin - mirrorWidth;
             int xSave = xMirror - btnSpacing - saveWidth;
 
+            // Third row: robot size label + slider, right-aligned same as
+            // the two rows above.
+            int sliderWidth = 140;
+            int sliderHeight = 24;
+            int scaleLabelWidth = 50;
+            int yScale = yBottom + btnHeight + btnSpacing;
+            int xSlider = rect.right - margin - sliderWidth;
+            int xScaleLabel = xSlider - btnSpacing - scaleLabelWidth;
+
             SetWindowPos(app->ui.hStandingPositionButton, NULL,
                  xStanding, yTop, 0, 0,
                  SWP_NOZORDER | SWP_NOSIZE);
@@ -1032,6 +1055,14 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
 
             SetWindowPos(app->ui.hMirrorButton, NULL,
                  xMirror, yBottom, 0, 0,
+                 SWP_NOZORDER | SWP_NOSIZE);
+
+            SetWindowPos(app->ui.hScaleLabel, NULL,
+                 xScaleLabel, yScale + (sliderHeight - 20) / 2, 0, 0,
+                 SWP_NOZORDER | SWP_NOSIZE);
+
+            SetWindowPos(app->ui.hScaleSlider, NULL,
+                 xSlider, yScale, 0, 0,
                  SWP_NOZORDER | SWP_NOSIZE);
 
             // bottom-left hover status label
@@ -1089,6 +1120,36 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 NULL,
                 NULL
             );
+
+             // Robot size slider: 0.25 - 1.0 (see ROBOT_SCALE_MIN/MAX in
+             // config.h), mapped to an integer trackbar range of 25-100
+             // (WM_HSCROLL below divides the position back down by 100).
+             // Starts at 50 (scale 0.5), matching graphics.c's
+             // g_robotScale default.
+             app->ui.hScaleLabel = CreateWindow(
+                L"STATIC",
+                L"Scale",
+                WS_VISIBLE | WS_CHILD | SS_LEFT,
+                10, 90, 50, 20,
+                hwnd,
+                NULL,
+                NULL,
+                NULL
+            );
+
+             app->ui.hScaleSlider = CreateWindow(
+                TRACKBAR_CLASS,
+                L"",
+                WS_VISIBLE | WS_CHILD | TBS_HORZ | TBS_NOTICKS,
+                70, 90, 140, 24,
+                hwnd,
+                (HMENU)ID_SCALE_SLIDER,
+                NULL,
+                NULL
+            );
+
+             SendMessage(app->ui.hScaleSlider, TBM_SETRANGE, TRUE, MAKELONG(25, 100));
+             SendMessage(app->ui.hScaleSlider, TBM_SETPOS, TRUE, 50);
 
              // bottom-left hover status label
              app->ui.hHoverLabel = CreateWindow(

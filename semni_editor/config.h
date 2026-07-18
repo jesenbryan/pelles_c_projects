@@ -156,6 +156,17 @@
 #define MAX_ZOOM 8.0f
 #define ZOOM_STEP 1.1f
 
+// Robot "size" slider (top-right corner, Semni mode only -- see the
+// trackbar created in input.c's WM_CREATE). A separate, permanent
+// multiplier layered on top of the view zoom above (graphicsZoom/
+// MIN_ZOOM/MAX_ZOOM), so setting a robot size doesn't get disturbed by
+// mouse-wheel navigation zoom and vice versa. Capped at 1.0 (never
+// bigger than the default size) since "zoom in past normal" is already
+// covered by MAX_ZOOM -- this slider is only for shrinking the robot
+// down, not magnifying it further.
+#define ROBOT_SCALE_MIN 0.25f
+#define ROBOT_SCALE_MAX 1.0f
+
 // Both editor subsystems (ArcSpline canvas, Semni robot editor) now draw
 // into the same shared window every frame instead of only one being drawn
 // at a time -- switching Design Mode just decides which one is fully

@@ -8,6 +8,7 @@
 #define ID_MIRROR_LEG_BUTTON 1002
 #define ID_STANDING_POSITION_BUTTON 1003
 #define ID_HOME_POSITION_BUTTON 1004
+#define ID_SCALE_SLIDER 1005
 
 // ---- robot model (the "Semni") ----
 
@@ -113,6 +114,12 @@ typedef struct {
     HWND hMirrorButton;
     HWND hStandingPositionButton;
     HWND hHomePositionButton;
+
+    // top-right robot "size" slider (0.25 - 1.0, see ROBOT_SCALE_MIN/MAX
+    // in config.h) + its static label, a row below the buttons above.
+    // Drives graphicsSetRobotScale on WM_HSCROLL (see input.c).
+    HWND hScaleLabel;
+    HWND hScaleSlider;
 
     // bottom-left status label -- shows the friendly name of whichever
     // handle the mouse is currently hovering (e.g. "Thigh Arc 1"), blank
