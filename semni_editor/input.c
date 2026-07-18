@@ -53,10 +53,31 @@ static void adjustShinArcs(AppState* app)
     app->robotScene.robot.shinArc2Angle = clampToSafeAngleRange(app->robotScene.robot.shinArc2Angle, range2, SHIN_ARC_ANGLE_MARGIN_DEG);
 }
 
+// NEW: middle-mouse drag-pan state, mirroring canvas.c's ArcSpline
+// panning/panLastX/panLastY -- gives the Semni robot editor the same
+// pan gesture instead of only supporting zoom.
+static BOOL semniPanning = FALSE;
+static int  semniPanLastX = 0, semniPanLastY = 0;
+
 LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState* app)
 {
     switch (msg)
     {
+        case WM_MBUTTONDOWN:
+        {
+            semniPanning = TRUE;
+            semniPanLastX = LOWORD(lParam);
+            semniPanLastY = HIWORD(lParam);
+            SetCapture(hwnd);
+            return 0;
+        }
+
+        case WM_MBUTTONUP:
+        {
+            semniPanning = FALSE;
+            ReleaseCapture();
+            return 0;
+        }
         case WM_LBUTTONDOWN:
         {
             int mx = LOWORD(lParam);
@@ -304,6 +325,20 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
         {
             int mx = LOWORD(lParam);
             int my = HIWORD(lParam);
+
+            if (semniPanning)
+            {
+                int dx = mx - semniPanLastX;
+                int dy = my - semniPanLastY;
+
+                graphicsPan(dx, dy);
+
+                semniPanLastX = mx;
+                semniPanLastY = my;
+
+                InvalidateRect(hwnd, NULL, FALSE);
+                return 0;
+            }
 
             screenToGL(hwnd, mx, my, &app->mouseGL.x, &app->mouseGL.y);
 

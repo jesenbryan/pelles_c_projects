@@ -4,6 +4,7 @@
 #include "geometry.h"
 #include "robot.h"
 #include "config.h"
+#include "graphics.h"
 #include <stdio.h>
 
 // opacity multiplies every color's alpha (1.0 = fully opaque, down toward
@@ -557,6 +558,12 @@ void renderApp(AppState* app, HDC hdc)
     glMatrixMode(GL_MODELVIEW);
     glLoadIdentity();
 
+    {
+        float panX, panY;
+        graphicsGetPan(&panX, &panY);
+        glTranslatef(-panX, -panY, 0.0f);
+    }
+
     // Draw ground reference line at the bottom. The viewport's
     // half-width is 1.5 units at the base zoom level, so we position
     // the line near the bottom (-1.3) to look like a ground plane
@@ -600,6 +607,12 @@ void renderRobotScene(AppState* app, float dimAmount)
 
     glMatrixMode(GL_MODELVIEW);
     glLoadIdentity();
+
+    {
+        float panX, panY;
+        graphicsGetPan(&panX, &panY);
+        glTranslatef(-panX, -panY, 0.0f);
+    }
 
     drawDashedHorizontalLine(-1.1f, 1.5f, opacity);
 

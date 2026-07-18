@@ -24,6 +24,14 @@ static HGLRC hrc;
 // being able to zoom toward wherever the cursor happens to be.
 static float g_zoom = 1.0f;
 
+// Manual view pan offset, in world units -- moved by graphicsPan() during
+// a middle-mouse drag (see input.c). Kept separate from g_zoom's "never
+// drift automatically" guarantee: this only ever changes in response to
+// an explicit user drag, so the robot can be panned out of view the same
+// deliberate way ArcSpline strokes can (see canvas.c's canvas.panX/panY).
+static float g_panX = 0.0f;
+static float g_panY = 0.0f;
+
 // last known viewport size, cached so a zoom change can reapply the
 // projection without waiting for the next WM_SIZE
 static int g_lastW = 800;
@@ -118,8 +126,8 @@ void screenToGL(HWND hwnd, int mx, int my, float *x, float *y)
     float halfY = 1.5f / g_zoom;
     float halfX = halfY * aspect;
 
-    *x = nx * halfX;
-    *y = ny * halfY;
+    *x = (nx * halfX) + g_panX;
+    *y = (ny * halfY) + g_panY;
 }
 
 void graphicsZoom(float factor)
@@ -131,4 +139,27 @@ void graphicsZoom(float factor)
     g_zoom = newZoom;
 
     applyProjection();
+}
+
+void graphicsPan(int dxPixels, int dyPixels)
+{
+    if (g_lastW == 0 || g_lastH == 0) return;
+
+    float aspect = (float)g_lastW / (float)g_lastH;
+    float halfY = 1.5f / g_zoom;
+    float halfX = halfY * aspect;
+
+    float worldPerPixelX = (2.0f * halfX) / (float)g_lastW;
+    float worldPerPixelY = (2.0f * halfY) / (float)g_lastH;
+
+    // screen Y grows downward, world/GL Y grows upward, so the two axes
+    // flip sign relative to each other -- matches canvas.c's panX/panY drag
+    g_panX -= dxPixels * worldPerPixelX;
+    g_panY += dyPixels * worldPerPixelY;
+}
+
+void graphicsGetPan(float* panX, float* panY)
+{
+    *panX = g_panX;
+    *panY = g_panY;
 }
