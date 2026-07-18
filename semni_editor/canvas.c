@@ -649,7 +649,14 @@ void canvasRenderFrame(float dimAmount)
 
         // Small color swatch ahead of the text so the mode reads at a
         // glance without needing to read the label itself.
-        glColor4f(mr, mg, mb, opacity);
+        //
+        // This indicator reflects global app/mode state, not ArcSpline-
+        // specific content, so it always draws at full opacity -- even
+        // when this canvas is the dimmed/inactive subsystem (e.g. while
+        // the Semni robot editor is on top). Using `opacity` here made
+        // "Mode: Design - Robot" fade out precisely while you were IN
+        // robot design mode, which read as a bug/dead control.
+        glColor4f(mr, mg, mb, 1.0f);
         glBegin(GL_QUADS);
             glVertex2f(10.0f, (float)glWindowHeight - 24.0f);
             glVertex2f(20.0f, (float)glWindowHeight - 24.0f);
@@ -657,7 +664,7 @@ void canvasRenderFrame(float dimAmount)
             glVertex2f(10.0f, (float)glWindowHeight - 14.0f);
         glEnd();
 
-        glColor4f(0.2f, 0.2f, 0.2f, opacity);
+        glColor4f(0.2f, 0.2f, 0.2f, 1.0f);
         glRasterPos2i(26, glWindowHeight - 22);
         glPushAttrib(GL_LIST_BIT);
         glListBase(fontBase - 32);

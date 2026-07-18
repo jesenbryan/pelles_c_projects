@@ -41,6 +41,15 @@ HWND platformCreateMainWindow(HINSTANCE hInst, int nShowCmd, WNDPROC wndProc, HM
     wc.hInstance = hInst;
     wc.lpszClassName = L"Semni";
 
+    // Without an explicit class cursor, Windows never resets the cursor
+    // on its own when it re-enters this window's client area (the canvas)
+    // -- it just leaves whatever cursor was showing before, e.g. the
+    // diagonal resize arrow left over from dragging the window border.
+    // Setting hCursor here makes Windows restore the normal arrow over
+    // the client area automatically (via the default WM_SETCURSOR
+    // handling), instead of it getting stuck as the resize icon.
+    wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+
     RegisterClass(&wc);
 
     // WS_CLIPCHILDREN keeps the OpenGL SwapBuffers calls (which repaint

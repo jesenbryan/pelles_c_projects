@@ -1,83 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <settings version="1.0">
-	<category name="renderer.c">
-		<category name="Window">
-			<property name="Left" type="integer">2147483647</property>
-			<property name="Top" type="integer">2147483647</property>
-			<property name="Right" type="integer">1651</property>
-			<property name="Bottom" type="integer">726</property>
-			<property name="Maximized" type="integer">1</property>
-			<property name="Active" type="integer">1</property>
-		</category>
-	</category>
-	<category name="input.c">
-		<category name="Window">
-			<property name="Left" type="integer">128</property>
-			<property name="Top" type="integer">128</property>
-			<property name="Right" type="integer">1359</property>
-			<property name="Bottom" type="integer">665</property>
-			<property name="Maximized" type="integer">0</property>
-			<property name="Active" type="integer">0</property>
-		</category>
-	</category>
-	<category name="geometry.h">
-		<category name="Window">
-			<property name="Left" type="integer">160</property>
-			<property name="Top" type="integer">160</property>
-			<property name="Right" type="integer">1391</property>
-			<property name="Bottom" type="integer">697</property>
-			<property name="Maximized" type="integer">0</property>
-			<property name="Active" type="integer">0</property>
-		</category>
-	</category>
-	<category name="geometry.c">
-		<category name="Window">
-			<property name="Left" type="integer">192</property>
-			<property name="Top" type="integer">192</property>
-			<property name="Right" type="integer">1423</property>
-			<property name="Bottom" type="integer">729</property>
-			<property name="Maximized" type="integer">0</property>
-			<property name="Active" type="integer">0</property>
-		</category>
-	</category>
-	<category name="editor_mode.c">
-		<category name="Window">
-			<property name="Left" type="integer">224</property>
-			<property name="Top" type="integer">224</property>
-			<property name="Right" type="integer">1455</property>
-			<property name="Bottom" type="integer">761</property>
-			<property name="Maximized" type="integer">0</property>
-			<property name="Active" type="integer">0</property>
-		</category>
-	</category>
-	<category name="main.c">
-		<category name="Window">
-			<property name="Left" type="integer">0</property>
-			<property name="Top" type="integer">0</property>
-			<property name="Right" type="integer">1231</property>
-			<property name="Bottom" type="integer">537</property>
-			<property name="Maximized" type="integer">0</property>
-			<property name="Active" type="integer">0</property>
-		</category>
-	</category>
-	<category name="editor_mode.h">
-		<category name="Window">
-			<property name="Left" type="integer">32</property>
-			<property name="Top" type="integer">32</property>
-			<property name="Right" type="integer">1263</property>
-			<property name="Bottom" type="integer">569</property>
-			<property name="Maximized" type="integer">0</property>
-			<property name="Active" type="integer">0</property>
-		</category>
-	</category>
-	<category name="main.h">
-		<category name="Window">
-			<property name="Left" type="integer">64</property>
-			<property name="Top" type="integer">64</property>
-			<property name="Right" type="integer">1295</property>
-			<property name="Bottom" type="integer">601</property>
-			<property name="Maximized" type="integer">0</property>
-			<property name="Active" type="integer">0</property>
-		</category>
-	</category>
+	<category name="renderer.c" />
+	<category name="input.c" />
+	<category name="geometry.h" />
+	<category name="geometry.c" />
+	<category name="editor_mode.c" />
+	<category name="main.c" />
+	<category name="editor_mode.h" />
+	<category name="main.h" />
+	<category name="app.h" />
+	<category name="app_init.c" />
 </settings>

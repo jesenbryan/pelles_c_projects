@@ -964,16 +964,24 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
 
             int btnHeight = 30;
             int btnSpacing = 10;
+            int margin = 10;
 
-            // Top row: Standing Position and Home Position
+            int standingWidth = 120;
+            int homeWidth = 110;
+            int saveWidth = 80;
+            int mirrorWidth = 100;
+
+            // Top row: Standing Position and Home Position, right-aligned
+            // to the client area so the whole cluster sits in the top
+            // right corner instead of the top left.
             int yTop = 10;
-            int xStanding = 10;
-            int xHome = xStanding + 120 + btnSpacing;
+            int xHome = rect.right - margin - homeWidth;
+            int xStanding = xHome - btnSpacing - standingWidth;
 
-            // Bottom row: Save and Mirror Leg
+            // Bottom row: Save and Mirror Leg, right-aligned to match.
             int yBottom = yTop + btnHeight + btnSpacing;
-            int xSave = 10;
-            int xMirror = xSave + 80 + btnSpacing;
+            int xMirror = rect.right - margin - mirrorWidth;
+            int xSave = xMirror - btnSpacing - saveWidth;
 
             SetWindowPos(app->ui.hStandingPositionButton, NULL,
                  xStanding, yTop, 0, 0,
