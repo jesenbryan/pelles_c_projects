@@ -10,6 +10,7 @@
 #define ID_HOME_POSITION_BUTTON 1004
 #define ID_SCALE_SLIDER 1005
 #define ID_VIEW_SEGMENTS_BUTTON 1006
+#define ID_DEBUG_LOG_BUTTON 1007
 
 // ---- robot model (the "Semni") ----
 
@@ -129,6 +130,14 @@ typedef struct {
     // -- see WM_COMMAND's ID_VIEW_SEGMENTS_BUTTON handling in input.c.
     HWND hViewSegmentsButton;
 
+    // Dumps the current robot pose as app_init.c-style assignments to the
+    // console (see printRobotAsInit in robot.c) on demand -- used to be a
+    // continuous "print every 1s while the mouse moves" background log in
+    // WM_MOUSEMOVE, replaced with this explicit button so the console only
+    // gets a dump when you actually want one (e.g. to copy a hand-posed
+    // starting pose back into app_init.c).
+    HWND hDebugLogButton;
+
     // bottom-left status label -- shows the friendly name of whichever
     // handle the mouse is currently hovering (e.g. "Thigh Arc 1"), blank
     // when nothing is hovered. Updated every WM_MOUSEMOVE.
@@ -219,7 +228,6 @@ typedef struct {
     float shinArcDragStartAngle;
 
     PointF mouseGL;
-    DWORD lastLogTime;
 
     // "View Segments" state for the Semni robot editor (see
     // hViewSegmentsButton above) -- when set, drawSemniCircleSegments
@@ -231,6 +239,13 @@ typedef struct {
     // applicable. Updated every WM_MOUSEMOVE while showCircleSegments is
     // set (see input.c), read back by renderRobot to highlight it.
     int hoveredCircleSegment;
+
+    // Index (0-4, see NUM_ROBOT_BODY_CIRCLES in renderer.h) of the
+    // always-visible body circle (head/butt/hip/knee/ankle) whose
+    // circumference the mouse is currently near, or -1 if none/not
+    // applicable. Same View Segments gating as hoveredCircleSegment above
+    // -- only updated while showCircleSegments is set (see input.c).
+    int hoveredBodyCircle;
 } AppState;
 
 // The single running instance of the Semni app's state, defined in main.c.

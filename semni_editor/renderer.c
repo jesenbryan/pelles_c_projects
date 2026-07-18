@@ -600,20 +600,93 @@ void drawSemniCircleSegments(Semni b, int hoveredIndex, float opacity)
     glDisable(GL_LINE_STIPPLE);
 }
 
+// Computes the 5 body circles' world-space center + radius for the
+// robot's CURRENT pose -- same head/butt/hip/knee/ankle points
+// drawSemniBody/drawThigh/drawShin already compute for their own
+// rendering, factored out here so the hover ghost-highlight below and
+// input.c's hit-test share the exact same geometry.
+void computeSemniBodyCircles(Semni b, CircleSegment out[NUM_ROBOT_BODY_CIRCLES])
+{
+    PointF center = getCenter(b);
+    float angle = b.angle;
+
+    out[0].center = rotatePoint((PointF){b.headX, b.y}, center, angle);
+    out[0].radius = b.headRadius;
+
+    out[1].center = rotatePoint((PointF){b.buttX, b.y}, center, angle);
+    out[1].radius = b.buttRadius;
+
+    out[2].center = rotatePoint(b.innerCircle, center, angle);
+    out[2].radius = b.innerRadius;
+
+    out[3].center = jointToWorld(b.kneeCircle, b.innerCircle, b.hipAngle, center, angle);
+    out[3].radius = b.kneeRadius;
+
+    out[4].center = nestedJointToWorld(b.ankleCircle, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle);
+    out[4].radius = b.ankleRadius;
+}
+
+// One distinguishable color per body circle -- deliberately a different
+// palette from circleSegmentColor's so a hovered body circle never reads
+// as "one of the View Segments fillets" even if both happen to be
+// on-screen at once.
+static void bodyCircleColor(int index, float* r, float* g, float* b)
+{
+    static const float palette[NUM_ROBOT_BODY_CIRCLES][3] = {
+        {0.95f, 0.75f, 0.15f}, {0.15f, 0.85f, 0.95f}, {0.85f, 0.25f, 0.65f},
+        {0.55f, 0.85f, 0.20f}, {0.95f, 0.45f, 0.15f}
+    };
+    int i = index % NUM_ROBOT_BODY_CIRCLES;
+    *r = palette[i][0];
+    *g = palette[i][1];
+    *b = palette[i][2];
+}
+
+void drawSemniBodyCircleHover(Semni b, int hoveredIndex, float opacity)
+{
+    if (hoveredIndex < 0 || hoveredIndex >= NUM_ROBOT_BODY_CIRCLES)
+        return;
+
+    CircleSegment segs[NUM_ROBOT_BODY_CIRCLES];
+    computeSemniBodyCircles(b, segs);
+
+    float r, g, bl;
+    bodyCircleColor(hoveredIndex, &r, &g, &bl);
+
+    // solid, thicker, full opacity, drawn on top of the circle's own
+    // already-solid outline -- same "this one" visual language as
+    // drawSemniCircleSegments' hovered fillet, no dashed base needed
+    // since the circle itself is already always visible.
+    glDisable(GL_LINE_STIPPLE);
+    glLineWidth(2.5f);
+    glColor4f(r, g, bl, 1.0f * opacity);
+    drawCircle(segs[hoveredIndex].center, segs[hoveredIndex].radius);
+    glLineWidth(1.0f);
+}
+
 void drawSemni(Semni b, RenderState* rs, int includeHandles, float opacity)
 {
     drawSemniBody(b, rs, opacity);
     drawThigh(b, rs, opacity);
     drawShin(b, rs, opacity);
 
-    // Hard-gated on actually being in the Semni editor right now, on top
-    // of the showSegments toggle itself -- this overlay is Robot-mode
-    // editor UI (like the draggable handles below), not part of the
-    // robot's own design, so it has no business appearing in the OTHER
-    // mode's rendering of this scene (e.g. the dimmed background copy
-    // drawn behind the ArcSpline canvas -- see renderCombinedFrame).
-    if (rs->showSegments && editorModeState.currentMode == EDITOR_MODE_SEMNI)
+    // Both of these are Robot-mode editor UI overlays, not part of the
+    // robot's own design, so both are hard-gated on actually being in the
+    // Semni editor right now -- otherwise they'd have no business
+    // appearing in the OTHER mode's rendering of this scene (e.g. the
+    // dimmed background copy drawn behind the ArcSpline canvas -- see
+    // renderCombinedFrame). Both are also gated on the View Segments
+    // toggle itself (rs->showSegments) -- the body-circle hover highlight
+    // is part of the same "reveal the circles this robot is built from"
+    // feature as the fillet ghosts, so it only shows once that's turned
+    // on, not unconditionally.
+    BOOL segmentsVisible = rs->showSegments && (editorModeState.currentMode == EDITOR_MODE_SEMNI);
+
+    if (segmentsVisible)
+    {
         drawSemniCircleSegments(b, rs->hoveredCircleSegment, opacity);
+        drawSemniBodyCircleHover(b, rs->hoveredBodyCircle, opacity);
+    }
 
     // the draggable handles are editor UI, not part of the robot itself --
     // skip them when rendering a frame that's about to be exported
@@ -648,6 +721,7 @@ static void renderRobot(AppState* app, int includeHandles, float opacity)
 
     rs.showSegments = app->showCircleSegments;
     rs.hoveredCircleSegment = app->hoveredCircleSegment;
+    rs.hoveredBodyCircle = app->hoveredBodyCircle;
 
     // sampled live every frame (the render loop runs continuously -- see
     // main.c) rather than cached from WM_MOUSEMOVE's wParam, which would

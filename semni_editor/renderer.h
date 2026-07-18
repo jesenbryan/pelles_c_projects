@@ -38,6 +38,14 @@ typedef struct {
     // if none -- highlights that one solid/bright instead of dashed, same
     // idea as the ArcSpline canvas's hoveredSegment.
     int hoveredCircleSegment;
+
+    // Index (0-4, see NUM_ROBOT_BODY_CIRCLES below) of the always-visible
+    // body circle (head/butt/hip/knee/ankle) whose CIRCUMFERENCE the mouse
+    // is currently near (app->hoveredBodyCircle), or -1 if none. Separate
+    // from hoverHip/hoverKnee/etc above, which only fire near the
+    // center-point handle for dragging -- this fires anywhere along the
+    // circle's edge, purely as hover feedback (see drawSemniBodyCircleHover).
+    int hoveredBodyCircle;
 } RenderState;
 
 void renderApp(AppState* app, HDC hdc);
@@ -88,3 +96,24 @@ void computeSemniCircleSegments(Semni b, CircleSegment out[NUM_ROBOT_CIRCLE_SEGM
 // app->hoveredCircleSegment) draws that one circle solid/bright/thicker
 // instead of dashed -- same idea as the ArcSpline canvas's hoveredSegment.
 void drawSemniCircleSegments(Semni b, int hoveredIndex, float opacity);
+
+// The 5 always-visible body circles, in a fixed order: head, butt,
+// hip (innerCircle), knee, ankle -- indices into computeSemniBodyCircles'
+// output and into app->hoveredBodyCircle.
+#define NUM_ROBOT_BODY_CIRCLES 5
+
+// Computes the 5 body circles' world-space center + radius for the
+// robot's CURRENT pose. Same sharing rationale as
+// computeSemniCircleSegments -- used by both the hover ghost-highlight
+// below and input.c's hover hit-test.
+void computeSemniBodyCircles(Semni b, CircleSegment out[NUM_ROBOT_BODY_CIRCLES]);
+
+// Draws a bright/solid "ghost circle" highlight ring on top of whichever
+// body circle (see computeSemniBodyCircles) is currently hovered near its
+// circumference, or does nothing if hoveredIndex is -1. Part of the same
+// View Segments feature as drawSemniCircleSegments' fillet ghosts (the
+// caller gates both on the same toggle) -- the body circles are already
+// drawn in full unconditionally (drawSemniBody/drawThigh/drawShin), so
+// this only adds hover feedback confirming "this outline is genuinely a
+// full circle," once View Segments is turned on.
+void drawSemniBodyCircleHover(Semni b, int hoveredIndex, float opacity);

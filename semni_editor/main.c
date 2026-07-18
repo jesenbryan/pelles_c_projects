@@ -162,8 +162,6 @@ LRESULT CALLBACK WndProcShared(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
 
 int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmdLine, int nShowCmd)
 {
-	app.lastLogTime = 0;
-
 	platformInitConsole();
 	//fflush(stdout);
 

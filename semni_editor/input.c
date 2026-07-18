@@ -343,18 +343,6 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
 
             screenToGL(hwnd, mx, my, &app->mouseGL.x, &app->mouseGL.y);
 
-            DWORD now = GetTickCount();
-
-            if (now - app->lastLogTime >= 1000)
-            {
-                // dump the current robot pose as app_init.c-style assignments,
-                // so it can be copied straight in as the new starting pose
-                // once it's been shaped by hand with the handles
-                printRobotAsInit(app->robotScene.robot);
-
-                app->lastLogTime = now;
-            }
-
             PointF mouse = app->mouseGL;
 
             PointF center = getCenter(app->robotScene.robot);
@@ -423,6 +411,44 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             else
             {
                 app->hoveredCircleSegment = -1;
+            }
+
+            // Full-circle hover: head/butt/hip/knee/ankle each get a
+            // "ghost circle" highlight when the mouse is near their
+            // CIRCUMFERENCE (not just the small center handle hoverHip/
+            // hoverKnee/etc check above) -- part of the same View Segments
+            // feature as the fillet ghosts, so gated the same way: only
+            // hit-test while it's actually toggled on.
+            if (app->showCircleSegments)
+            {
+                CircleSegment bodySegs[NUM_ROBOT_BODY_CIRCLES];
+                computeSemniBodyCircles(app->robotScene.robot, bodySegs);
+
+                float effectiveZoom = graphicsGetZoom() * graphicsGetRobotScale();
+                float tolerance = 0.05f / effectiveZoom;
+
+                int best = -1;
+                float bestDist = tolerance;
+
+                for (int i = 0; i < NUM_ROBOT_BODY_CIRCLES; i++)
+                {
+                    float dx = mouse.x - bodySegs[i].center.x;
+                    float dy = mouse.y - bodySegs[i].center.y;
+                    float distToCenter = sqrtf(dx * dx + dy * dy);
+                    float distToEdge = fabsf(distToCenter - bodySegs[i].radius);
+
+                    if (distToEdge < bestDist)
+                    {
+                        bestDist = distToEdge;
+                        best = i;
+                    }
+                }
+
+                app->hoveredBodyCircle = best;
+            }
+            else
+            {
+                app->hoveredBodyCircle = -1;
             }
 
             // bottom-left hover label: also needs the bulge/seam handle
@@ -1097,6 +1123,12 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             int yViewSeg = yScale + sliderHeight + btnSpacing;
             int xViewSeg = rect.right - margin - viewSegWidth;
 
+            // Fifth row: Debug Log button, same width/alignment as View
+            // Segments above it.
+            int debugLogWidth = 190;
+            int yDebugLog = yViewSeg + btnHeight + btnSpacing;
+            int xDebugLog = rect.right - margin - debugLogWidth;
+
             SetWindowPos(app->ui.hStandingPositionButton, NULL,
                  xStanding, yTop, 0, 0,
                  SWP_NOZORDER | SWP_NOSIZE);
@@ -1125,6 +1157,10 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                  xViewSeg, yViewSeg, 0, 0,
                  SWP_NOZORDER | SWP_NOSIZE);
 
+            SetWindowPos(app->ui.hDebugLogButton, NULL,
+                 xDebugLog, yDebugLog, 0, 0,
+                 SWP_NOZORDER | SWP_NOSIZE);
+
             // bottom-left hover status label
             int hoverLabelHeight = 20;
             int hoverLabelY = rect.bottom - hoverLabelHeight - 10;
@@ -1137,12 +1173,13 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
 
         case WM_CREATE:
         {
-             // -1 = nothing hovered. Otherwise this would sit at its
-             // zero-initialized default (a valid segment index, 0) until
-             // the first WM_MOUSEMOVE recomputes it, which could briefly
-             // mislabel seam arc 1 as hovered if View Segments gets turned
-             // on before the mouse ever moves.
+             // -1 = nothing hovered. Otherwise these would sit at their
+             // zero-initialized default (a valid circle index, 0) until
+             // the first WM_MOUSEMOVE recomputes them, which could briefly
+             // mislabel seam arc 1 / the head circle as hovered before the
+             // mouse ever moves.
              app->hoveredCircleSegment = -1;
+             app->hoveredBodyCircle = -1;
 
              app->ui.hStandingPositionButton = CreateWindow(
                 L"BUTTON",
@@ -1237,6 +1274,22 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 NULL
             );
 
+             // Debug Log: dumps the current robot pose as app_init.c-style
+             // assignments to the console (printRobotAsInit, robot.c) on
+             // demand -- replaces the old "print every 1s while the mouse
+             // moves" background log in WM_MOUSEMOVE, which spammed the
+             // console constantly whether you wanted a dump or not.
+             app->ui.hDebugLogButton = CreateWindow(
+                L"BUTTON",
+                L"Debug Log",
+                WS_VISIBLE | WS_CHILD,
+                10, 170, 190, 30,
+                hwnd,
+                (HMENU)ID_DEBUG_LOG_BUTTON,
+                NULL,
+                NULL
+            );
+
              // bottom-left hover status label
              app->ui.hHoverLabel = CreateWindow(
                 L"STATIC",
@@ -1298,6 +1351,14 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     SetFocus(app->hwndMain);
                     break;
                 }
+
+                case ID_DEBUG_LOG_BUTTON:
+                    // dump the current robot pose as app_init.c-style
+                    // assignments, so it can be copied straight in as the
+                    // new starting pose once it's been shaped by hand
+                    printRobotAsInit(app->robotScene.robot);
+                    SetFocus(app->hwndMain);
+                    break;
             }
             break;
     }
