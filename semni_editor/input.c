@@ -10,6 +10,7 @@
 
 #include "robot.h"
 #include "graphics.h"
+#include "renderer.h"
 #include "save.h"
 #include "app_init.h"
 
@@ -374,6 +375,55 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             app->hoverAnkle = isNear(mouse, ankleWorld, ANKLE_HANDLE_RADIUS);
             app->hoverHead  = isNear(mouse, headWorld, HEAD_BUTT_HANDLE_RADIUS);
             app->hoverButt  = isNear(mouse, buttWorld, HEAD_BUTT_HANDLE_RADIUS);
+
+            // View Segments hover: which of the 6 fillet circles (see
+            // computeSemniCircleSegments) is nearest the mouse, within a
+            // small pick tolerance -- same idea as the ArcSpline canvas's
+            // findHoveredSegment, gated the same way canvas.c gates its
+            // own hover detection on canvas.showSegments (only bother
+            // hit-testing invisible-otherwise geometry while it's actually
+            // shown). Picks against the circle's EDGE (|distToCenter -
+            // radius|), not its interior, since that's what's actually
+            // drawn -- the circle isn't a filled shape.
+            if (app->showCircleSegments)
+            {
+                CircleSegment segs[NUM_ROBOT_CIRCLE_SEGMENTS];
+                computeSemniCircleSegments(app->robotScene.robot, segs);
+
+                // World-unit pick radius that corresponds to a constant
+                // on-screen size, same reasoning as ArcSpline's "tolerance
+                // = 0.05 * canvas.zoom" -- except Semni's zoom convention
+                // is inverted (see graphicsGetZoom's comment: bigger means
+                // zoomed IN here, unlike canvas.zoom), so this divides
+                // instead of multiplies, and also folds in the robot size
+                // slider (graphicsGetRobotScale) since that scales the
+                // view the same way zoom does.
+                float effectiveZoom = graphicsGetZoom() * graphicsGetRobotScale();
+                float tolerance = 0.05f / effectiveZoom;
+
+                int best = -1;
+                float bestDist = tolerance;
+
+                for (int i = 0; i < NUM_ROBOT_CIRCLE_SEGMENTS; i++)
+                {
+                    float dx = mouse.x - segs[i].center.x;
+                    float dy = mouse.y - segs[i].center.y;
+                    float distToCenter = sqrtf(dx * dx + dy * dy);
+                    float distToEdge = fabsf(distToCenter - segs[i].radius);
+
+                    if (distToEdge < bestDist)
+                    {
+                        bestDist = distToEdge;
+                        best = i;
+                    }
+                }
+
+                app->hoveredCircleSegment = best;
+            }
+            else
+            {
+                app->hoveredCircleSegment = -1;
+            }
 
             // bottom-left hover label: also needs the bulge/seam handle
             // positions (seam arc 1, seam arc 2, both thigh arcs, both
@@ -1087,6 +1137,13 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
 
         case WM_CREATE:
         {
+             // -1 = nothing hovered. Otherwise this would sit at its
+             // zero-initialized default (a valid segment index, 0) until
+             // the first WM_MOUSEMOVE recomputes it, which could briefly
+             // mislabel seam arc 1 as hovered if View Segments gets turned
+             // on before the mouse ever moves.
+             app->hoveredCircleSegment = -1;
+
              app->ui.hStandingPositionButton = CreateWindow(
                 L"BUTTON",
                 L"Standing",

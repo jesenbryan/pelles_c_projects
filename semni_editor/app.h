@@ -225,6 +225,12 @@ typedef struct {
     // hViewSegmentsButton above) -- when set, drawSemniCircleSegments
     // (renderer.c) overlays the full circle behind every fillet arc.
     int showCircleSegments;
+
+    // Index (0-5, see NUM_ROBOT_CIRCLE_SEGMENTS in renderer.h) of the
+    // circle segment currently under the mouse, or -1 if none/not
+    // applicable. Updated every WM_MOUSEMOVE while showCircleSegments is
+    // set (see input.c), read back by renderRobot to highlight it.
+    int hoveredCircleSegment;
 } AppState;
 
 // The single running instance of the Semni app's state, defined in main.c.

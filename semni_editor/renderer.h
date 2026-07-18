@@ -32,6 +32,12 @@ typedef struct {
     // drawSemni also overlays the full circle each fillet arc (seam/
     // thigh/shin) was trimmed from. See drawSemniCircleSegments below.
     int showSegments;
+
+    // Index (0-5, see NUM_ROBOT_CIRCLE_SEGMENTS below) of the circle
+    // segment currently under the mouse (app->hoveredCircleSegment), or -1
+    // if none -- highlights that one solid/bright instead of dashed, same
+    // idea as the ArcSpline canvas's hoveredSegment.
+    int hoveredCircleSegment;
 } RenderState;
 
 void renderApp(AppState* app, HDC hdc);
@@ -54,11 +60,31 @@ void renderRobotScene(AppState* app, float dimAmount);
 
 void drawSemni(Semni b, RenderState* rs, int includeHandles, float opacity);
 
+// The 6 fillet circles View Segments reveals: seam1/2 (head-butt),
+// thigh1/2 (hip-knee), shin1/2 (knee-ankle), in that fixed order --
+// indices into computeSemniCircleSegments' output and into
+// app->hoveredCircleSegment.
+#define NUM_ROBOT_CIRCLE_SEGMENTS 6
+
+typedef struct {
+    PointF center; // world space
+    float radius;
+} CircleSegment;
+
+// Computes the 6 fillet circles' world-space center + radius for the
+// robot's CURRENT pose. Shared by drawSemniCircleSegments (rendering) and
+// input.c's hover hit-test, so the two can never disagree about where
+// these circles actually are -- same reasoning as reusing jointToWorld/
+// rotatePoint for both drawing and hit-testing elsewhere in this codebase.
+void computeSemniCircleSegments(Semni b, CircleSegment out[NUM_ROBOT_CIRCLE_SEGMENTS]);
+
 // Overlays the full circle behind each fillet arc (seam1/2, thigh1/2,
 // shin1/2) -- every curve on Semni is genuinely just an arc trimmed from
 // some circle (see app.h's seamArc1Angle comment), so this makes that
 // literally visible, the same idea as the ArcSpline canvas's own View
 // Segments overlay (canvas.c). The five body circles (head, butt, hip,
 // knee, ankle) aren't included here since drawSemniBody/drawThigh/drawShin
-// already draw those in full unconditionally.
-void drawSemniCircleSegments(Semni b, float opacity);
+// already draw those in full unconditionally. hoveredIndex (see
+// app->hoveredCircleSegment) draws that one circle solid/bright/thicker
+// instead of dashed -- same idea as the ArcSpline canvas's hoveredSegment.
+void drawSemniCircleSegments(Semni b, int hoveredIndex, float opacity);
