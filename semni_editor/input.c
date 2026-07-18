@@ -364,19 +364,30 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             app->hoverHead  = isNear(mouse, headWorld, HEAD_BUTT_HANDLE_RADIUS);
             app->hoverButt  = isNear(mouse, buttWorld, HEAD_BUTT_HANDLE_RADIUS);
 
-            // View Segments hover: which of the 6 fillet circles (see
-            // computeSemniCircleSegments) is nearest the mouse, within a
-            // small pick tolerance -- same idea as the ArcSpline canvas's
-            // findHoveredSegment, gated the same way canvas.c gates its
-            // own hover detection on canvas.showSegments (only bother
-            // hit-testing invisible-otherwise geometry while it's actually
-            // shown). Picks against the circle's EDGE (|distToCenter -
-            // radius|), not its interior, since that's what's actually
-            // drawn -- the circle isn't a filled shape.
+            // View Segments hover: which SINGLE circle -- out of both the
+            // 6 fillet circles (computeSemniCircleSegments) and the 5
+            // always-visible body circles (computeSemniBodyCircles) -- is
+            // nearest the mouse, within a small pick tolerance. Same idea
+            // as the ArcSpline canvas's findHoveredSegment, gated the same
+            // way canvas.c gates its own hover detection on
+            // canvas.showSegments. Picks against each circle's EDGE
+            // (|distToCenter - radius|), not its interior, since that's
+            // what's actually drawn -- a circle outline isn't a filled
+            // shape.
+            //
+            // The two candidate sets are searched against ONE shared
+            // bestDist rather than independently, so exactly one circle
+            // (fillet OR body, never both) ends up highlighted even where
+            // a fillet and a body circle happen to sit close together --
+            // whichever loop finds a closer match resets the other kind's
+            // result back to -1.
             if (app->showCircleSegments)
             {
-                CircleSegment segs[NUM_ROBOT_CIRCLE_SEGMENTS];
-                computeSemniCircleSegments(app->robotScene.robot, segs);
+                CircleSegment fillets[NUM_ROBOT_CIRCLE_SEGMENTS];
+                computeSemniCircleSegments(app->robotScene.robot, fillets);
+
+                CircleSegment bodySegs[NUM_ROBOT_BODY_CIRCLES];
+                computeSemniBodyCircles(app->robotScene.robot, bodySegs);
 
                 // World-unit pick radius that corresponds to a constant
                 // on-screen size, same reasoning as ArcSpline's "tolerance
@@ -389,46 +400,24 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 float effectiveZoom = graphicsGetZoom() * graphicsGetRobotScale();
                 float tolerance = 0.05f / effectiveZoom;
 
-                int best = -1;
+                int bestFillet = -1;
+                int bestBody = -1;
                 float bestDist = tolerance;
 
                 for (int i = 0; i < NUM_ROBOT_CIRCLE_SEGMENTS; i++)
                 {
-                    float dx = mouse.x - segs[i].center.x;
-                    float dy = mouse.y - segs[i].center.y;
+                    float dx = mouse.x - fillets[i].center.x;
+                    float dy = mouse.y - fillets[i].center.y;
                     float distToCenter = sqrtf(dx * dx + dy * dy);
-                    float distToEdge = fabsf(distToCenter - segs[i].radius);
+                    float distToEdge = fabsf(distToCenter - fillets[i].radius);
 
                     if (distToEdge < bestDist)
                     {
                         bestDist = distToEdge;
-                        best = i;
+                        bestFillet = i;
+                        bestBody = -1;
                     }
                 }
-
-                app->hoveredCircleSegment = best;
-            }
-            else
-            {
-                app->hoveredCircleSegment = -1;
-            }
-
-            // Full-circle hover: head/butt/hip/knee/ankle each get a
-            // "ghost circle" highlight when the mouse is near their
-            // CIRCUMFERENCE (not just the small center handle hoverHip/
-            // hoverKnee/etc check above) -- part of the same View Segments
-            // feature as the fillet ghosts, so gated the same way: only
-            // hit-test while it's actually toggled on.
-            if (app->showCircleSegments)
-            {
-                CircleSegment bodySegs[NUM_ROBOT_BODY_CIRCLES];
-                computeSemniBodyCircles(app->robotScene.robot, bodySegs);
-
-                float effectiveZoom = graphicsGetZoom() * graphicsGetRobotScale();
-                float tolerance = 0.05f / effectiveZoom;
-
-                int best = -1;
-                float bestDist = tolerance;
 
                 for (int i = 0; i < NUM_ROBOT_BODY_CIRCLES; i++)
                 {
@@ -440,14 +429,17 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     if (distToEdge < bestDist)
                     {
                         bestDist = distToEdge;
-                        best = i;
+                        bestBody = i;
+                        bestFillet = -1;
                     }
                 }
 
-                app->hoveredBodyCircle = best;
+                app->hoveredCircleSegment = bestFillet;
+                app->hoveredBodyCircle = bestBody;
             }
             else
             {
+                app->hoveredCircleSegment = -1;
                 app->hoveredBodyCircle = -1;
             }
 
