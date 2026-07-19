@@ -1470,6 +1470,17 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	            // WM_MOUSEMOVE above switch left-drag from drawing new
 	            // strokes to dragging the whole robot into a starting pose.
 	            switchEditorMode(EDITOR_MODE_ARCSPLINE, &editorModeState);
+
+	            // Only ONE of Robot (Semni) / Environment / Simulation
+	            // should ever show as checked at a time. designLayer itself
+	            // is left alone here on purpose -- switching back to Design
+	            // Mode later should return to whichever layer was last
+	            // active -- but the CHECKMARKS have to be cleared now, or
+	            // whichever layer was checked before would still show
+	            // checked alongside Simulation, making it look like two
+	            // modes are active at once.
+	            CheckMenuItem(hDesignMenu, ID_LAYER_ROBOT, MF_BYCOMMAND | MF_UNCHECKED);
+	            CheckMenuItem(hDesignMenu, ID_LAYER_ENVIRONMENT, MF_BYCOMMAND | MF_UNCHECKED);
 	        }
 	        else
 	        {
