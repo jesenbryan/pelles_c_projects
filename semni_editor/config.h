@@ -197,6 +197,22 @@
 // visibly stop falling while still floating above the drawn line.
 #define SIMULATION_ARC_COLLISION_THICKNESS 0.03f
 
+// applyGravityStep (canvas.c) used to just undo a WHOLE gravity step the
+// instant it detected a collision -- simple, but it means the robot always
+// stops up to one full step's worth of world units short of actually
+// touching the ground, not right at contact. That gap is a fixed number of
+// WORLD units, so it stayed sub-pixel and invisible at normal zoom, but
+// zooming in close enough makes those same world units cover many more
+// screen pixels, turning it into a visible floating gap -- worse still
+// once auto gravity's step size grew for the acceleration fix
+// (SIMULATION_AUTO_GRAVITY_MAX_STEP). Fix: once a step collides,
+// binary-search within it for how far it can actually go before touching,
+// this many iterations deep -- each iteration halves the remaining
+// uncertainty, so this many fully collapses even the largest step
+// (SIMULATION_AUTO_GRAVITY_MAX_STEP, 0.08) to a gap far smaller than a
+// screen pixel at any zoom level actually reachable in this app.
+#define GRAVITY_CONTACT_SEARCH_ITERATIONS 12
+
 // Shift+G toggles "auto gravity" in Simulation mode on/off -- while on, a
 // dedicated timer (see canvas.c's AUTO_GRAVITY_TIMER_ID) applies one
 // gravity step on every tick, until it's toggled off again (or canvas.c's

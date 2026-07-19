@@ -359,24 +359,49 @@ static BOOL robotCollidesWithEnvironment(Semni robot)
 }
 
 // Applies one gravity step to the robot -- tentatively translates it down
-// by `step` world units, then checks robotCollidesWithEnvironment and
-// undoes the move if it would now be inside whatever ground the user has
-// drawn. Simpler than solving for the exact landing point, and fine at
-// small step sizes (small enough that "undo the whole step" reads as
-// "stopped at the ground" rather than visibly overshooting first). Shared
-// by the plain G keypress (one SIMULATION_GRAVITY_STEP per press, or per
-// Windows auto-repeat tick while held) and the Shift+G auto-gravity timer
-// (an accelerating step, see autoGravityVelocity below) -- see
-// WM_KEYDOWN/WM_TIMER below. Returns TRUE if the step was blocked (i.e.
-// it landed on something this tick), so auto-gravity's timer handler
-// knows when to reset its velocity back to 0.
+// by `step` world units, then checks robotCollidesWithEnvironment. If that
+// collides, binary-searches within the step (GRAVITY_CONTACT_SEARCH_ITERATIONS,
+// config.h) for how far it can actually descend before touching, instead of
+// just undoing the whole step -- otherwise the robot always stops up to one
+// full step short of the ground, a gap that's invisible in world units at
+// normal zoom but turns into an obvious floating gap once you zoom in close
+// enough (see config.h's comment on GRAVITY_CONTACT_SEARCH_ITERATIONS).
+// Shared by the plain G keypress (one SIMULATION_GRAVITY_STEP per press, or
+// per Windows auto-repeat tick while held) and the Shift+G auto-gravity
+// timer (an accelerating step, see autoGravityVelocity below) -- see
+// WM_KEYDOWN/WM_TIMER below. Returns TRUE if the step was blocked (i.e. it
+// landed on something this tick), so auto-gravity's timer handler knows
+// when to reset its velocity back to 0.
 static BOOL applyGravityStep(HWND hWnd, float step)
 {
     translateRobot(&app.robotScene.robot, 0.0f, -step);
 
     BOOL landed = robotCollidesWithEnvironment(app.robotScene.robot);
     if (landed)
+    {
+        // Back out to the last known-safe position (before this step), then
+        // binary-search the largest downward offset within [0, step] that
+        // doesn't collide, converging on the true contact point instead of
+        // leaving a whole-step-sized gap above it.
         translateRobot(&app.robotScene.robot, 0.0f, step);
+
+        float safe = 0.0f;      // largest offset confirmed NOT to collide
+        float blocked = step;   // smallest offset confirmed TO collide
+
+        for (int i = 0; i < GRAVITY_CONTACT_SEARCH_ITERATIONS; i++)
+        {
+            float mid = (safe + blocked) * 0.5f;
+
+            translateRobot(&app.robotScene.robot, 0.0f, -mid);
+            BOOL hit = robotCollidesWithEnvironment(app.robotScene.robot);
+            translateRobot(&app.robotScene.robot, 0.0f, mid); // undo probe
+
+            if (hit) blocked = mid;
+            else     safe = mid;
+        }
+
+        translateRobot(&app.robotScene.robot, 0.0f, -safe);
+    }
 
     InvalidateRect(hWnd, NULL, FALSE);
     return landed;
