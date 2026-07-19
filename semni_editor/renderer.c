@@ -6,7 +6,6 @@
 #include "config.h"
 #include "graphics.h"
 #include "editor_mode.h"
-#include "ui_state.h"      // For appMode -- hides joint handles and adds a drag halo in Simulation mode
 #include <stdio.h>
 
 // opacity multiplies every color's alpha (1.0 = fully opaque, down toward
@@ -701,11 +700,14 @@ void drawSemni(Semni b, RenderState* rs, int includeHandles, float opacity)
     }
 
     // The draggable handles are editor UI, not part of the robot itself --
-    // skip them when rendering a frame that's about to be exported, AND
-    // in Simulation mode, where individual joints aren't interactable
-    // (only the whole-robot drag above works) so showing them would just
-    // be misleading clutter.
-    BOOL handlesVisible = includeHandles && (appMode != APP_MODE_SIMULATION);
+    // skip them when rendering a frame that's about to be exported, and
+    // hard-gate on actually being in the Semni editor right now (same
+    // reasoning as segmentsVisible above): in Simulation mode individual
+    // joints aren't interactable (only the whole-robot drag works), and in
+    // Design > Environment mode this is just the dimmed background copy of
+    // the robot, not something being actively edited -- either way, the
+    // handles would be misleading clutter rather than useful UI.
+    BOOL handlesVisible = includeHandles && (editorModeState.currentMode == EDITOR_MODE_SEMNI);
 
     if (handlesVisible)
     {
@@ -816,13 +818,15 @@ void renderRobotScene(AppState* app, float dimAmount)
     }
 
     // Ground reference line: a Design > Robot editing aid for laying down
-    // poses (see renderApp's comment), not something Simulation needs --
-    // Simulation already has the actual traced environment to pose the
-    // robot against, so the fake ground line would just be visual clutter
-    // (and isn't even the right "ground" once the robot's been dragged
-    // somewhere else in the scene). Still shown for Design > Robot itself,
-    // including its dimmed-background copy while Environment is active.
-    if (appMode != APP_MODE_SIMULATION)
+    // poses (see renderApp's comment) -- hard-gated on actually being in
+    // the Semni editor right now, same reasoning as handlesVisible in
+    // drawSemni below: it's not useful in Simulation (which has the real
+    // traced environment to pose against instead, and the robot may not
+    // even be sitting on this fake line anymore once it's been dragged),
+    // and it's not useful as part of Design > Environment's dimmed
+    // background copy of the robot either, since nothing is being edited
+    // there.
+    if (editorModeState.currentMode == EDITOR_MODE_SEMNI)
         drawDashedHorizontalLine(-1.1f, 1.5f, opacity);
 
     renderRobot(app, 1, opacity);
