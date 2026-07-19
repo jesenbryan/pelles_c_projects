@@ -578,6 +578,18 @@ static void advanceAutoGravity(HWND hWnd)
 {
     if (!autoGravityActive || appMode != APP_MODE_SIMULATION) return;
 
+    // While the user is manually dragging the robot, let THEM be the one
+    // moving it -- silently skip stepping instead of fighting the drag
+    // (or, worse, applying a big catch-up step once the drag ends). This
+    // deliberately leaves autoGravityActive/the toast untouched -- it's a
+    // temporary pause, not a toggle-off, so nothing shows on screen and
+    // Shift+G's own state doesn't change. WM_LBUTTONUP resets
+    // autoGravityVelocity/autoGravityLastTickTime once the drag ends, so
+    // the fall resumes fresh from rest rather than picking up wherever it
+    // left off (the robot may have just been moved somewhere completely
+    // different) or jumping by however long the drag itself lasted.
+    if (app.draggingRobotSim) return;
+
     DWORD now = GetTickCount();
     DWORD elapsed = now - autoGravityLastTickTime;
     if (elapsed == 0) return; // already advanced this exact millisecond
@@ -1627,6 +1639,20 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         if (app.draggingRobotSim)
         {
             app.draggingRobotSim = FALSE;
+
+            // Auto gravity was silently paused for the duration of the drag
+            // (see advanceAutoGravity's app.draggingRobotSim check) -- pick
+            // back up from rest now that the robot's been let go, same as a
+            // fresh Shift+G toggle-on or a landing, rather than resuming
+            // with whatever velocity had built up before the drag started
+            // (the robot may now be somewhere completely different) or
+            // jumping by however long the drag itself lasted.
+            if (autoGravityActive)
+            {
+                autoGravityVelocity = 0.0f;
+                autoGravityLastTickTime = GetTickCount();
+            }
+
             ReleaseCapture();
         }
         return 0;
