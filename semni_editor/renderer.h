@@ -46,6 +46,15 @@ typedef struct {
     // center-point handle for dragging -- this fires anywhere along the
     // circle's edge, purely as hover feedback (see drawSemniBodyCircleHover).
     int hoveredBodyCircle;
+
+    // TRUE while the user is actively dragging the whole robot in
+    // Simulation mode (app->draggingRobotSim, set by canvas.c's
+    // WM_LBUTTONDOWN/WM_MOUSEMOVE) -- setColor (renderer.c) ORs this into
+    // its "active" check so every line of the robot's own outline renders
+    // in the hover/drag blue while a drag is in progress, reverting to
+    // normal per-part coloring the instant it's released, as feedback that
+    // it's being moved.
+    int draggingWhole;
 } RenderState;
 
 void renderApp(AppState* app, HDC hdc);

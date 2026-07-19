@@ -246,6 +246,15 @@ typedef struct {
     // applicable. Same View Segments gating as hoveredCircleSegment above
     // -- only updated while showCircleSegments is set (see input.c).
     int hoveredBodyCircle;
+
+    // TRUE while the user is actively dragging the whole robot into a
+    // starting position in Simulation mode (see canvas.c's
+    // WM_LBUTTONDOWN/WM_MOUSEMOVE, which set this and call
+    // translateRobot). Lives here rather than as a canvas.c-local static
+    // so renderRobot (renderer.c) can read it too, threading it into
+    // RenderState.draggingWhole so the robot's outline renders blue for as
+    // long as this is true, and back to normal the instant it's released.
+    int draggingRobotSim;
 } AppState;
 
 // The single running instance of the Semni app's state, defined in main.c.

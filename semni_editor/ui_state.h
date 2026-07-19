@@ -21,7 +21,11 @@
 
 // App-wide mode, switched from the "Mode" menu on the GL window.
 // Design = draw/trace/edit arc-spline paths (current behavior).
-// Simulation = reserved for running/animating traced paths.
+// Simulation = shows the environment and the Semni robot together at full
+// opacity (see canvas.c's renderCombinedFrame), robot joint handles
+// hidden, and left-drag moves the whole robot (canvas.c's
+// WM_LBUTTONDOWN/WM_MOUSEMOVE + robot.c's translateRobot) to set its
+// starting position -- animating/running the pose itself is still to come.
 typedef enum {
     APP_MODE_DESIGN = 0,
     APP_MODE_SIMULATION

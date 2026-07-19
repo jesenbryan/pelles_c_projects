@@ -4,9 +4,11 @@
 #include "bmp_ui.h"        // For saveBMP_UI
 #include "render.h"        // For renderSegmentsToImage
 #include "editor_mode.h"   // For switchEditorMode -- Design Mode > Robot (Semni) launches the robot editor
-#include "graphics.h"      // For graphicsOnResize -- renderCombinedFrame draws both subsystems
+#include "graphics.h"      // For graphicsOnResize/screenToGL -- renderCombinedFrame draws both subsystems
 #include "renderer.h"      // For renderRobotScene -- the Semni half of renderCombinedFrame
+#include "robot.h"         // For translateRobot -- dragging the robot into position in Simulation mode
 #include "config.h"        // For INACTIVE_MODE_DIM_ALPHA
+#include "sim_camera.h"    // Simulation mode's own independent zoom/pan (see sim_camera.h)
 #include <math.h>
 #include <string.h>
 
@@ -82,6 +84,30 @@ float markerEndX   = 0.0f, markerEndY   = 0.0f;
 // NEW: pan state
 static BOOL panning = FALSE;
 static int  panLastX = 0, panLastY = 0;
+
+// Simulation mode: dragging anywhere (instead of drawing a new stroke)
+// moves the WHOLE robot rigidly, letting the user set its starting
+// position within the environment. Uses screenToGL (graphics.h) rather
+// than this file's own canvas.zoom/panX/panY conversion -- the robot is
+// rendered through Semni's own, entirely separate zoom/pan (graphics.c's
+// g_zoom/g_panX/g_panY), so only screenToGL is guaranteed to agree with
+// wherever the robot is actually drawn on screen.
+//
+// The "am I dragging right now" flag itself lives in app.draggingRobotSim
+// (app.h), not as a static here, so renderRobot (renderer.c) can also see
+// it to render the robot's outline in blue while a drag is in progress --
+// only the drag's own last-position bookkeeping needs to stay local to
+// this file.
+static float dragRobotLastWX = 0.0f, dragRobotLastWY = 0.0f;
+
+// TRUE while the cursor is over the robot's body (see
+// isPointInsideRobotBody, robot.c) in Simulation mode -- updated every
+// WM_MOUSEMOVE (the only place the current cursor position is known) and
+// read back by WM_SETCURSOR (whose lParam/wParam don't carry a position)
+// to only show the move cursor, and by WM_LBUTTONDOWN to only start a
+// whole-robot drag, when the mouse is genuinely over the robot rather than
+// anywhere on the canvas.
+static BOOL hoveringRobotBodySim = FALSE;
 
 // NEW: shift-line "hold still to snap" state - lets the user snap to a
 // horizontal / vertical / 45-degree diagonal line just by holding the
@@ -243,15 +269,32 @@ static BOOL findNearestStrokeEndpoint(float wx, float wy, float* outX, float* ou
     return found;
 }
 
+// In Simulation mode, the ArcSpline environment is driven by sim_camera's
+// own independent zoom instead of canvas.zoom -- see sim_camera.h for why
+// (keeps the environment and the robot zooming together as one scene,
+// without disturbing canvas.zoom, which Design > Environment mode still
+// owns and returns to exactly as it left it).
+//
+// NOTE on the conversion below: canvas.zoom follows a "bigger = zoomed
+// OUT" convention (it's used directly as the ortho half-extent multiplier
+// -- see the non-simulation branch), while sim_camera's zoom follows the
+// opposite "bigger = zoomed IN" convention (same as graphics.c's g_zoom,
+// so the robot's own applyProjection can share it via a plain 1.5/zoom --
+// see sim_camera.h). Inverting it here (1.0f / simCameraGetZoom(), 1.0
+// being canvas's own base half-extent at zoom=1) is what lets a single
+// simCameraZoom() call still zoom the environment and the robot in the
+// same direction together, despite the two subsystems' projections having
+// opposite native conventions.
 void UpdateProjection(void)
 {
     glMatrixMode(GL_PROJECTION);
     glLoadIdentity();
     float aspect = (float)glWindowWidth / (float)glWindowHeight;
+    float zoom = (appMode == APP_MODE_SIMULATION) ? (1.0f / simCameraGetZoom()) : canvas.zoom;
     if (aspect >= 1.0f) {
-        glOrtho(-aspect * canvas.zoom, aspect * canvas.zoom, -1.0f * canvas.zoom, 1.0f * canvas.zoom, -1.0f, 1.0f);
+        glOrtho(-aspect * zoom, aspect * zoom, -1.0f * zoom, 1.0f * zoom, -1.0f, 1.0f);
     } else {
-        glOrtho(-1.0f * canvas.zoom, 1.0f * canvas.zoom, -(1.0f / aspect) * canvas.zoom, (1.0f / aspect) * canvas.zoom, -1.0f, 1.0f);
+        glOrtho(-1.0f * zoom, 1.0f * zoom, -(1.0f / aspect) * zoom, (1.0f / aspect) * zoom, -1.0f, 1.0f);
     }
     glMatrixMode(GL_MODELVIEW);
 }
@@ -284,7 +327,22 @@ void canvasRenderFrame(float dimAmount)
 
     glMatrixMode(GL_MODELVIEW);
     glLoadIdentity();
-    glTranslatef(-canvas.panX, -canvas.panY, 0.0f);   // NEW: apply camera pan to everything below
+
+    // In Simulation mode, pan through sim_camera instead of canvas.panX/
+    // panY -- scaled for this subsystem's own base half-extent (1.0f, see
+    // UpdateProjection above) so it stays in exact pixel-lockstep with
+    // however far the robot itself pans (see graphics.c's graphicsGetPan),
+    // despite the two subsystems' projections not sharing a base unit.
+    if (appMode == APP_MODE_SIMULATION)
+    {
+        float simPanX, simPanY;
+        simCameraGetPanScaled(1.0f, &simPanX, &simPanY);
+        glTranslatef(-simPanX, -simPanY, 0.0f);
+    }
+    else
+    {
+        glTranslatef(-canvas.panX, -canvas.panY, 0.0f);   // NEW: apply camera pan to everything below
+    }
 
     // Only show background image if NOT in active comparison mode.
     // Deliberately NOT gated on canvas.showSegments - Comparison Mode
@@ -560,14 +618,24 @@ void canvasRenderFrame(float dimAmount)
     }
 
     // --- BLINK-FREE UI TEXT DRAWING ---
-    // ArcSpline and Semni each have their own independent zoom (canvas.zoom
-    // vs. graphicsGetZoom()), but only ONE readout should be on screen at
-    // a time -- whichever mode the user is actually in -- rather than both
-    // stacked, since the other one is irrelevant to what you're doing.
+    // ArcSpline, Semni, and Simulation each have their own independent zoom
+    // (canvas.zoom / graphicsGetZoom() / simCameraGetZoom()), but only ONE
+    // readout should be on screen at a time -- whichever mode the user is
+    // actually in -- rather than stacking all three, since the other two
+    // are irrelevant to what you're doing.
     BOOL semniModeActive = (editorModeState.currentMode == EDITOR_MODE_SEMNI);
 
     char zoomStr[32];
-    if (semniModeActive)
+    if (appMode == APP_MODE_SIMULATION)
+    {
+        // Same "bigger = zoomed in" convention as graphicsGetZoom below --
+        // sim_camera's zoom was deliberately built to match it (see
+        // sim_camera.h), so this readout uses the same "100 * zoom" formula
+        // rather than canvas.zoom's inverted one.
+        int simZoomPercent = (int)(100.0f * simCameraGetZoom());
+        wsprintfA(zoomStr, "Zoom (Simulation): %d%%", simZoomPercent);
+    }
+    else if (semniModeActive)
     {
         // NOTE: opposite convention from canvas.zoom below -- graphics.c's
         // g_zoom is a direct multiplier on top of the base projection (see
@@ -706,12 +774,24 @@ void canvasRenderFrame(float dimAmount)
 // editor subsystems, whichever is currently active (editorModeState.
 // currentMode) at full opacity on top, the other dimmed underneath. See
 // canvas.h for the full rationale.
+//
+// EXCEPT in Simulation mode: switchEditorMode always forces ArcSpline to
+// be the "active" editor mode when Simulation is picked (see WM_COMMAND's
+// ID_MODE_SIMULATION handling), which would otherwise leave the robot
+// dimmed the whole time you're simulating -- backwards for a mode whose
+// whole point is seeing the robot posed clearly within its environment,
+// and dragging it into a starting position (WM_LBUTTONDOWN/WM_MOUSEMOVE
+// above). So both subsystems draw at full opacity together here instead.
 void renderCombinedFrame(void)
 {
     glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     BOOL semniActive = (editorModeState.currentMode == EDITOR_MODE_SEMNI);
+    BOOL simulationActive = (appMode == APP_MODE_SIMULATION);
+
+    float robotDimAmount  = (semniActive || simulationActive) ? 0.0f : INACTIVE_MODE_DIM_ALPHA;
+    float canvasDimAmount = (!semniActive || simulationActive) ? 0.0f : INACTIVE_MODE_DIM_ALPHA;
 
     // Semni's own projection/blend state has to be (re)asserted right
     // before it draws, and the ArcSpline canvas's projection right before
@@ -721,25 +801,25 @@ void renderCombinedFrame(void)
     // projection matrix active.
     if (semniActive)
     {
-        // ArcSpline dimmed underneath...
-        canvasRenderFrame(INACTIVE_MODE_DIM_ALPHA);
+        // ArcSpline underneath...
+        canvasRenderFrame(canvasDimAmount);
 
-        // ...Semni active, full opacity, on top
+        // ...Semni on top
         graphicsOnResize(glWindowWidth, glWindowHeight);
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        renderRobotScene(&app, 0.0f);
+        renderRobotScene(&app, robotDimAmount);
     }
     else
     {
-        // Semni dimmed underneath...
+        // Semni underneath...
         graphicsOnResize(glWindowWidth, glWindowHeight);
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        renderRobotScene(&app, INACTIVE_MODE_DIM_ALPHA);
+        renderRobotScene(&app, robotDimAmount);
 
-        // ...ArcSpline active, full opacity, on top
-        canvasRenderFrame(0.0f);
+        // ...ArcSpline on top
+        canvasRenderFrame(canvasDimAmount);
     }
 
     SwapBuffers(hDC);
@@ -949,18 +1029,66 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
     case WM_MOUSEWHEEL:
     {
         short zDelta = GET_WHEEL_DELTA_WPARAM(wParam);
-        if (zDelta > 0) canvas.zoom *= 0.9f;
-        else            canvas.zoom *= 1.1f;
-        if (canvas.zoom < 0.1f)  canvas.zoom = 0.1f;
-        if (canvas.zoom > 10.0f) canvas.zoom = 10.0f;
+
+        // Simulation mode: zoom through sim_camera (shared with the robot
+        // -- see UpdateProjection/sim_camera.h) instead of canvas.zoom, so
+        // Design > Environment's own zoom is left untouched by anything
+        // that happens while simulating.
+        if (appMode == APP_MODE_SIMULATION)
+        {
+            simCameraZoom(zDelta > 0 ? ZOOM_STEP : (1.0f / ZOOM_STEP));
+        }
+        else
+        {
+            if (zDelta > 0) canvas.zoom *= 0.9f;
+            else            canvas.zoom *= 1.1f;
+            if (canvas.zoom < 0.1f)  canvas.zoom = 0.1f;
+            if (canvas.zoom > 10.0f) canvas.zoom = 10.0f;
+        }
 
         UpdateProjection();
         InvalidateRect(hWnd, NULL, FALSE);
         UpdateWindow(hWnd);
         return 0;
     }
+    case WM_SETCURSOR:
+    {
+        // Simulation mode: dragging the robot's own body moves it (see
+        // WM_LBUTTONDOWN/WM_MOUSEMOVE below) -- a 4-way move cursor
+        // signals that specifically while hovering over the robot
+        // (hoveringRobotBodySim, kept up to date every WM_MOUSEMOVE),
+        // rather than implying anywhere on the canvas is draggable.
+        // Outside Simulation mode, off the robot, or over the window's
+        // border/caption/etc (hit-test isn't HTCLIENT), fall through to
+        // the default arrow.
+        if (appMode == APP_MODE_SIMULATION && LOWORD(lParam) == HTCLIENT && hoveringRobotBodySim)
+        {
+            SetCursor(LoadCursor(NULL, IDC_SIZEALL));
+            return TRUE;
+        }
+        break;
+    }
     case WM_LBUTTONDOWN:
     {
+        // Simulation mode: no new environment strokes -- a left-click
+        // drag started INSIDE the robot's own body instead grabs and
+        // moves it, so the user can set its starting position within the
+        // scene. A click elsewhere on the canvas (off the robot) does
+        // nothing, rather than falling through to stroke-drawing.
+        if (appMode == APP_MODE_SIMULATION)
+        {
+            float wx, wy;
+            screenToGL(hWnd, LOWORD(lParam), HIWORD(lParam), &wx, &wy);
+            if (isPointInsideRobotBody(app.robotScene.robot, wx, wy))
+            {
+                app.draggingRobotSim = TRUE;
+                dragRobotLastWX = wx;
+                dragRobotLastWY = wy;
+                SetCapture(hWnd);
+            }
+            return 0;
+        }
+
         // Robot layer is a blank placeholder for now (a separate project
         // will live here later) - no drawing while it's active.
         if (appMode == APP_MODE_DESIGN && designLayer == LAYER_ROBOT) return 0;
@@ -1007,6 +1135,11 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         drawing = FALSE;
         shiftHoldActive  = FALSE;   // NEW: end any in-progress dwell-snap tracking
         shiftHoldSnapped = FALSE;   // NEW
+        if (app.draggingRobotSim)
+        {
+            app.draggingRobotSim = FALSE;
+            ReleaseCapture();
+        }
         return 0;
 	case WM_MBUTTONDOWN:
 	{
@@ -1024,6 +1157,31 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	}
     case WM_MOUSEMOVE:
 	{
+	    if (app.draggingRobotSim)
+	    {
+	        float wx, wy;
+	        screenToGL(hWnd, LOWORD(lParam), HIWORD(lParam), &wx, &wy);
+
+	        translateRobot(&app.robotScene.robot, wx - dragRobotLastWX, wy - dragRobotLastWY);
+
+	        dragRobotLastWX = wx;
+	        dragRobotLastWY = wy;
+
+	        InvalidateRect(hWnd, NULL, FALSE);
+	        return 0;
+	    }
+
+	    // Simulation mode, not currently dragging: keep hoveringRobotBodySim
+	    // (used by WM_SETCURSOR/WM_LBUTTONDOWN above) up to date so the move
+	    // cursor -- and the ability to start a drag -- only ever appears
+	    // while genuinely over the robot's body.
+	    if (appMode == APP_MODE_SIMULATION)
+	    {
+	        float wx, wy;
+	        screenToGL(hWnd, LOWORD(lParam), HIWORD(lParam), &wx, &wy);
+	        hoveringRobotBodySim = isPointInsideRobotBody(app.robotScene.robot, wx, wy);
+	    }
+
 	    if (panning)
 	    {
 	        int mx = LOWORD(lParam);
@@ -1031,19 +1189,29 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	        int dx = mx - panLastX;
 	        int dy = my - panLastY;
 
-	        float aspect = (float)glWindowWidth / (float)glWindowHeight;
-	        float worldPerPixelX, worldPerPixelY;
-
-	        if (aspect >= 1.0f) {
-	            worldPerPixelX = (2.0f * aspect * canvas.zoom) / glWindowWidth;
-	            worldPerPixelY = (2.0f * canvas.zoom) / glWindowHeight;
-	        } else {
-	            worldPerPixelX = (2.0f * canvas.zoom) / glWindowWidth;
-	            worldPerPixelY = (2.0f * (canvas.zoom / aspect)) / glWindowHeight;
+	        // Simulation mode: pan through sim_camera (shared with the
+	        // robot) instead of canvas.panX/panY -- same reasoning as
+	        // WM_MOUSEWHEEL above.
+	        if (appMode == APP_MODE_SIMULATION)
+	        {
+	            simCameraPan(dx, dy);
 	        }
+	        else
+	        {
+	            float aspect = (float)glWindowWidth / (float)glWindowHeight;
+	            float worldPerPixelX, worldPerPixelY;
 
-	        canvas.panX -= dx * worldPerPixelX;
-	        canvas.panY += dy * worldPerPixelY;
+	            if (aspect >= 1.0f) {
+	                worldPerPixelX = (2.0f * aspect * canvas.zoom) / glWindowWidth;
+	                worldPerPixelY = (2.0f * canvas.zoom) / glWindowHeight;
+	            } else {
+	                worldPerPixelX = (2.0f * canvas.zoom) / glWindowWidth;
+	                worldPerPixelY = (2.0f * (canvas.zoom / aspect)) / glWindowHeight;
+	            }
+
+	            canvas.panX -= dx * worldPerPixelX;
+	            canvas.panY += dy * worldPerPixelY;
+	        }
 
 	        panLastX = mx;
 	        panLastY = my;
@@ -1052,7 +1220,29 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	        return 0;
 	    }
 
-	    if (!drawing || !(wParam & MK_LBUTTON))
+	    // Simulation mode never draws new strokes (WM_LBUTTONDOWN above
+	    // returns early for it unconditionally), so the segment-hover/
+	    // endpoint-snap preview below has nothing to actually feed into --
+	    // and it computes world coords from canvas.zoom/panX/panY directly,
+	    // which no longer match what's on screen once sim_camera is driving
+	    // the view (see UpdateProjection). Skip it outright rather than let
+	    // it show a highlight in the wrong place.
+	    if (appMode == APP_MODE_SIMULATION)
+	    {
+	        if (hoveredSegment != -1 || snapEndpointAvailable)
+	        {
+	            hoveredSegment = -1;
+	            snapEndpointAvailable = FALSE;
+	            InvalidateRect(hWnd, NULL, FALSE);
+	        }
+	        // Must return here, not fall through -- the stroke-continuation
+	        // code below this whole if/else-if assumes drawing == TRUE
+	        // (indexes strokeStarts[canvas.strokeCount - 1] unconditionally),
+	        // which is never true in Simulation mode but would still be
+	        // unsafe to reach with strokeCount == 0.
+	        return 0;
+	    }
+	    else if (!drawing || !(wParam & MK_LBUTTON))
 	    {
 	        // NEW: hover detection (segment overlay + stroke endpoint
 	        // snapping) when not actively drawing or panning. World coords
@@ -1225,6 +1415,10 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	}
 	case WM_MOUSELEAVE:
 	{
+	    if (hoveringRobotBodySim)
+	    {
+	        hoveringRobotBodySim = FALSE;
+	    }
 	    if (hoveredSegment != -1)
 	    {
 	        hoveredSegment = -1;
@@ -1258,9 +1452,15 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	        {
 	            appMode = APP_MODE_SIMULATION;
 
-	            // Simulation is an ArcSpline-only concept (running/animating
-	            // traced paths) -- make sure picking it also backs out of the
-	            // Semni robot editor if that's currently active.
+	            // Simulation is driven from the ArcSpline canvas's own
+	            // WndProc (this file), not the Semni editor's -- make sure
+	            // picking it also backs out of the Semni robot editor if
+	            // that's currently active. renderCombinedFrame special-cases
+	            // APP_MODE_SIMULATION to draw the environment AND the robot
+	            // both at full opacity together (rather than dimming
+	            // whichever side isn't "active"), and WM_LBUTTONDOWN/
+	            // WM_MOUSEMOVE above switch left-drag from drawing new
+	            // strokes to dragging the whole robot into a starting pose.
 	            switchEditorMode(EDITOR_MODE_ARCSPLINE, &editorModeState);
 	        }
 	        else

@@ -3,6 +3,8 @@
 
 #include "graphics.h"
 #include "config.h"
+#include "ui_state.h"   // for appMode -- Simulation mode routes through sim_camera instead
+#include "sim_camera.h"
 
 static HDC hdc;
 static HGLRC hrc;
@@ -59,6 +61,23 @@ HDC graphicsGetHDC(void)
 // Recomputes the ortho projection from the current viewport size and
 // zoom. Shared by graphicsOnResize and graphicsZoom so they can never
 // drift out of sync with each other or with screenToGL.
+//
+// In Simulation mode, the robot is driven by sim_camera's own independent
+// zoom instead of g_zoom/g_robotScale -- see sim_camera.h for why (keeps
+// the robot and the ArcSpline environment zooming/panning together as one
+// scene, without disturbing either subsystem's own Design-mode camera).
+// g_robotScale is deliberately NOT layered in here during Simulation: the
+// pan-pixel math in sim_camera.c's simCameraPan assumes the robot's base
+// 1.5 half-extent unscaled -- multiplying an extra g_robotScale in on top
+// here without also threading it through that pan math would make the
+// robot and the environment drift apart while panning (they'd no longer
+// move the same number of screen pixels per drag), which defeats the
+// whole point of sharing one camera. The Scale slider itself is Semni-
+// editor-only UI anyway (hidden during Simulation, see
+// editor_mode.c's applyEditorModeVisibility), so this only means a
+// robot sized down in Design mode renders at its un-scaled size while
+// simulating -- a minor, deliberate trade-off for keeping the shared
+// camera's pixel-tracking exact.
 static void applyProjection(void)
 {
     if (g_lastH == 0) g_lastH = 1;
@@ -69,7 +88,8 @@ static void applyProjection(void)
     glLoadIdentity();
 
     float aspect = (float)g_lastW / (float)g_lastH;
-    float halfY = 1.5f / effectiveZoom();
+    float zoom = (appMode == APP_MODE_SIMULATION) ? simCameraGetZoom() : effectiveZoom();
+    float halfY = 1.5f / zoom;
     float halfX = halfY * aspect;
 
     glOrtho(-halfX, halfX, -halfY, halfY, -1, 1);
@@ -124,6 +144,11 @@ void graphicsOnResize(int w, int h)
     applyProjection();
 }
 
+// In Simulation mode, reads sim_camera's zoom/pan instead of g_zoom/
+// g_panX/g_panY -- has to agree with whatever applyProjection/
+// renderRobotScene actually drew the robot with (see sim_camera.h), or
+// hit-testing (e.g. canvas.c's whole-robot drag) would disagree with what's
+// on screen.
 void screenToGL(HWND hwnd, int mx, int my, float *x, float *y)
 {
     RECT r;
@@ -137,11 +162,24 @@ void screenToGL(HWND hwnd, int mx, int my, float *x, float *y)
     float nx = (mx / w) * 2.0f - 1.0f;
     float ny = 1.0f - (my / h) * 2.0f;
 
-    float halfY = 1.5f / effectiveZoom();
+    float zoom, panX, panY;
+    if (appMode == APP_MODE_SIMULATION)
+    {
+        zoom = simCameraGetZoom(); // deliberately no g_robotScale -- see applyProjection's comment
+        simCameraGetPan(&panX, &panY);
+    }
+    else
+    {
+        zoom = effectiveZoom();
+        panX = g_panX;
+        panY = g_panY;
+    }
+
+    float halfY = 1.5f / zoom;
     float halfX = halfY * aspect;
 
-    *x = (nx * halfX) + g_panX;
-    *y = (ny * halfY) + g_panY;
+    *x = (nx * halfX) + panX;
+    *y = (ny * halfY) + panY;
 }
 
 void graphicsZoom(float factor)
@@ -172,8 +210,17 @@ void graphicsPan(int dxPixels, int dyPixels)
     g_panY += dyPixels * worldPerPixelY;
 }
 
+// In Simulation mode, returns sim_camera's pan instead of g_panX/g_panY --
+// renderer.c's renderRobotScene/renderApp call this to position the robot,
+// so this branch is what actually makes the robot follow the sim camera
+// during simulation instead of Semni's own Design-mode pan.
 void graphicsGetPan(float* panX, float* panY)
 {
+    if (appMode == APP_MODE_SIMULATION)
+    {
+        simCameraGetPan(panX, panY);
+        return;
+    }
     *panX = g_panX;
     *panY = g_panY;
 }

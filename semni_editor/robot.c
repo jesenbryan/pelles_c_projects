@@ -1,6 +1,8 @@
 ﻿#include <stdio.h>
+#include <math.h>
 
 #include "robot.h"
+#include "renderer.h"
 
 PointF getCenter(Semni b)
 {
@@ -62,6 +64,45 @@ void mirrorHipLeg(Semni* b)
     b->thighArc2Angle = mirrorArcAngle(b->thighArc2Angle);
     b->shinArc1Angle  = mirrorArcAngle(b->shinArc1Angle);
     b->shinArc2Angle  = mirrorArcAngle(b->shinArc2Angle);
+}
+
+// All of headX/buttX/y, innerCircle, kneeCircle, and ankleCircle live in
+// the same world-space frame (see getCenter/rotatePoint's use of them in
+// renderer.c) -- shifting every one of them by the identical (dx, dy)
+// shifts getCenter() by the same amount too, so every downstream
+// rotatePoint/jointToWorld/nestedJointToWorld call (which all ultimately
+// rotate around getCenter() or a joint nested under it) lands exactly
+// (dx, dy) away from where it would have otherwise. Nothing else -- no
+// angle, no radius -- needs to change for this to be a pure rigid move.
+void translateRobot(Semni* b, float dx, float dy)
+{
+    b->headX += dx;
+    b->buttX += dx;
+    b->y += dy;
+
+    b->innerCircle.x += dx;
+    b->innerCircle.y += dy;
+
+    b->kneeCircle.x += dx;
+    b->kneeCircle.y += dy;
+
+    b->ankleCircle.x += dx;
+    b->ankleCircle.y += dy;
+}
+
+BOOL isPointInsideRobotBody(Semni b, float wx, float wy)
+{
+    CircleSegment segs[NUM_ROBOT_BODY_CIRCLES];
+    computeSemniBodyCircles(b, segs);
+
+    for (int i = 0; i < NUM_ROBOT_BODY_CIRCLES; i++)
+    {
+        float dx = wx - segs[i].center.x;
+        float dy = wy - segs[i].center.y;
+        if (sqrtf(dx * dx + dy * dy) <= segs[i].radius)
+            return TRUE;
+    }
+    return FALSE;
 }
 
 void printRobotAsInit(Semni b)

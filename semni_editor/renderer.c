@@ -6,6 +6,7 @@
 #include "config.h"
 #include "graphics.h"
 #include "editor_mode.h"
+#include "ui_state.h"      // For appMode -- hides joint handles and adds a drag halo in Simulation mode
 #include <stdio.h>
 
 // opacity multiplies every color's alpha (1.0 = fully opaque, down toward
@@ -17,9 +18,14 @@
 // out everywhere rather than just its own strokes/lines fading -- scaling
 // each draw's own alpha keeps the shared background untouched and only
 // fades this subsystem's actual ink.
-static void setColor(int active, float r, float g, float b, float opacity)
+// rs->draggingWhole (Simulation mode, actively dragging the robot -- see
+// app->draggingRobotSim) forces every line blue regardless of its own
+// per-part active/hover state, so the whole robot reads as "this is
+// grabbed and moving" while the drag is in progress, then reverts to its
+// normal per-part coloring (usually black) the instant it's released.
+static void setColor(RenderState* rs, int active, float r, float g, float b, float opacity)
 {
-    if (active)
+    if (active || rs->draggingWhole)
         glColor4f(r, g, b, opacity);
     else
         glColor4f(0.0f, 0.0f, 0.0f, opacity);
@@ -164,11 +170,11 @@ void drawSemniBody(Semni b, RenderState* rs, float opacity)
 	// ---- HEAD circle ----
     // sliders are gone now -- the resize handle's hover state takes over
     // this highlight instead
-    setColor(rs->hoverHead, 0.2f, 0.4f, 1.0f, opacity);
+    setColor(rs, rs->hoverHead, 0.2f, 0.4f, 1.0f, opacity);
     drawCircle(headCenter, b.headRadius);
 
 	// ---- BUTT circle ----
-    setColor(rs->hoverButt, 0.2f, 0.4f, 1.0f, opacity);
+    setColor(rs, rs->hoverButt, 0.2f, 0.4f, 1.0f, opacity);
     drawCircle(buttCenter, b.buttRadius);
 
 	// ---- INNER circle ----
@@ -182,7 +188,7 @@ void drawSemniBody(Semni b, RenderState* rs, float opacity)
     // drawShin's hipRotateHint) and leaves the hip circle unhighlighted.
     // A plain hover (no shift) still means "scroll resizes this circle",
     // so it keeps the highlight.
-    setColor(rs->draggingInner || (rs->hoverHip && !rs->shiftHeld), 0.2f, 0.4f, 1.0f, opacity);
+    setColor(rs, rs->draggingInner || (rs->hoverHip && !rs->shiftHeld), 0.2f, 0.4f, 1.0f, opacity);
     drawCircle(inner, b.innerRadius);
 
     // seam arc 1/2 (formerly "top"/"bottom"): each is a circular arc
@@ -229,10 +235,10 @@ void drawSemniBody(Semni b, RenderState* rs, float opacity)
     PointF seamArc2P1 = rotatePoint(seamArc2NearLocal, center, angle);
     PointF seamArc2P2 = rotatePoint(seamArc2ButtTangentLocal, center, angle);
 
-    setColor(seamActive, 0.2f, 0.4f, 1.0f, opacity);
+    setColor(rs, seamActive, 0.2f, 0.4f, 1.0f, opacity);
     drawArc(seamArc1P0, seamArc1P1, seamArc1P2);
 
-    setColor(seamActive, 0.2f, 0.4f, 1.0f, opacity);
+    setColor(rs, seamActive, 0.2f, 0.4f, 1.0f, opacity);
     drawArc(seamArc2P0, seamArc2P1, seamArc2P2);
 }
 
@@ -276,7 +282,7 @@ static void drawThigh(Semni b, RenderState* rs, float opacity)
     // sitting on the handle for the whole drag (that's what started it),
     // so without this the hover term alone would keep re-lighting the
     // circle every frame regardless of the exclusion above.
-    setColor(hipRotateHint || (rs->hoverKnee && !rs->shiftHeld && !rs->draggingKnee), 0.2f, 0.4f, 1.0f, opacity);
+    setColor(rs, hipRotateHint || (rs->hoverKnee && !rs->shiftHeld && !rs->draggingKnee), 0.2f, 0.4f, 1.0f, opacity);
     drawCircle(kneeWorld, b.kneeRadius);
 
     // the two thigh arcs: same tangent-fillet construction as the
@@ -307,12 +313,12 @@ static void drawThigh(Semni b, RenderState* rs, float opacity)
     // axis -- see WM_MOUSEMOVE's draggingKnee/constrainToAxis handling),
     // so that gets the same blue highlight as actually dragging an arc's
     // own handle, same "carries other parts along" idea as hipRotateHint
-    setColor(rs->draggingThigh1 || rs->draggingKnee || hipRotateHint, 0.2f, 0.4f, 1.0f, opacity);
+    setColor(rs, rs->draggingThigh1 || rs->draggingKnee || hipRotateHint, 0.2f, 0.4f, 1.0f, opacity);
     drawArc(jointToWorld(thigh1InnerTangentLocal, b.innerCircle, b.hipAngle, center, angle),
             jointToWorld(thigh1NearLocal, b.innerCircle, b.hipAngle, center, angle),
             jointToWorld(thigh1KneeTangentLocal, b.innerCircle, b.hipAngle, center, angle));
 
-    setColor(rs->draggingThigh2 || rs->draggingKnee || hipRotateHint, 0.2f, 0.4f, 1.0f, opacity);
+    setColor(rs, rs->draggingThigh2 || rs->draggingKnee || hipRotateHint, 0.2f, 0.4f, 1.0f, opacity);
     drawArc(jointToWorld(thigh2InnerTangentLocal, b.innerCircle, b.hipAngle, center, angle),
             jointToWorld(thigh2NearLocal, b.innerCircle, b.hipAngle, center, angle),
             jointToWorld(thigh2KneeTangentLocal, b.innerCircle, b.hipAngle, center, angle));
@@ -389,7 +395,7 @@ static void drawShin(Semni b, RenderState* rs, float opacity)
     // drag, so without the exclusion the hover term alone would keep
     // re-lighting the circle every frame despite draggingAnkle being left
     // out on purpose.
-    setColor(shinAffected || (rs->hoverAnkle && !rs->draggingAnkle), 0.2f, 0.4f, 1.0f, opacity);
+    setColor(rs, shinAffected || (rs->hoverAnkle && !rs->draggingAnkle), 0.2f, 0.4f, 1.0f, opacity);
     drawCircle(ankleWorld, b.ankleRadius);
 
     // worked out in the shin's own local (pre-kneeAngle) frame, then
@@ -419,12 +425,12 @@ static void drawShin(Semni b, RenderState* rs, float opacity)
     // axis -- see WM_MOUSEMOVE's draggingAnkle/constrainToAxis handling),
     // same "carries the other visibly-reacting parts along" idea as
     // draggingKnee getting added to the thigh arcs in drawThigh
-    setColor(rs->draggingShin1 || rs->draggingAnkle || shinAffected, 0.2f, 0.4f, 1.0f, opacity);
+    setColor(rs, rs->draggingShin1 || rs->draggingAnkle || shinAffected, 0.2f, 0.4f, 1.0f, opacity);
     drawArc(nestedJointToWorld(shin1KneeTangentLocal, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle),
             nestedJointToWorld(shin1NearLocal, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle),
             nestedJointToWorld(shin1AnkleTangentLocal, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle));
 
-    setColor(rs->draggingShin2 || rs->draggingAnkle || shinAffected, 0.2f, 0.4f, 1.0f, opacity);
+    setColor(rs, rs->draggingShin2 || rs->draggingAnkle || shinAffected, 0.2f, 0.4f, 1.0f, opacity);
     drawArc(nestedJointToWorld(shin2KneeTangentLocal, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle),
             nestedJointToWorld(shin2NearLocal, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle),
             nestedJointToWorld(shin2AnkleTangentLocal, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle));
@@ -688,9 +694,14 @@ void drawSemni(Semni b, RenderState* rs, int includeHandles, float opacity)
         drawSemniBodyCircleHover(b, rs->hoveredBodyCircle, opacity);
     }
 
-    // the draggable handles are editor UI, not part of the robot itself --
-    // skip them when rendering a frame that's about to be exported
-    if (includeHandles)
+    // The draggable handles are editor UI, not part of the robot itself --
+    // skip them when rendering a frame that's about to be exported, AND
+    // in Simulation mode, where individual joints aren't interactable
+    // (only the whole-robot drag above works) so showing them would just
+    // be misleading clutter.
+    BOOL handlesVisible = includeHandles && (appMode != APP_MODE_SIMULATION);
+
+    if (handlesVisible)
     {
         drawSemniHandles(b, rs, opacity);
         drawThighHandles(b, rs, opacity);
@@ -722,6 +733,7 @@ static void renderRobot(AppState* app, int includeHandles, float opacity)
     rs.showSegments = app->showCircleSegments;
     rs.hoveredCircleSegment = app->hoveredCircleSegment;
     rs.hoveredBodyCircle = app->hoveredBodyCircle;
+    rs.draggingWhole = app->draggingRobotSim;
 
     // sampled live every frame (the render loop runs continuously -- see
     // main.c) rather than cached from WM_MOUSEMOVE's wParam, which would
