@@ -216,6 +216,116 @@ static float distPointToSegment(float px, float py, float ax, float ay, float bx
     return sqrtf(ddx * ddx + ddy * ddy);
 }
 
+// Converts a point in the robot's own Simulation-mode world space into the
+// ArcSpline environment's Simulation-mode world space. The robot's joints
+// (Semni's own coordinate system, see graphics.c) and the environment's
+// traced strokes (this file's points[], canvas.zoom/panX/panY's own
+// coordinate system) are two completely different, unrelated numeric
+// spaces -- they only visually line up on screen because Simulation mode
+// drives both subsystems' projections from the SAME sim_camera zoom/pan
+// (see UpdateProjection and graphics.c's applyProjection). Both
+// projections ultimately map their own world space to the same shared NDC
+// (-1..1) before OpenGL ever gets involved, so routing a point through
+// that shared NDC -- world(robot) -> ndc -> world(env) -- is what lets
+// gravity's ground-collision check (below) compare the robot's body
+// circles against the environment's strokes directly, in one consistent
+// frame, instead of comparing two unrelated sets of raw numbers.
+static void robotPointToEnvWorld(float rx, float ry, float* ex, float* ey)
+{
+    float aspect = (float)glWindowWidth / (float)glWindowHeight;
+
+    // Robot's own current half-extent + pan, computed exactly the way
+    // graphics.c's applyProjection/screenToGL do (including the robot-size
+    // slider, graphicsGetRobotScale) -- has to match or the converted
+    // point won't actually correspond to where the robot is drawn.
+    float robotZoom = simCameraGetZoom() * graphicsGetRobotScale();
+    float robotHalfY = 1.5f / robotZoom;
+    float robotHalfX = robotHalfY * aspect;
+    float robotPanX, robotPanY;
+    simCameraGetWorldPan(robotHalfX, robotHalfY, &robotPanX, &robotPanY);
+
+    // Environment's own current half-extent + pan, computed exactly the
+    // way UpdateProjection above does.
+    float envZoom = 1.0f / simCameraGetZoom();
+    float envHalfX, envHalfY;
+    if (aspect >= 1.0f) { envHalfX = aspect * envZoom; envHalfY = envZoom; }
+    else                { envHalfX = envZoom; envHalfY = envZoom / aspect; }
+    float envPanX, envPanY;
+    simCameraGetWorldPan(envHalfX, envHalfY, &envPanX, &envPanY);
+
+    float ndcX = (rx - robotPanX) / robotHalfX;
+    float ndcY = (ry - robotPanY) / robotHalfY;
+
+    *ex = ndcX * envHalfX + envPanX;
+    *ey = ndcY * envHalfY + envPanY;
+}
+
+// Same idea as robotPointToEnvWorld, but for a LENGTH (e.g. a circle's
+// radius) rather than a point -- pan cancels out for a pure length/vector
+// conversion, so this is just a uniform scale by the ratio of the two
+// subsystems' half-extents. Using the Y half-extent specifically is
+// arbitrary but safe: both subsystems derive halfX from halfY via the
+// exact same `aspect` value (see robotPointToEnvWorld), so the X and Y
+// ratios are always identical -- this is a uniform scale, not a stretch.
+static float robotLengthToEnvWorld(float rlen)
+{
+    float aspect = (float)glWindowWidth / (float)glWindowHeight;
+
+    float robotZoom = simCameraGetZoom() * graphicsGetRobotScale();
+    float robotHalfY = 1.5f / robotZoom;
+
+    float envZoom = 1.0f / simCameraGetZoom();
+    float envHalfY = (aspect >= 1.0f) ? envZoom : (envZoom / aspect);
+
+    return rlen * (envHalfY / robotHalfY);
+}
+
+// TRUE if any of the robot's 5 body circles (head/butt/hip/knee/ankle --
+// see computeSemniBodyCircles, renderer.h) overlaps any Environment-layer
+// stroke, in the robot's CURRENT pose/position. Used by the G ("gravity")
+// hotkey below to stop the robot from sinking through whatever ground the
+// user has drawn. Only tests those 5 circles, not the seam/thigh/shin arcs
+// connecting them -- since every part of the robot's outline is built from
+// arcs trimmed from circles centered within reach of one of these 5 (see
+// app.h's seamArc1Angle comment), testing all 5 is a reasonable
+// approximation of the robot's whole silhouette without needing to walk
+// every arc's own curve.
+static BOOL robotCollidesWithEnvironment(Semni robot)
+{
+    CircleSegment bodyCircles[NUM_ROBOT_BODY_CIRCLES];
+    computeSemniBodyCircles(robot, bodyCircles);
+
+    for (int c = 0; c < NUM_ROBOT_BODY_CIRCLES; c++)
+    {
+        float ecx, ecy;
+        robotPointToEnvWorld(bodyCircles[c].center.x, bodyCircles[c].center.y, &ecx, &ecy);
+        float eRadius = robotLengthToEnvWorld(bodyCircles[c].radius);
+
+        for (int s = 0; s < canvas.strokeCount; s++)
+        {
+            if (strokeLayer[s] != LAYER_ENVIRONMENT) continue;
+
+            int start = strokeStarts[s];
+            int end = (s == canvas.strokeCount - 1) ? canvas.pointCount : strokeStarts[s + 1];
+            int count = (end - start) / 2;
+            if (count < 2) continue;
+
+            for (int i = 0; i < count - 1; i++)
+            {
+                float ax = points[start + i * 2];
+                float ay = points[start + i * 2 + 1];
+                float bx = points[start + (i + 1) * 2];
+                float by = points[start + (i + 1) * 2 + 1];
+
+                if (distPointToSegment(ecx, ecy, ax, ay, bx, by) < eRadius)
+                    return TRUE;
+            }
+        }
+    }
+
+    return FALSE;
+}
+
 // Finds which segment's drawn arc strip is closest to a world-space point,
 // within a small pick tolerance. Returns -1 if nothing is close enough.
 static int findHoveredSegment(float wx, float wy)
@@ -1126,9 +1236,20 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         // Windows' own WM_KEYDOWN auto-repeat firing this same branch again
         // and again for as long as the key stays down -- no separate timer
         // or held-key tracking needed.
+        //
+        // Tentatively applies the step, then checks robotCollidesWithEnvironment
+        // and undoes it if the robot would now be inside whatever ground the
+        // user has drawn -- simpler than solving for the exact landing point,
+        // and fine at this step size (SIMULATION_GRAVITY_STEP is already
+        // small enough that "undo the whole step" reads as "stopped at the
+        // ground" rather than visibly overshooting first).
         if (wParam == 'G' && appMode == APP_MODE_SIMULATION)
         {
             translateRobot(&app.robotScene.robot, 0.0f, -SIMULATION_GRAVITY_STEP);
+
+            if (robotCollidesWithEnvironment(app.robotScene.robot))
+                translateRobot(&app.robotScene.robot, 0.0f, SIMULATION_GRAVITY_STEP);
+
             InvalidateRect(hWnd, NULL, FALSE);
             return 0;
         }
