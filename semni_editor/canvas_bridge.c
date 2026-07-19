@@ -263,31 +263,35 @@ void setSegmentOverlay(ArcSegment* segments, int count, int imgW, int imgH, BOOL
         float srcRadiusPx = (segments[s].avgRadiusPx > 0.0f) ? segments[s].avgRadiusPx : 1.0f;
         segmentAvgRadiusPx[usedSegments] = srcRadiusPx * 2.0f;
 
-        // Same original-stroke radius, but converted into an actual WORLD-
-        // SPACE (EWS) length instead of kept as a raw pixel count -- for
-        // Simulation's ground collision (canvas.c's
-        // pointCollidesWithAnyEnvironmentStroke), which works entirely in
-        // EWS units (segmentPointsWorld's own space), not screen pixels.
-        // Without this, collision tests the robot against this segment's
-        // bare mathematical CENTERLINE while the reconstructed line is
-        // actually RENDERED with real thickness around that centerline --
-        // meaning the robot's contact point tracks an invisible line
-        // instead of the visible surface it's approaching, sinking into
-        // (or, depending on the local angle, visibly stopping short of)
-        // whatever's actually drawn on screen. Same "offset a point by the
-        // pixel amount, see how far it moved in world space" technique as
-        // the ghost circle radius above.
+        // Same VISUAL half-width segmentAvgRadiusPx just stored (note: the
+        // DOUBLED value, not srcRadiusPx alone -- using srcRadiusPx here
+        // would only convert HALF of the line's actual rendered thickness
+        // into world units, leaving collision under-compensated by exactly
+        // half of what's needed and the robot stopping visibly short of
+        // the real surface), but converted into an actual WORLD-SPACE (EWS)
+        // length instead of kept as a raw pixel count -- for Simulation's
+        // ground collision (canvas.c's pointCollidesWithAnyEnvironmentStroke),
+        // which works entirely in EWS units (segmentPointsWorld's own
+        // space), not screen pixels. Without this, collision tests the
+        // robot against this segment's bare mathematical CENTERLINE while
+        // the reconstructed line is actually RENDERED with real thickness
+        // around that centerline -- meaning the robot's contact point
+        // tracks an invisible line instead of the visible surface it's
+        // approaching. Same "offset a point by the pixel amount, see how
+        // far it moved in world space" technique as the ghost circle
+        // radius above.
         {
+            float renderedRadiusPx = segmentAvgRadiusPx[usedSegments]; // == srcRadiusPx * 2.0f
             float refX = arcPts[0].x, refY = arcPts[0].y;
             float wpx, wpy, wrx, wry, wrxY, wryY;
             if (stretched) {
                 pixelToWorldStretched(refX, refY, imgW, imgH, &wpx, &wpy);
-                pixelToWorldStretched(refX + srcRadiusPx, refY, imgW, imgH, &wrx, &wry);
-                pixelToWorldStretched(refX, refY + srcRadiusPx, imgW, imgH, &wrxY, &wryY);
+                pixelToWorldStretched(refX + renderedRadiusPx, refY, imgW, imgH, &wrx, &wry);
+                pixelToWorldStretched(refX, refY + renderedRadiusPx, imgW, imgH, &wrxY, &wryY);
             } else {
                 pixelToWorldExact(refX, refY, imgW, imgH, &wpx, &wpy);
-                pixelToWorldExact(refX + srcRadiusPx, refY, imgW, imgH, &wrx, &wry);
-                pixelToWorldExact(refX, refY + srcRadiusPx, imgW, imgH, &wrxY, &wryY);
+                pixelToWorldExact(refX + renderedRadiusPx, refY, imgW, imgH, &wrx, &wry);
+                pixelToWorldExact(refX, refY + renderedRadiusPx, imgW, imgH, &wrxY, &wryY);
             }
             float tdx = wrx - wpx, tdy = wry - wpy;
             float tdxY = wrxY - wpx, tdyY = wryY - wpy;
