@@ -115,3 +115,8 @@ extern float segmentCircleRadiusWorldY[MAX_ARC_SEGMENTS];  // world Y radius (di
 // pixels (same unit as strokeThickness[]) -- see canvas.c's definition for
 // the full explanation.
 extern float segmentAvgRadiusPx[MAX_ARC_SEGMENTS];
+
+// Same radius, converted into world-space (EWS) units instead -- used as
+// extra ground-collision tolerance in Simulation. See canvas.c's
+// definition for the full explanation.
+extern float segmentThicknessWorld[MAX_ARC_SEGMENTS];

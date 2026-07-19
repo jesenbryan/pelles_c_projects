@@ -263,6 +263,39 @@ void setSegmentOverlay(ArcSegment* segments, int count, int imgW, int imgH, BOOL
         float srcRadiusPx = (segments[s].avgRadiusPx > 0.0f) ? segments[s].avgRadiusPx : 1.0f;
         segmentAvgRadiusPx[usedSegments] = srcRadiusPx * 2.0f;
 
+        // Same original-stroke radius, but converted into an actual WORLD-
+        // SPACE (EWS) length instead of kept as a raw pixel count -- for
+        // Simulation's ground collision (canvas.c's
+        // pointCollidesWithAnyEnvironmentStroke), which works entirely in
+        // EWS units (segmentPointsWorld's own space), not screen pixels.
+        // Without this, collision tests the robot against this segment's
+        // bare mathematical CENTERLINE while the reconstructed line is
+        // actually RENDERED with real thickness around that centerline --
+        // meaning the robot's contact point tracks an invisible line
+        // instead of the visible surface it's approaching, sinking into
+        // (or, depending on the local angle, visibly stopping short of)
+        // whatever's actually drawn on screen. Same "offset a point by the
+        // pixel amount, see how far it moved in world space" technique as
+        // the ghost circle radius above.
+        {
+            float refX = arcPts[0].x, refY = arcPts[0].y;
+            float wpx, wpy, wrx, wry, wrxY, wryY;
+            if (stretched) {
+                pixelToWorldStretched(refX, refY, imgW, imgH, &wpx, &wpy);
+                pixelToWorldStretched(refX + srcRadiusPx, refY, imgW, imgH, &wrx, &wry);
+                pixelToWorldStretched(refX, refY + srcRadiusPx, imgW, imgH, &wrxY, &wryY);
+            } else {
+                pixelToWorldExact(refX, refY, imgW, imgH, &wpx, &wpy);
+                pixelToWorldExact(refX + srcRadiusPx, refY, imgW, imgH, &wrx, &wry);
+                pixelToWorldExact(refX, refY + srcRadiusPx, imgW, imgH, &wrxY, &wryY);
+            }
+            float tdx = wrx - wpx, tdy = wry - wpy;
+            float tdxY = wrxY - wpx, tdyY = wryY - wpy;
+            float radiusWorldX = sqrtf(tdx * tdx + tdy * tdy);
+            float radiusWorldY = sqrtf(tdxY * tdxY + tdyY * tdyY);
+            segmentThicknessWorld[usedSegments] = (radiusWorldX + radiusWorldY) * 0.5f;
+        }
+
         for (int i = 0; i < arcCount; i++)
         {
             float wx, wy;

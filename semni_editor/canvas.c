@@ -51,6 +51,17 @@ float segmentCircleRadiusWorldY[MAX_ARC_SEGMENTS];    // NEW: ghost circle radii
 // from, instead of one hardcoded flat width regardless of the original.
 float segmentAvgRadiusPx[MAX_ARC_SEGMENTS];
 
+// Same original-stroke radius as segmentAvgRadiusPx above, but converted
+// into a genuine WORLD-SPACE (EWS) length instead of a raw pixel count --
+// see canvas_bridge.c's setSegmentOverlay for the derivation. Used by
+// Simulation's ground collision (pointCollidesWithAnyEnvironmentStroke
+// below) as EXTRA tolerance on top of the robot's own radius, so a falling
+// robot's edge stops at this segment's actual RENDERED surface instead of
+// its bare mathematical centerline -- without this, collision and
+// rendering silently disagree about where "the ground" actually is by
+// roughly this segment's own half-thickness.
+float segmentThicknessWorld[MAX_ARC_SEGMENTS];
+
 // NEW: which segment (if any) the mouse is currently hovering over.
 // -1 means "none". Declared here (before ResetCanvas) since it's referenced there.
 static int hoveredSegment = -1;
@@ -315,6 +326,16 @@ static float robotLengthToEnvWorld(float rlen)
 // the last manual Trace press). If canvas.segmentResultCount is 0 (nothing
 // traceable, or tracing never ran), the loop below just does nothing and
 // this returns FALSE -- same as "no strokes" used to behave.
+//
+// Tests against each segment's own segmentThicknessWorld on top of eRadius
+// (the CALLER's own radius, e.g. the robot's body circle) -- segmentPointsWorld
+// is only the fitted arc's bare mathematical CENTERLINE, but the
+// reconstructed line is RENDERED with real thickness around that
+// centerline (canvas.c's ghost overlay, segmentAvgRadiusPx). Without
+// adding it in here too, the robot's contact point would track an
+// invisible line instead of the visible surface it's actually approaching
+// on screen -- sinking into it on one side, or stopping visibly short on
+// the other, depending on the local angle of approach.
 static BOOL pointCollidesWithAnyEnvironmentStroke(float ecx, float ecy, float eRadius)
 {
     for (int s = 0; s < canvas.segmentResultCount; s++)
@@ -323,6 +344,8 @@ static BOOL pointCollidesWithAnyEnvironmentStroke(float ecx, float ecy, float eR
         int count = segmentCounts[s];
         if (count < 2) continue;
 
+        float combinedRadius = eRadius + segmentThicknessWorld[s];
+
         for (int i = 0; i < count - 1; i++)
         {
             float ax = segmentPointsWorld[(start + i) * 2];
@@ -330,7 +353,7 @@ static BOOL pointCollidesWithAnyEnvironmentStroke(float ecx, float ecy, float eR
             float bx = segmentPointsWorld[(start + (i + 1)) * 2];
             float by = segmentPointsWorld[(start + (i + 1)) * 2 + 1];
 
-            if (distPointToSegment(ecx, ecy, ax, ay, bx, by) < eRadius)
+            if (distPointToSegment(ecx, ecy, ax, ay, bx, by) < combinedRadius)
                 return TRUE;
         }
     }
