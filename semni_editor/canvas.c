@@ -199,6 +199,28 @@ BOOL drawing = FALSE;
 static HGLRC hRC;
 static HDC hDC;
 
+// "Slow Motion" toggle (see hSlowMotionBtn/ID_SLOW_MOTION, WM_CREATE/
+// WM_COMMAND below) -- 1.0 is normal speed, SIMULATION_SLOW_MOTION_SCALE
+// (config.h) while checked. Read by advanceAutoGravity (scales the elapsed
+// real time physics integrates over) and applyGravityStep's slope-
+// alignment step, so both the fall and the tipping-into-a-slope settle
+// down together by the same factor, without touching the underlying
+// acceleration/terminal velocity/alignment-rate constants themselves.
+// Declared up here (rather than next to autoGravityActive further down,
+// where it's toggled) because applyGravityStep -- defined earlier in this
+// file than that -- already needs to read it.
+static float simTimeScale = 1.0f;
+
+// The Simulation-mode-only "Slow Motion" button itself -- a plain WS_CHILD
+// of hWndGL (unlike hWndUI's buttons, which live in their own floating
+// hover-reveal popup that's Design > Environment-only and explicitly
+// hidden the instant Simulation is entered, see HideUIPanelImmediately).
+// Created once in WM_CREATE, shown/hidden alongside entering/leaving
+// Simulation mode in WM_COMMAND's ID_MODE_SIMULATION handling. Anchored to
+// the client area's top-left corner, which needs no WM_SIZE repositioning
+// since that corner's offset from the origin never changes on resize.
+static HWND hSlowMotionBtn = NULL;
+
 HDC canvasGetHDC(void)
 {
     return hDC;
@@ -586,9 +608,15 @@ static BOOL applyGravityStep(HWND hWnd, float step)
             while (diff > 180.0f)  diff -= 360.0f;
             while (diff < -180.0f) diff += 360.0f;
 
-            float step2 = diff * SIMULATION_SLOPE_ALIGN_RATE;
-            if (step2 > SIMULATION_SLOPE_ALIGN_MAX_STEP_DEG)       step2 = SIMULATION_SLOPE_ALIGN_MAX_STEP_DEG;
-            else if (step2 < -SIMULATION_SLOPE_ALIGN_MAX_STEP_DEG) step2 = -SIMULATION_SLOPE_ALIGN_MAX_STEP_DEG;
+            // Scaled by simTimeScale (Slow Motion, see its own comment
+            // above) so the settling lean slows down right along with the
+            // fall itself, instead of always snapping into its final tilt
+            // at the same real-world pace regardless of how slow gravity
+            // is currently running.
+            float maxStepDeg = SIMULATION_SLOPE_ALIGN_MAX_STEP_DEG * simTimeScale;
+            float step2 = diff * SIMULATION_SLOPE_ALIGN_RATE * simTimeScale;
+            if (step2 > maxStepDeg)       step2 = maxStepDeg;
+            else if (step2 < -maxStepDeg) step2 = -maxStepDeg;
 
             app.robotScene.robot.angle += step2;
 
@@ -725,6 +753,10 @@ void UpdateProjection(void)
 #define AUTO_GRAVITY_TIMER_ID 1002
 static BOOL autoGravityActive = FALSE;
 
+// simTimeScale/hSlowMotionBtn ("Slow Motion") are declared up near hRC/hDC
+// instead of here -- applyGravityStep, defined earlier in this file, needs
+// to read simTimeScale already. See that declaration's comment.
+
 // Auto gravity's current fall speed, in world units PER MILLISECOND (real
 // time, not "per tick" -- see advanceAutoGravity below for why). Ramps up
 // from 0 by SIMULATION_AUTO_GRAVITY_ACCEL_PER_MS2 * elapsed-ms each time
@@ -784,11 +816,17 @@ static void advanceAutoGravity(HWND hWnd)
 
     autoGravityLastTickTime = now;
 
-    autoGravityVelocity += SIMULATION_AUTO_GRAVITY_ACCEL_PER_MS2 * (float)elapsed;
+    // Cap against real elapsed time FIRST, then scale down for Slow Motion
+    // -- capping the already-scaled value would let a real stall (elapsed
+    // > MAX_DT_MS) sneak back under the cap purely because it got divided
+    // down, defeating the whole point of the cap.
+    float simElapsed = (float)elapsed * simTimeScale;
+
+    autoGravityVelocity += SIMULATION_AUTO_GRAVITY_ACCEL_PER_MS2 * simElapsed;
     if (autoGravityVelocity > SIMULATION_AUTO_GRAVITY_MAX_VELOCITY_PER_MS)
         autoGravityVelocity = SIMULATION_AUTO_GRAVITY_MAX_VELOCITY_PER_MS;
 
-    float step = autoGravityVelocity * (float)elapsed;
+    float step = autoGravityVelocity * simElapsed;
 
     if (applyGravityStep(hWnd, step))
         autoGravityVelocity = 0.0f; // landed -- next fall starts from rest
@@ -1563,6 +1601,17 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         glLoadIdentity();
 
         SetTimer(hWnd, UI_HOTZONE_TIMER_ID, UI_HOTZONE_INTERVAL_MS, NULL); // NEW
+
+        // Slow Motion toggle -- see hSlowMotionBtn's own comment above.
+        // Same BS_AUTOCHECKBOX | BS_PUSHLIKE "checkbox that looks/behaves
+        // like a toggle button" style ui.c's Trace/Comparison Mode buttons
+        // use. Created without WS_VISIBLE -- appMode starts in Design, not
+        // Simulation, so it should start hidden; WM_COMMAND's
+        // ID_MODE_SIMULATION handling shows/hides it from then on.
+        hSlowMotionBtn = CreateWindowEx(0, L"BUTTON", L"Slow Motion",
+                            WS_CHILD | BS_AUTOCHECKBOX | BS_PUSHLIKE,
+                            10, 10, 120, 28, hWnd, (HMENU)ID_SLOW_MOTION,
+                            GetModuleHandle(NULL), NULL);
         return 0;
     }
     case WM_TIMER:
@@ -2252,6 +2301,15 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	        SendMessage(hWndUI, WM_COMMAND, MAKEWPARAM(ID_VIEW_SEGMENTS, BN_CLICKED), 0);
 	        if (hWndGL) InvalidateRect(hWndGL, NULL, FALSE);
 	    }
+	    else if (LOWORD(wParam) == ID_SLOW_MOTION)
+	    {
+	        // BS_AUTOCHECKBOX already flipped its own check state before this
+	        // notification fires, so read it back rather than tracking a
+	        // separate bool -- the button IS the toggle state (same pattern
+	        // ui.c's Trace/Comparison Mode buttons use).
+	        BOOL nowChecked = (SendMessage(hSlowMotionBtn, BM_GETCHECK, 0, 0) == BST_CHECKED);
+	        simTimeScale = nowChecked ? SIMULATION_SLOW_MOTION_SCALE : 1.0f;
+	    }
 	    else if (LOWORD(wParam) == ID_LAYER_ROBOT || LOWORD(wParam) == ID_LAYER_ENVIRONMENT || LOWORD(wParam) == ID_MODE_SIMULATION)
 	    {
 	        // "Mode" is the second top-level popup (index 1, after "File");
@@ -2331,6 +2389,26 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	        }
 
 	        CheckMenuItem(hModeMenu, ID_MODE_SIMULATION, MF_BYCOMMAND | (appMode == APP_MODE_SIMULATION ? MF_CHECKED : MF_UNCHECKED));
+
+	        // Slow Motion button: only makes sense in Simulation, so it
+	        // shows/hides right alongside it. Leaving Simulation also resets
+	        // simTimeScale/the checkbox back to normal speed rather than
+	        // leaving Slow Motion silently armed for the next time Simulation
+	        // is entered -- it's a temporary "watch this closely" aid, not a
+	        // setting that should persist invisibly across sessions.
+	        if (hSlowMotionBtn)
+	        {
+	            if (appMode == APP_MODE_SIMULATION)
+	            {
+	                ShowWindow(hSlowMotionBtn, SW_SHOW);
+	            }
+	            else
+	            {
+	                ShowWindow(hSlowMotionBtn, SW_HIDE);
+	                SendMessage(hSlowMotionBtn, BM_SETCHECK, BST_UNCHECKED, 0);
+	                simTimeScale = 1.0f;
+	            }
+	        }
 
 	        // The Environment-only panel (hWndUI) can't rely on WM_TIMER to
 	        // fade itself out here -- see HideUIPanelImmediately's comment --

@@ -300,3 +300,14 @@
 // is always tiny -- this only ever needs to cover that, not a whole
 // gravity-step's worth of overlap.
 #define SIMULATION_SLOPE_CORRECTION_MAX 0.05f
+
+// "Slow Motion" toggle button (Simulation mode only -- see canvas.c's
+// hSlowMotionBtn/ID_SLOW_MOTION). While checked, simTimeScale is set to
+// this instead of 1.0, and both advanceAutoGravity's elapsed-time
+// integration AND applyGravityStep's slope-alignment step (see
+// SIMULATION_SLOPE_ALIGN_RATE above) are scaled by it -- so both the fall
+// itself and the tipping-into-a-slope settle noticeably slower, without
+// changing anything about the underlying physics (same acceleration curve,
+// same terminal velocity, same alignment behavior, just stretched out over
+// more real time so it's easier to watch closely).
+#define SIMULATION_SLOW_MOTION_SCALE 0.2f
