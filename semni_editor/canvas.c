@@ -419,6 +419,115 @@ static BOOL robotCollidesWithEnvironment(Semni robot)
     return FALSE;
 }
 
+// Slope response: scans the robot's 5 body circles against every fitted
+// environment edge (same data pointCollidesWithAnyEnvironmentStroke reads)
+// and returns the tangent angle (in Semni.angle's own convention -- see
+// SIMULATION_SLOPE_ALIGN_RATE's comment in config.h) of whichever single
+// edge is the closest match to an actual resting contact, i.e. the smallest
+// (distance - combinedRadius) over every body-circle/edge pair. That's
+// normally a small negative number (a hair of overlap) right after
+// applyGravityStep's own binary search settles the robot onto something,
+// which is exactly the edge we want the whole body to lean flush against.
+//
+// Only tested against the body circles, not the connecting fillet arcs
+// (unlike robotCollidesWithEnvironment) -- the circles are where an actual
+// standing/lying rest contact happens in practice, and skipping the arcs
+// keeps this cheap enough to call every landed tick without a second
+// thought. Returns FALSE (leaving *outAngleDeg untouched) if there's no
+// environment to compare against at all (e.g. tracing never ran).
+static BOOL findGroundContactAngleDeg(Semni robot, float* outAngleDeg)
+{
+    CircleSegment bodyCircles[NUM_ROBOT_BODY_CIRCLES];
+    computeSemniBodyCircles(robot, bodyCircles);
+
+    BOOL found = FALSE;
+    float bestGap = 0.0f;
+    float bestAx = 0.0f, bestAy = 0.0f, bestBx = 0.0f, bestBy = 0.0f;
+
+    for (int c = 0; c < NUM_ROBOT_BODY_CIRCLES; c++)
+    {
+        float ecx, ecy;
+        robotPointToEnvWorld(bodyCircles[c].center.x, bodyCircles[c].center.y, &ecx, &ecy);
+        float eRadius = robotLengthToEnvWorld(bodyCircles[c].radius);
+
+        for (int s = 0; s < canvas.segmentResultCount; s++)
+        {
+            int start = segmentStarts[s];
+            int count = segmentCounts[s];
+            if (count < 2) continue;
+
+            float combinedRadius = eRadius + segmentThicknessWorld[s];
+
+            for (int i = 0; i < count - 1; i++)
+            {
+                float ax = segmentPointsWorld[(start + i) * 2];
+                float ay = segmentPointsWorld[(start + i) * 2 + 1];
+                float bx = segmentPointsWorld[(start + (i + 1)) * 2];
+                float by = segmentPointsWorld[(start + (i + 1)) * 2 + 1];
+
+                float gap = distPointToSegment(ecx, ecy, ax, ay, bx, by) - combinedRadius;
+
+                if (!found || gap < bestGap)
+                {
+                    found = TRUE;
+                    bestGap = gap;
+                    bestAx = ax; bestAy = ay; bestBx = bx; bestBy = by;
+                }
+            }
+        }
+    }
+
+    if (!found) return FALSE;
+
+    // robotPointToEnvWorld/robotLengthToEnvWorld map robot-world to
+    // env-world via a uniform scale + pan only (see their own comments --
+    // both axes always share the same scale factor), which preserves
+    // angles exactly, so this env-space tangent angle IS the robot-space
+    // angle already, no separate inverse transform needed.
+    float angleDeg = atan2f(bestBy - bestAy, bestBx - bestAx) * (180.0f / 3.14159265f);
+
+    // A line segment's tilt-from-horizontal only means anything mod 180
+    // (it has no inherent direction) -- wrap into (-90, 90] so an edge
+    // walked "backwards" (e.g. measuring ~178 degrees for a near-flat
+    // edge) reads as the equivalent near-level ~-2 degrees, not a target
+    // that reads as almost upside down.
+    while (angleDeg > 90.0f)  angleDeg -= 180.0f;
+    while (angleDeg <= -90.0f) angleDeg += 180.0f;
+
+    *outAngleDeg = angleDeg;
+    return TRUE;
+}
+
+// Companion to applyGravityStep's downward binary search below, but
+// searching UPWARD instead, within a small fixed budget
+// (SIMULATION_SLOPE_CORRECTION_MAX) rather than a whole gravity step --
+// used right after nudging the robot's angle toward the slope it's resting
+// on, since rotating a rigid body around its torso-level center can push a
+// limb a hair into the ground even though the body as a whole was already
+// settled. No-ops if the robot isn't actually colliding right now.
+static void resolveUpwardIfPenetrating(HWND hWnd, float maxCorrection)
+{
+    if (!robotCollidesWithEnvironment(app.robotScene.robot)) return;
+
+    float safe = maxCorrection;    // largest offset assumed to clear
+    float blocked = 0.0f;          // smallest offset confirmed NOT to clear
+
+    for (int i = 0; i < GRAVITY_CONTACT_SEARCH_ITERATIONS; i++)
+    {
+        float mid = (safe + blocked) * 0.5f;
+
+        translateRobot(&app.robotScene.robot, 0.0f, mid);
+        BOOL hit = robotCollidesWithEnvironment(app.robotScene.robot);
+        translateRobot(&app.robotScene.robot, 0.0f, -mid);
+
+        if (hit) blocked = mid;
+        else     safe = mid;
+    }
+
+    translateRobot(&app.robotScene.robot, 0.0f, safe);
+    InvalidateRect(hWnd, NULL, FALSE);
+}
+
 // Applies one gravity step to the robot -- tentatively translates it down
 // by `step` world units, then checks robotCollidesWithEnvironment. If that
 // collides, binary-searches within the step (GRAVITY_CONTACT_SEARCH_ITERATIONS,
@@ -462,6 +571,33 @@ static BOOL applyGravityStep(HWND hWnd, float step)
         }
 
         translateRobot(&app.robotScene.robot, 0.0f, -safe);
+
+        // Slope response: lean the whole body a little further toward
+        // whatever edge it just settled onto (see config.h's
+        // SIMULATION_SLOPE_ALIGN_RATE comment for why this is a rigid
+        // whole-body rotation, not per-joint IK). Runs every landed tick,
+        // not just the first one that touches down, so a fall from a
+        // steep angle settles into the slope gradually across a few ticks
+        // instead of snapping straight to it.
+        float targetAngleDeg;
+        if (findGroundContactAngleDeg(app.robotScene.robot, &targetAngleDeg))
+        {
+            float diff = targetAngleDeg - app.robotScene.robot.angle;
+            while (diff > 180.0f)  diff -= 360.0f;
+            while (diff < -180.0f) diff += 360.0f;
+
+            float step2 = diff * SIMULATION_SLOPE_ALIGN_RATE;
+            if (step2 > SIMULATION_SLOPE_ALIGN_MAX_STEP_DEG)       step2 = SIMULATION_SLOPE_ALIGN_MAX_STEP_DEG;
+            else if (step2 < -SIMULATION_SLOPE_ALIGN_MAX_STEP_DEG) step2 = -SIMULATION_SLOPE_ALIGN_MAX_STEP_DEG;
+
+            app.robotScene.robot.angle += step2;
+
+            // Rotating around getCenter() can push a limb a hair into the
+            // ground even though the body as a whole was already resting
+            // on it -- re-settle immediately so the lean can never read as
+            // sinking into the terrain.
+            resolveUpwardIfPenetrating(hWnd, SIMULATION_SLOPE_CORRECTION_MAX);
+        }
     }
 
     InvalidateRect(hWnd, NULL, FALSE);

@@ -265,3 +265,38 @@
 // milliseconds, measured from GetTickCount() at the moment of the toggle.
 #define SIMULATION_GRAVITY_TOAST_HOLD_MS 900
 #define SIMULATION_GRAVITY_TOAST_FADE_MS 500
+
+// Slope response: once applyGravityStep (canvas.c) lands the robot on
+// something, it also nudges the whole-body angle (Semni.angle, the same
+// field rotatePoint applies around getCenter() for every body part) toward
+// the tilt of whichever environment edge it's actually resting on, instead
+// of always staying bolt upright the way flat-ground-only physics would.
+// It's a RIGID whole-body lean (same simplification the rest of Simulation's
+// physics already makes -- one rigid translate/rotate, no per-joint IK), so
+// on a sloped arc segment the robot settles lying flush against it rather
+// than standing perfectly vertical on an incline.
+//
+// Closed as a FRACTION of the remaining angle gap per landed tick (rather
+// than jumping straight to the target), so it reads as settling into the
+// slope over a few ticks instead of snapping instantly -- most visible right
+// after first touchdown, converges to ~0 remaining diff within well under a
+// second at SIMULATION_AUTO_GRAVITY_INTERVAL_MS's cadence.
+#define SIMULATION_SLOPE_ALIGN_RATE 0.18f
+
+// Upper bound on how many degrees SIMULATION_SLOPE_ALIGN_RATE is allowed to
+// rotate the robot in a single landed tick, independent of how large the
+// remaining angle gap is -- keeps a big gap (e.g. the robot landing at a
+// very different angle than the slope, like right after a fall) from
+// visibly snapping/spinning in one frame instead of settling smoothly.
+#define SIMULATION_SLOPE_ALIGN_MAX_STEP_DEG 4.0f
+
+// After nudging the angle above, the robot's limbs can end up very slightly
+// inside the ground (rotating a rigid body around its torso-level center
+// can push a foot/knee down a hair, even though the body as a whole was
+// already resting on the surface) -- resolveUpwardIfPenetrating (canvas.c)
+// searches for the smallest upward correction, up to this many world units,
+// that clears it again. Kept small on purpose: the rotation step per tick
+// is already small (see MAX_STEP_DEG above), so any resulting penetration
+// is always tiny -- this only ever needs to cover that, not a whole
+// gravity-step's worth of overlap.
+#define SIMULATION_SLOPE_CORRECTION_MAX 0.05f
