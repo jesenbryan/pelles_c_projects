@@ -366,17 +366,20 @@ static BOOL robotCollidesWithEnvironment(Semni robot)
 // "stopped at the ground" rather than visibly overshooting first). Shared
 // by the plain G keypress (one SIMULATION_GRAVITY_STEP per press, or per
 // Windows auto-repeat tick while held) and the Shift+G auto-gravity timer
-// (one SIMULATION_AUTO_GRAVITY_STEP per AUTO_GRAVITY_TIMER_ID tick,
-// smaller and more frequent so the fall reads smooth instead of jittery)
-// -- see WM_KEYDOWN/WM_TIMER below.
-static void applyGravityStep(HWND hWnd, float step)
+// (an accelerating step, see autoGravityVelocity below) -- see
+// WM_KEYDOWN/WM_TIMER below. Returns TRUE if the step was blocked (i.e.
+// it landed on something this tick), so auto-gravity's timer handler
+// knows when to reset its velocity back to 0.
+static BOOL applyGravityStep(HWND hWnd, float step)
 {
     translateRobot(&app.robotScene.robot, 0.0f, -step);
 
-    if (robotCollidesWithEnvironment(app.robotScene.robot))
+    BOOL landed = robotCollidesWithEnvironment(app.robotScene.robot);
+    if (landed)
         translateRobot(&app.robotScene.robot, 0.0f, step);
 
     InvalidateRect(hWnd, NULL, FALSE);
+    return landed;
 }
 
 // Finds which segment's drawn arc strip is closest to a world-space point,
@@ -499,6 +502,16 @@ void UpdateProjection(void)
 // keep repeating on its own, without the user having to hold the key down.
 #define AUTO_GRAVITY_TIMER_ID 1002
 static BOOL autoGravityActive = FALSE;
+
+// Auto gravity's current fall speed (world units/tick) -- ramps up from 0
+// by SIMULATION_AUTO_GRAVITY_ACCEL every AUTO_GRAVITY_TIMER_ID tick, capped
+// at SIMULATION_AUTO_GRAVITY_MAX_STEP (config.h), so the fall actually
+// accelerates instead of moving at one flat speed (see config.h's comment
+// on why a flat speed kept reading as slow motion). Reset to 0 both when
+// auto gravity is freshly toggled on (WM_KEYDOWN) and the instant
+// applyGravityStep reports it landed (WM_TIMER) -- either way, the next
+// fall should start from rest, not carry over speed from before.
+static float autoGravityVelocity = 0.0f;
 
 // Bottom-left "AUTO GRAVITY ON"/"AUTO GRAVITY OFF" toast (canvasRenderFrame
 // draws it, WM_KEYDOWN's Shift+G branch below sets these). Stateless fade:
@@ -1125,7 +1138,12 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         {
             if (appMode == APP_MODE_SIMULATION)
             {
-                applyGravityStep(hWnd, SIMULATION_AUTO_GRAVITY_STEP);
+                autoGravityVelocity += SIMULATION_AUTO_GRAVITY_ACCEL;
+                if (autoGravityVelocity > SIMULATION_AUTO_GRAVITY_MAX_STEP)
+                    autoGravityVelocity = SIMULATION_AUTO_GRAVITY_MAX_STEP;
+
+                if (applyGravityStep(hWnd, autoGravityVelocity))
+                    autoGravityVelocity = 0.0f; // landed -- next fall starts from rest
             }
             else
             {
@@ -1398,6 +1416,7 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             if (!isAutoRepeat)
             {
                 autoGravityActive = !autoGravityActive;
+                autoGravityVelocity = 0.0f; // (re)start every toggle from rest
 
                 if (autoGravityActive)
                     SetTimer(hWnd, AUTO_GRAVITY_TIMER_ID, SIMULATION_AUTO_GRAVITY_INTERVAL_MS, NULL);
@@ -1893,6 +1912,7 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	        if (appMode != APP_MODE_SIMULATION && autoGravityActive)
 	        {
 	            autoGravityActive = FALSE;
+	            autoGravityVelocity = 0.0f;
 	            KillTimer(hWnd, AUTO_GRAVITY_TIMER_ID);
 	        }
 

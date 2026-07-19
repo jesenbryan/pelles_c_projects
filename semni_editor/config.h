@@ -199,23 +199,28 @@
 
 // Shift+G toggles "auto gravity" in Simulation mode on/off -- while on, a
 // dedicated timer (see canvas.c's AUTO_GRAVITY_TIMER_ID) applies one
-// gravity step on every tick, same as manually mashing G, until it's
-// toggled off again (or canvas.c's mode-switch handling turns it off for
-// you, leaving Simulation). Matches the hot-zone UI's own 16ms tick
-// (UI_HOTZONE_INTERVAL_MS, canvas.c) -- fast enough, combined with
-// SIMULATION_AUTO_GRAVITY_STEP's smaller step below, that the fall reads
-// as smooth continuous motion instead of visible discrete jumps.
+// gravity step on every tick, until it's toggled off again (or canvas.c's
+// mode-switch handling turns it off for you, leaving Simulation). Matches
+// the hot-zone UI's own 16ms tick (UI_HOTZONE_INTERVAL_MS, canvas.c) --
+// fast enough that even the small per-tick steps below read as smooth
+// continuous motion instead of visible discrete jumps.
 #define SIMULATION_AUTO_GRAVITY_INTERVAL_MS 16
 
-// Auto gravity's own per-tick nudge -- deliberately smaller than the
-// manual-G SIMULATION_GRAVITY_STEP above, sized so the OVERALL fall speed
-// (step / interval) stays the same as before (0.02 / 40ms), just spread
-// across more, smaller ticks at SIMULATION_AUTO_GRAVITY_INTERVAL_MS's
-// faster rate -- this is what actually removes the jitter, not just the
-// faster tick rate alone. Manual G presses keep using
-// SIMULATION_GRAVITY_STEP unchanged, since only auto gravity was reported
-// as jittery.
-#define SIMULATION_AUTO_GRAVITY_STEP 0.008f
+// Auto gravity accelerates instead of falling at one flat speed -- two
+// flat-speed attempts (0.02/40ms, then 0.02/16ms) both still read as
+// floaty "slow motion" no matter how fast, because constant-velocity
+// motion always looks artificial for something that's supposedly falling;
+// real gravity noticeably speeds up as it goes, and that ramp-up is what
+// actually reads as "falling" rather than "gliding." canvas.c's
+// AUTO_GRAVITY_TIMER_ID handler now keeps a running velocity, starting at
+// 0 each time auto gravity is (re)toggled on, adding this much per tick...
+#define SIMULATION_AUTO_GRAVITY_ACCEL 0.004f
+// ...capped at this top speed once it's built up (reached after ~15
+// ticks/~240ms -- quick enough that it's at full speed almost immediately,
+// not a slow gradual creep), and reset back to 0 the instant it lands on
+// something (robotCollidesWithEnvironment), so the next fall also starts
+// from rest instead of carrying over speed through solid ground.
+#define SIMULATION_AUTO_GRAVITY_MAX_STEP 0.08f
 
 // Bottom-left "AUTO GRAVITY ON"/"AUTO GRAVITY OFF" HUD toast (canvas.c's
 // canvasRenderFrame), shown for a brief hold at full opacity then faded
