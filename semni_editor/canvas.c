@@ -528,15 +528,62 @@ void UpdateProjection(void)
 #define AUTO_GRAVITY_TIMER_ID 1002
 static BOOL autoGravityActive = FALSE;
 
-// Auto gravity's current fall speed (world units/tick) -- ramps up from 0
-// by SIMULATION_AUTO_GRAVITY_ACCEL every AUTO_GRAVITY_TIMER_ID tick, capped
-// at SIMULATION_AUTO_GRAVITY_MAX_STEP (config.h), so the fall actually
-// accelerates instead of moving at one flat speed (see config.h's comment
-// on why a flat speed kept reading as slow motion). Reset to 0 both when
-// auto gravity is freshly toggled on (WM_KEYDOWN) and the instant
-// applyGravityStep reports it landed (WM_TIMER) -- either way, the next
-// fall should start from rest, not carry over speed from before.
+// Auto gravity's current fall speed, in world units PER MILLISECOND (real
+// time, not "per tick" -- see advanceAutoGravity below for why). Ramps up
+// from 0 by SIMULATION_AUTO_GRAVITY_ACCEL_PER_MS2 * elapsed-ms each time
+// it's advanced, capped at SIMULATION_AUTO_GRAVITY_MAX_VELOCITY_PER_MS
+// (config.h), so the fall actually accelerates instead of moving at one
+// flat speed (see config.h's comment on why a flat speed kept reading as
+// slow motion). Reset to 0 both when auto gravity is freshly toggled on
+// (WM_KEYDOWN) and the instant applyGravityStep reports it landed
+// (advanceAutoGravity) -- either way, the next fall should start from
+// rest, not carry over speed from before.
 static float autoGravityVelocity = 0.0f;
+
+// Real-time (GetTickCount) timestamp of the last advanceAutoGravity call --
+// lets it compute how much real time actually elapsed since last time,
+// rather than assuming a fixed tick length. See advanceAutoGravity's own
+// comment for why this matters.
+static DWORD autoGravityLastTickTime = 0;
+
+// Advances auto gravity by however much real time has actually passed
+// since the last call, instead of assuming a fixed SIMULATION_AUTO_GRAVITY_
+// INTERVAL_MS worth of time. This is what it is because of a real bug:
+// WM_TIMER is a LOW-PRIORITY Windows message -- the OS only synthesizes one
+// once the thread's message queue would otherwise be empty -- so a steady
+// stream of WM_MOUSEMOVE messages while the user is actively moving the
+// cursor can starve AUTO_GRAVITY_TIMER_ID for as long as the mouse keeps
+// moving, visibly pausing the fall. Fixing that means this can't assume
+// "one call == one fixed-size step" anymore, since calls may now arrive
+// far apart (WM_TIMER alone, mouse held still) or very close together
+// (WM_MOUSEMOVE flooding in) -- so both the acceleration and the resulting
+// step are scaled by the real elapsed milliseconds instead. Called from
+// WM_TIMER's AUTO_GRAVITY_TIMER_ID case (the fallback, steady baseline) AND
+// directly from WM_MOUSEMOVE (so mouse movement itself keeps driving the
+// fall forward instead of blocking it) -- both funnel through here so the
+// physics can never disagree no matter which message actually triggered it.
+static void advanceAutoGravity(HWND hWnd)
+{
+    if (!autoGravityActive || appMode != APP_MODE_SIMULATION) return;
+
+    DWORD now = GetTickCount();
+    DWORD elapsed = now - autoGravityLastTickTime;
+    if (elapsed == 0) return; // already advanced this exact millisecond
+
+    if (elapsed > SIMULATION_AUTO_GRAVITY_MAX_DT_MS)
+        elapsed = SIMULATION_AUTO_GRAVITY_MAX_DT_MS; // avoid a big catch-up jump after a long stall
+
+    autoGravityLastTickTime = now;
+
+    autoGravityVelocity += SIMULATION_AUTO_GRAVITY_ACCEL_PER_MS2 * (float)elapsed;
+    if (autoGravityVelocity > SIMULATION_AUTO_GRAVITY_MAX_VELOCITY_PER_MS)
+        autoGravityVelocity = SIMULATION_AUTO_GRAVITY_MAX_VELOCITY_PER_MS;
+
+    float step = autoGravityVelocity * (float)elapsed;
+
+    if (applyGravityStep(hWnd, step))
+        autoGravityVelocity = 0.0f; // landed -- next fall starts from rest
+}
 
 // Bottom-left "AUTO GRAVITY ON"/"AUTO GRAVITY OFF" toast (canvasRenderFrame
 // draws it, WM_KEYDOWN's Shift+G branch below sets these). Stateless fade:
@@ -1151,24 +1198,20 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
     }
     case WM_TIMER:
     {
-        // Shift+G's "auto gravity" -- see WM_KEYDOWN's toggle above. Keeps
-        // applying gravity steps on its own, at
-        // SIMULATION_AUTO_GRAVITY_INTERVAL_MS (config.h), for as long as
-        // autoGravityActive stays TRUE. Also bails and turns itself off if
-        // Simulation mode was left some other way (e.g. switching Design
-        // Mode from the menu) without going through the mode-switch
-        // cleanup in WM_COMMAND -- defensive, since applyGravityStep
-        // wouldn't make sense to keep running outside Simulation.
+        // Shift+G's "auto gravity" -- see WM_KEYDOWN's toggle above. This is
+        // just the steady fallback driver (see SIMULATION_AUTO_GRAVITY_
+        // INTERVAL_MS's comment, config.h, for why WM_MOUSEMOVE also calls
+        // advanceAutoGravity directly) -- the real step/acceleration math
+        // lives in advanceAutoGravity so both call sites can never disagree.
+        // Also bails and turns itself off if Simulation mode was left some
+        // other way (e.g. switching Design Mode from the menu) without going
+        // through the mode-switch cleanup in WM_COMMAND -- defensive, since
+        // it wouldn't make sense to keep running outside Simulation.
         if (wParam == AUTO_GRAVITY_TIMER_ID)
         {
             if (appMode == APP_MODE_SIMULATION)
             {
-                autoGravityVelocity += SIMULATION_AUTO_GRAVITY_ACCEL;
-                if (autoGravityVelocity > SIMULATION_AUTO_GRAVITY_MAX_STEP)
-                    autoGravityVelocity = SIMULATION_AUTO_GRAVITY_MAX_STEP;
-
-                if (applyGravityStep(hWnd, autoGravityVelocity))
-                    autoGravityVelocity = 0.0f; // landed -- next fall starts from rest
+                advanceAutoGravity(hWnd);
             }
             else
             {
@@ -1442,6 +1485,7 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             {
                 autoGravityActive = !autoGravityActive;
                 autoGravityVelocity = 0.0f; // (re)start every toggle from rest
+                autoGravityLastTickTime = GetTickCount(); // avoid a huge first elapsed-time jump
 
                 if (autoGravityActive)
                     SetTimer(hWnd, AUTO_GRAVITY_TIMER_ID, SIMULATION_AUTO_GRAVITY_INTERVAL_MS, NULL);
@@ -1583,6 +1627,14 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	}
     case WM_MOUSEMOVE:
 	{
+	    // See advanceAutoGravity's comment: WM_TIMER is low-priority and
+	    // gets starved by a steady stream of WM_MOUSEMOVE, which otherwise
+	    // visibly pauses the fall for as long as the mouse keeps moving.
+	    // Calling it here too means mouse movement itself keeps the fall
+	    // going instead of blocking it -- no-ops instantly if auto gravity
+	    // isn't currently on.
+	    advanceAutoGravity(hWnd);
+
 	    if (app.draggingRobotSim)
 	    {
 	        float wx, wy;

@@ -205,21 +205,28 @@
 // zooming in close enough makes those same world units cover many more
 // screen pixels, turning it into a visible floating gap -- worse still
 // once auto gravity's step size grew for the acceleration fix
-// (SIMULATION_AUTO_GRAVITY_MAX_STEP). Fix: once a step collides,
-// binary-search within it for how far it can actually go before touching,
-// this many iterations deep -- each iteration halves the remaining
-// uncertainty, so this many fully collapses even the largest step
-// (SIMULATION_AUTO_GRAVITY_MAX_STEP, 0.08) to a gap far smaller than a
-// screen pixel at any zoom level actually reachable in this app.
+// (SIMULATION_AUTO_GRAVITY_MAX_VELOCITY_PER_MS). Fix: once a step
+// collides, binary-search within it for how far it can actually go before
+// touching, this many iterations deep -- each iteration halves the
+// remaining uncertainty, so this many fully collapses even the largest
+// plausible step this app can produce to a gap far smaller than a screen
+// pixel at any zoom level actually reachable.
 #define GRAVITY_CONTACT_SEARCH_ITERATIONS 12
 
 // Shift+G toggles "auto gravity" in Simulation mode on/off -- while on, a
-// dedicated timer (see canvas.c's AUTO_GRAVITY_TIMER_ID) applies one
-// gravity step on every tick, until it's toggled off again (or canvas.c's
-// mode-switch handling turns it off for you, leaving Simulation). Matches
-// the hot-zone UI's own 16ms tick (UI_HOTZONE_INTERVAL_MS, canvas.c) --
-// fast enough that even the small per-tick steps below read as smooth
-// continuous motion instead of visible discrete jumps.
+// dedicated timer (see canvas.c's AUTO_GRAVITY_TIMER_ID) nudges things
+// along on its own, until it's toggled off again (or canvas.c's mode-switch
+// handling turns it off for you, leaving Simulation). This is just the
+// FALLBACK cadence for when nothing else is happening -- WM_TIMER messages
+// are low-priority in Windows (only synthesized once the queue is
+// otherwise empty), so a steady stream of WM_MOUSEMOVE while the user is
+// moving the cursor can starve it and stall the fall entirely. canvas.c's
+// advanceAutoGravity is real-time based (GetTickCount deltas, not "one
+// step per tick"), and is ALSO called directly from WM_MOUSEMOVE, so mouse
+// movement drives the fall forward itself instead of blocking it -- this
+// interval only matters for keeping things moving while the mouse is
+// perfectly still. Matches the hot-zone UI's own 16ms tick
+// (UI_HOTZONE_INTERVAL_MS, canvas.c).
 #define SIMULATION_AUTO_GRAVITY_INTERVAL_MS 16
 
 // Auto gravity accelerates instead of falling at one flat speed -- two
@@ -227,16 +234,30 @@
 // floaty "slow motion" no matter how fast, because constant-velocity
 // motion always looks artificial for something that's supposedly falling;
 // real gravity noticeably speeds up as it goes, and that ramp-up is what
-// actually reads as "falling" rather than "gliding." canvas.c's
-// AUTO_GRAVITY_TIMER_ID handler now keeps a running velocity, starting at
-// 0 each time auto gravity is (re)toggled on, adding this much per tick...
-#define SIMULATION_AUTO_GRAVITY_ACCEL 0.004f
-// ...capped at this top speed once it's built up (reached after ~15
-// ticks/~240ms -- quick enough that it's at full speed almost immediately,
-// not a slow gradual creep), and reset back to 0 the instant it lands on
-// something (robotCollidesWithEnvironment), so the next fall also starts
-// from rest instead of carrying over speed through solid ground.
-#define SIMULATION_AUTO_GRAVITY_MAX_STEP 0.08f
+// actually reads as "falling" rather than "gliding." Expressed as a real
+// acceleration (world units / ms^2) rather than "per tick" -- since
+// advanceAutoGravity (canvas.c) now scales by the ACTUAL elapsed time
+// between calls (GetTickCount deltas), not an assumed fixed tick length,
+// it stays correct however often/rarely it actually gets called. Numerically
+// equivalent to the old 0.004-per-16ms-tick value (0.004 / 16).
+#define SIMULATION_AUTO_GRAVITY_ACCEL_PER_MS2 0.00025f
+
+// Terminal velocity (world units / ms) the acceleration above builds up
+// to and caps at, reached after ~240ms of continuous falling -- quick
+// enough to feel like it's at full speed almost immediately, not a slow
+// gradual creep. Reset back to 0 the instant it lands on something
+// (robotCollidesWithEnvironment), so the next fall also starts from rest
+// instead of carrying over speed through solid ground. Numerically
+// equivalent to the old 0.08-per-16ms-tick cap (0.08 / 16).
+#define SIMULATION_AUTO_GRAVITY_MAX_VELOCITY_PER_MS 0.005f
+
+// advanceAutoGravity (canvas.c) can be called from arbitrarily far-apart
+// real-time gaps -- e.g. the window was blocked on something else for a
+// while, or WM_TIMER got badly starved for longer than usual -- so the
+// elapsed time it scales by is capped at this many milliseconds per call,
+// otherwise a long-enough gap would make the robot teleport a large
+// distance downward in one jump instead of visibly falling through it.
+#define SIMULATION_AUTO_GRAVITY_MAX_DT_MS 100
 
 // Bottom-left "AUTO GRAVITY ON"/"AUTO GRAVITY OFF" HUD toast (canvas.c's
 // canvasRenderFrame), shown for a brief hold at full opacity then faded
