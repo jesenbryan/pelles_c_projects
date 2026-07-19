@@ -201,7 +201,25 @@
 // dedicated timer (see canvas.c's AUTO_GRAVITY_TIMER_ID) applies one
 // gravity step on every tick, same as manually mashing G, until it's
 // toggled off again (or canvas.c's mode-switch handling turns it off for
-// you, leaving Simulation). Kept slower than the hot-zone UI's own 16ms
-// tick (UI_HOTZONE_INTERVAL_MS, canvas.c) so the fall reads as a steady,
-// watchable drop instead of an instant snap to the ground.
-#define SIMULATION_AUTO_GRAVITY_INTERVAL_MS 40
+// you, leaving Simulation). Matches the hot-zone UI's own 16ms tick
+// (UI_HOTZONE_INTERVAL_MS, canvas.c) -- fast enough, combined with
+// SIMULATION_AUTO_GRAVITY_STEP's smaller step below, that the fall reads
+// as smooth continuous motion instead of visible discrete jumps.
+#define SIMULATION_AUTO_GRAVITY_INTERVAL_MS 16
+
+// Auto gravity's own per-tick nudge -- deliberately smaller than the
+// manual-G SIMULATION_GRAVITY_STEP above, sized so the OVERALL fall speed
+// (step / interval) stays the same as before (0.02 / 40ms), just spread
+// across more, smaller ticks at SIMULATION_AUTO_GRAVITY_INTERVAL_MS's
+// faster rate -- this is what actually removes the jitter, not just the
+// faster tick rate alone. Manual G presses keep using
+// SIMULATION_GRAVITY_STEP unchanged, since only auto gravity was reported
+// as jittery.
+#define SIMULATION_AUTO_GRAVITY_STEP 0.008f
+
+// Bottom-left "AUTO GRAVITY ON"/"AUTO GRAVITY OFF" HUD toast (canvas.c's
+// canvasRenderFrame), shown for a brief hold at full opacity then faded
+// out, every time Shift+G toggles auto gravity. Both durations are in
+// milliseconds, measured from GetTickCount() at the moment of the toggle.
+#define SIMULATION_GRAVITY_TOAST_HOLD_MS 900
+#define SIMULATION_GRAVITY_TOAST_FADE_MS 500

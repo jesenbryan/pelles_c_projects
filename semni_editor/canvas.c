@@ -358,22 +358,23 @@ static BOOL robotCollidesWithEnvironment(Semni robot)
     return FALSE;
 }
 
-// Applies one gravity step (SIMULATION_GRAVITY_STEP, config.h) to the
-// robot -- tentatively translates it down, then checks
-// robotCollidesWithEnvironment and undoes the move if it would now be
-// inside whatever ground the user has drawn. Simpler than solving for the
-// exact landing point, and fine at this step size (small enough that
-// "undo the whole step" reads as "stopped at the ground" rather than
-// visibly overshooting first). Shared by the plain G keypress (one step
-// per press, or per Windows auto-repeat tick while held) and the Shift+G
-// auto-gravity timer (one step per AUTO_GRAVITY_TIMER_ID tick) -- see
-// WM_KEYDOWN/WM_TIMER below.
-static void applyGravityStep(HWND hWnd)
+// Applies one gravity step to the robot -- tentatively translates it down
+// by `step` world units, then checks robotCollidesWithEnvironment and
+// undoes the move if it would now be inside whatever ground the user has
+// drawn. Simpler than solving for the exact landing point, and fine at
+// small step sizes (small enough that "undo the whole step" reads as
+// "stopped at the ground" rather than visibly overshooting first). Shared
+// by the plain G keypress (one SIMULATION_GRAVITY_STEP per press, or per
+// Windows auto-repeat tick while held) and the Shift+G auto-gravity timer
+// (one SIMULATION_AUTO_GRAVITY_STEP per AUTO_GRAVITY_TIMER_ID tick,
+// smaller and more frequent so the fall reads smooth instead of jittery)
+// -- see WM_KEYDOWN/WM_TIMER below.
+static void applyGravityStep(HWND hWnd, float step)
 {
-    translateRobot(&app.robotScene.robot, 0.0f, -SIMULATION_GRAVITY_STEP);
+    translateRobot(&app.robotScene.robot, 0.0f, -step);
 
     if (robotCollidesWithEnvironment(app.robotScene.robot))
-        translateRobot(&app.robotScene.robot, 0.0f, SIMULATION_GRAVITY_STEP);
+        translateRobot(&app.robotScene.robot, 0.0f, step);
 
     InvalidateRect(hWnd, NULL, FALSE);
 }
@@ -498,6 +499,16 @@ void UpdateProjection(void)
 // keep repeating on its own, without the user having to hold the key down.
 #define AUTO_GRAVITY_TIMER_ID 1002
 static BOOL autoGravityActive = FALSE;
+
+// Bottom-left "AUTO GRAVITY ON"/"AUTO GRAVITY OFF" toast (canvasRenderFrame
+// draws it, WM_KEYDOWN's Shift+G branch below sets these). Stateless fade:
+// gravityToastStartTick is just a GetTickCount() snapshot from the moment
+// of the toggle, and the render code recomputes the alpha fresh every
+// frame from how long ago that was (SIMULATION_GRAVITY_TOAST_HOLD_MS/
+// FADE_MS, config.h) rather than stepping some alpha variable on a timer
+// tick -- simpler, and immune to any particular timer's cadence.
+static BOOL gravityToastOn = FALSE;       // which message to show: ON vs OFF
+static DWORD gravityToastStartTick = 0;   // 0 == no toast pending/visible
 
 // Everything WM_PAINT used to do directly (clear excluded -- that's now
 // renderCombinedFrame's job, done once per combined frame rather than once
@@ -965,6 +976,45 @@ void canvasRenderFrame(float dimAmount)
         glPopAttrib();
     }
 
+    // Shift+G's "AUTO GRAVITY ON"/"AUTO GRAVITY OFF" toast -- bottom-left,
+    // mirroring the top-left mode indicator above. Stateless fade: alpha is
+    // recomputed fresh every frame from how long ago gravityToastStartTick
+    // was stamped (WM_KEYDOWN's Shift+G branch), not stepped by a timer, so
+    // it doesn't matter which timer happens to be driving repaints right
+    // now (see WM_TIMER's UI_HOTZONE_TIMER_ID case, which nudges repaints
+    // along during the fade once auto-gravity's own ticking has stopped).
+    // gravityToastStartTick == 0 means no toast is pending/visible.
+    if (gravityToastStartTick != 0)
+    {
+        DWORD elapsed = GetTickCount() - gravityToastStartTick;
+        float toastAlpha = 0.0f;
+
+        if (elapsed < SIMULATION_GRAVITY_TOAST_HOLD_MS)
+        {
+            toastAlpha = 1.0f;
+        }
+        else if (elapsed < (DWORD)(SIMULATION_GRAVITY_TOAST_HOLD_MS + SIMULATION_GRAVITY_TOAST_FADE_MS))
+        {
+            float fadeElapsed = (float)(elapsed - SIMULATION_GRAVITY_TOAST_HOLD_MS);
+            toastAlpha = 1.0f - (fadeElapsed / (float)SIMULATION_GRAVITY_TOAST_FADE_MS);
+        }
+
+        if (toastAlpha > 0.0f)
+        {
+            const char* toastStr = gravityToastOn ? "AUTO GRAVITY ON" : "AUTO GRAVITY OFF";
+            float tr = gravityToastOn ? 0.15f : 0.4f;
+            float tg = gravityToastOn ? 0.55f : 0.4f;
+            float tb = gravityToastOn ? 0.15f : 0.4f;
+
+            glColor4f(tr, tg, tb, toastAlpha);
+            glRasterPos2i(10, 20);
+            glPushAttrib(GL_LIST_BIT);
+            glListBase(fontBase - 32);
+            glCallLists((GLsizei)strlen(toastStr), GL_UNSIGNED_BYTE, toastStr);
+            glPopAttrib();
+        }
+    }
+
     glDisable(GL_BLEND);
 
     glMatrixMode(GL_PROJECTION); glPopMatrix();
@@ -1075,7 +1125,7 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         {
             if (appMode == APP_MODE_SIMULATION)
             {
-                applyGravityStep(hWnd);
+                applyGravityStep(hWnd, SIMULATION_AUTO_GRAVITY_STEP);
             }
             else
             {
@@ -1083,6 +1133,24 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 KillTimer(hWnd, AUTO_GRAVITY_TIMER_ID);
             }
             return 0;
+        }
+
+        // Keeps the gravity toast's fade animating even after auto-gravity's
+        // own timer has stopped ticking (e.g. the "AUTO GRAVITY OFF" toast,
+        // or "ON" if the robot lands and applyGravityStep's per-tick
+        // InvalidateRect calls happen to line up exactly with a paint
+        // that's already up to date). Piggybacks on the always-running
+        // hot-zone timer rather than starting a third one just for this.
+        // Stops invalidating on its own once the fade duration has fully
+        // elapsed (gravityToastStartTick reset to 0), so this doesn't
+        // repaint forever.
+        if (wParam == UI_HOTZONE_TIMER_ID && gravityToastStartTick != 0)
+        {
+            DWORD elapsed = GetTickCount() - gravityToastStartTick;
+            if (elapsed >= (DWORD)(SIMULATION_GRAVITY_TOAST_HOLD_MS + SIMULATION_GRAVITY_TOAST_FADE_MS))
+                gravityToastStartTick = 0;
+
+            InvalidateRect(hWnd, NULL, FALSE);
         }
 
         // NEW: shift-line dwell-to-snap. If the cursor has been basically
@@ -1335,6 +1403,14 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
                     SetTimer(hWnd, AUTO_GRAVITY_TIMER_ID, SIMULATION_AUTO_GRAVITY_INTERVAL_MS, NULL);
                 else
                     KillTimer(hWnd, AUTO_GRAVITY_TIMER_ID);
+
+                // Kick off the bottom-left "AUTO GRAVITY ON/OFF" toast --
+                // canvasRenderFrame reads these two each frame to compute
+                // its fade. gravityToastOn mirrors the state we just
+                // switched TO, not the one we switched from.
+                gravityToastOn = autoGravityActive;
+                gravityToastStartTick = GetTickCount();
+                InvalidateRect(hWnd, NULL, FALSE);
             }
 
             return 0;
@@ -1351,7 +1427,7 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         // even after the key is released).
         if (wParam == 'G' && appMode == APP_MODE_SIMULATION)
         {
-            applyGravityStep(hWnd);
+            applyGravityStep(hWnd, SIMULATION_GRAVITY_STEP);
             return 0;
         }
 
@@ -1819,6 +1895,12 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	            autoGravityActive = FALSE;
 	            KillTimer(hWnd, AUTO_GRAVITY_TIMER_ID);
 	        }
+
+	        // Don't let the toast linger into whatever mode we just switched
+	        // to -- it only makes sense as feedback for a Shift+G press made
+	        // while actually in Simulation.
+	        if (appMode != APP_MODE_SIMULATION)
+	            gravityToastStartTick = 0;
 
 	        if (hWndGL) InvalidateRect(hWndGL, NULL, FALSE);
 	    }
