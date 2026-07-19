@@ -185,3 +185,23 @@
 // arrow-key nudge step (0.05f) so it reads as a gentle, controllable pull
 // rather than an instant drop.
 #define SIMULATION_GRAVITY_STEP 0.02f
+
+// Simulation mode's ground-collision check (canvas.c's
+// robotCollidesWithEnvironment) tests the robot's 5 body circles PLUS its
+// 6 connecting fillet arcs (seam/thigh/shin) against the drawn
+// environment. The circles have a real radius to test against, but the
+// arcs are drawn as bare curves with no inherent thickness of their own --
+// this is the fallback "how wide is a limb" approximation used for those,
+// in the robot's own world units (same space SIMULATION_GRAVITY_STEP is
+// in). Deliberately on the slim side: too generous and the robot would
+// visibly stop falling while still floating above the drawn line.
+#define SIMULATION_ARC_COLLISION_THICKNESS 0.03f
+
+// Shift+G toggles "auto gravity" in Simulation mode on/off -- while on, a
+// dedicated timer (see canvas.c's AUTO_GRAVITY_TIMER_ID) applies one
+// gravity step on every tick, same as manually mashing G, until it's
+// toggled off again (or canvas.c's mode-switch handling turns it off for
+// you, leaving Simulation). Kept slower than the hot-zone UI's own 16ms
+// tick (UI_HOTZONE_INTERVAL_MS, canvas.c) so the fall reads as a steady,
+// watchable drop instead of an instant snap to the ground.
+#define SIMULATION_AUTO_GRAVITY_INTERVAL_MS 40

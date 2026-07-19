@@ -280,16 +280,48 @@ static float robotLengthToEnvWorld(float rlen)
     return rlen * (envHalfY / robotHalfY);
 }
 
+// TRUE if the env-world-space point (ecx, ecy) comes within eRadius of any
+// Environment-layer stroke. Shared by robotCollidesWithEnvironment below
+// for both the robot's body circles (eRadius = that circle's actual
+// radius, converted) and its connecting arcs (eRadius =
+// SIMULATION_ARC_COLLISION_THICKNESS, converted -- see config.h for why
+// the arcs need a stand-in "thickness" the circles don't).
+static BOOL pointCollidesWithAnyEnvironmentStroke(float ecx, float ecy, float eRadius)
+{
+    for (int s = 0; s < canvas.strokeCount; s++)
+    {
+        if (strokeLayer[s] != LAYER_ENVIRONMENT) continue;
+
+        int start = strokeStarts[s];
+        int end = (s == canvas.strokeCount - 1) ? canvas.pointCount : strokeStarts[s + 1];
+        int count = (end - start) / 2;
+        if (count < 2) continue;
+
+        for (int i = 0; i < count - 1; i++)
+        {
+            float ax = points[start + i * 2];
+            float ay = points[start + i * 2 + 1];
+            float bx = points[start + (i + 1) * 2];
+            float by = points[start + (i + 1) * 2 + 1];
+
+            if (distPointToSegment(ecx, ecy, ax, ay, bx, by) < eRadius)
+                return TRUE;
+        }
+    }
+
+    return FALSE;
+}
+
 // TRUE if any of the robot's 5 body circles (head/butt/hip/knee/ankle --
-// see computeSemniBodyCircles, renderer.h) overlaps any Environment-layer
-// stroke, in the robot's CURRENT pose/position. Used by the G ("gravity")
-// hotkey below to stop the robot from sinking through whatever ground the
-// user has drawn. Only tests those 5 circles, not the seam/thigh/shin arcs
-// connecting them -- since every part of the robot's outline is built from
-// arcs trimmed from circles centered within reach of one of these 5 (see
-// app.h's seamArc1Angle comment), testing all 5 is a reasonable
-// approximation of the robot's whole silhouette without needing to walk
-// every arc's own curve.
+// see computeSemniBodyCircles, renderer.h) OR its 6 connecting fillet arcs
+// (seam1/2, thigh1/2, shin1/2 -- see computeSemniArcPoints) overlaps any
+// Environment-layer stroke, in the robot's CURRENT pose/position. Used by
+// the G ("gravity") hotkey below to stop the robot from sinking through
+// whatever ground the user has drawn. The arcs are sampled as poly-lines
+// (computeSemniArcPoints walks the exact same trimmed curve drawArc
+// renders, not the full untrimmed fillet circle -- that would be far too
+// generous) and tested with a fixed stand-in thickness, since -- unlike
+// the circles -- they're drawn as bare curves with no radius of their own.
 static BOOL robotCollidesWithEnvironment(Semni robot)
 {
     CircleSegment bodyCircles[NUM_ROBOT_BODY_CIRCLES];
@@ -301,29 +333,49 @@ static BOOL robotCollidesWithEnvironment(Semni robot)
         robotPointToEnvWorld(bodyCircles[c].center.x, bodyCircles[c].center.y, &ecx, &ecy);
         float eRadius = robotLengthToEnvWorld(bodyCircles[c].radius);
 
-        for (int s = 0; s < canvas.strokeCount; s++)
+        if (pointCollidesWithAnyEnvironmentStroke(ecx, ecy, eRadius))
+            return TRUE;
+    }
+
+    PointF arcPts[NUM_ROBOT_CIRCLE_SEGMENTS][ARC_SAMPLE_COUNT];
+    int arcCounts[NUM_ROBOT_CIRCLE_SEGMENTS];
+    computeSemniArcPoints(robot, arcPts, arcCounts);
+
+    float eArcThickness = robotLengthToEnvWorld(SIMULATION_ARC_COLLISION_THICKNESS);
+
+    for (int a = 0; a < NUM_ROBOT_CIRCLE_SEGMENTS; a++)
+    {
+        for (int i = 0; i < arcCounts[a]; i++)
         {
-            if (strokeLayer[s] != LAYER_ENVIRONMENT) continue;
+            float ecx, ecy;
+            robotPointToEnvWorld(arcPts[a][i].x, arcPts[a][i].y, &ecx, &ecy);
 
-            int start = strokeStarts[s];
-            int end = (s == canvas.strokeCount - 1) ? canvas.pointCount : strokeStarts[s + 1];
-            int count = (end - start) / 2;
-            if (count < 2) continue;
-
-            for (int i = 0; i < count - 1; i++)
-            {
-                float ax = points[start + i * 2];
-                float ay = points[start + i * 2 + 1];
-                float bx = points[start + (i + 1) * 2];
-                float by = points[start + (i + 1) * 2 + 1];
-
-                if (distPointToSegment(ecx, ecy, ax, ay, bx, by) < eRadius)
-                    return TRUE;
-            }
+            if (pointCollidesWithAnyEnvironmentStroke(ecx, ecy, eArcThickness))
+                return TRUE;
         }
     }
 
     return FALSE;
+}
+
+// Applies one gravity step (SIMULATION_GRAVITY_STEP, config.h) to the
+// robot -- tentatively translates it down, then checks
+// robotCollidesWithEnvironment and undoes the move if it would now be
+// inside whatever ground the user has drawn. Simpler than solving for the
+// exact landing point, and fine at this step size (small enough that
+// "undo the whole step" reads as "stopped at the ground" rather than
+// visibly overshooting first). Shared by the plain G keypress (one step
+// per press, or per Windows auto-repeat tick while held) and the Shift+G
+// auto-gravity timer (one step per AUTO_GRAVITY_TIMER_ID tick) -- see
+// WM_KEYDOWN/WM_TIMER below.
+static void applyGravityStep(HWND hWnd)
+{
+    translateRobot(&app.robotScene.robot, 0.0f, -SIMULATION_GRAVITY_STEP);
+
+    if (robotCollidesWithEnvironment(app.robotScene.robot))
+        translateRobot(&app.robotScene.robot, 0.0f, SIMULATION_GRAVITY_STEP);
+
+    InvalidateRect(hWnd, NULL, FALSE);
 }
 
 // Finds which segment's drawn arc strip is closest to a world-space point,
@@ -438,6 +490,14 @@ void UpdateProjection(void)
 #define UI_HOTZONE_WIDTH  48
 #define UI_HOTZONE_HEIGHT 48
 #define UI_FADE_STEP 18              // alpha change per tick (~14 ticks, ~230ms, to fully fade)
+
+// Simulation mode's "auto gravity" (Shift+G toggle -- see WM_KEYDOWN) --
+// its own dedicated timer, separate from UI_HOTZONE_TIMER_ID above (that
+// one's tied to the corner-reveal panel, an unrelated feature; sharing it
+// here would couple the two for no reason). TRUE while a G press should
+// keep repeating on its own, without the user having to hold the key down.
+#define AUTO_GRAVITY_TIMER_ID 1002
+static BOOL autoGravityActive = FALSE;
 
 // Everything WM_PAINT used to do directly (clear excluded -- that's now
 // renderCombinedFrame's job, done once per combined frame rather than once
@@ -1003,6 +1063,28 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
     }
     case WM_TIMER:
     {
+        // Shift+G's "auto gravity" -- see WM_KEYDOWN's toggle above. Keeps
+        // applying gravity steps on its own, at
+        // SIMULATION_AUTO_GRAVITY_INTERVAL_MS (config.h), for as long as
+        // autoGravityActive stays TRUE. Also bails and turns itself off if
+        // Simulation mode was left some other way (e.g. switching Design
+        // Mode from the menu) without going through the mode-switch
+        // cleanup in WM_COMMAND -- defensive, since applyGravityStep
+        // wouldn't make sense to keep running outside Simulation.
+        if (wParam == AUTO_GRAVITY_TIMER_ID)
+        {
+            if (appMode == APP_MODE_SIMULATION)
+            {
+                applyGravityStep(hWnd);
+            }
+            else
+            {
+                autoGravityActive = FALSE;
+                KillTimer(hWnd, AUTO_GRAVITY_TIMER_ID);
+            }
+            return 0;
+        }
+
         // NEW: shift-line dwell-to-snap. If the cursor has been basically
         // stationary for SHIFT_HOLD_SNAP_MS while drawing a Shift-line, and
         // its raw angle from the line's start point is close to horizontal,
@@ -1229,28 +1311,47 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             return 0;
         }
 
-        // G ("gravity"): Simulation mode only -- nudges the whole robot
-        // straight down by SIMULATION_GRAVITY_STEP (config.h), same
-        // translateRobot the whole-robot drag uses, so it's a pure rigid
-        // move that doesn't touch the pose. "Holding G repeats it" is just
-        // Windows' own WM_KEYDOWN auto-repeat firing this same branch again
-        // and again for as long as the key stays down -- no separate timer
-        // or held-key tracking needed.
+        // Shift+G: toggles "auto gravity" on/off (Simulation mode only) --
+        // starts/stops AUTO_GRAVITY_TIMER_ID, which calls applyGravityStep
+        // on its own every SIMULATION_AUTO_GRAVITY_INTERVAL_MS (config.h)
+        // without needing G held down. Checked BEFORE the plain-G branch
+        // below, since Shift+G would otherwise also satisfy `wParam == 'G'`
+        // (Shift is a separate modifier key, not part of wParam here).
         //
-        // Tentatively applies the step, then checks robotCollidesWithEnvironment
-        // and undoes it if the robot would now be inside whatever ground the
-        // user has drawn -- simpler than solving for the exact landing point,
-        // and fine at this step size (SIMULATION_GRAVITY_STEP is already
-        // small enough that "undo the whole step" reads as "stopped at the
-        // ground" rather than visibly overshooting first).
+        // Unlike plain G (which WANTS Windows' auto-repeat -- see below),
+        // a toggle has to ignore it: lParam bit 30 is set on every repeated
+        // WM_KEYDOWN while a key is held, clear only on the very first one,
+        // so holding Shift+G down would otherwise flip autoGravityActive
+        // rapidly on/off/on/... instead of toggling once per actual press.
+        if (wParam == 'G' && appMode == APP_MODE_SIMULATION && (GetAsyncKeyState(VK_SHIFT) & 0x8000))
+        {
+            BOOL isAutoRepeat = (lParam & 0x40000000) != 0;
+
+            if (!isAutoRepeat)
+            {
+                autoGravityActive = !autoGravityActive;
+
+                if (autoGravityActive)
+                    SetTimer(hWnd, AUTO_GRAVITY_TIMER_ID, SIMULATION_AUTO_GRAVITY_INTERVAL_MS, NULL);
+                else
+                    KillTimer(hWnd, AUTO_GRAVITY_TIMER_ID);
+            }
+
+            return 0;
+        }
+
+        // G ("gravity"): Simulation mode only -- nudges the whole robot
+        // straight down by SIMULATION_GRAVITY_STEP (config.h) via
+        // applyGravityStep, same translateRobot the whole-robot drag uses,
+        // so it's a pure rigid move that doesn't touch the pose. "Holding G
+        // repeats it" is just Windows' own WM_KEYDOWN auto-repeat firing
+        // this same branch again and again for as long as the key stays
+        // down -- no separate timer or held-key tracking needed here
+        // (unlike Shift+G's auto-gravity above, which has to keep going
+        // even after the key is released).
         if (wParam == 'G' && appMode == APP_MODE_SIMULATION)
         {
-            translateRobot(&app.robotScene.robot, 0.0f, -SIMULATION_GRAVITY_STEP);
-
-            if (robotCollidesWithEnvironment(app.robotScene.robot))
-                translateRobot(&app.robotScene.robot, 0.0f, SIMULATION_GRAVITY_STEP);
-
-            InvalidateRect(hWnd, NULL, FALSE);
+            applyGravityStep(hWnd);
             return 0;
         }
 
@@ -1708,6 +1809,17 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	        if (!(appMode == APP_MODE_DESIGN && designLayer == LAYER_ENVIRONMENT))
 	            HideUIPanelImmediately();
 
+	        // Same reasoning as the panel hide above: Shift+G's auto-gravity
+	        // (see WM_KEYDOWN/WM_TIMER) shouldn't keep running once
+	        // Simulation isn't the active mode anymore -- WM_TIMER's own
+	        // defensive check would eventually catch this too, but turning
+	        // it off immediately here avoids even one extra stray tick.
+	        if (appMode != APP_MODE_SIMULATION && autoGravityActive)
+	        {
+	            autoGravityActive = FALSE;
+	            KillTimer(hWnd, AUTO_GRAVITY_TIMER_ID);
+	        }
+
 	        if (hWndGL) InvalidateRect(hWndGL, NULL, FALSE);
 	    }
 	    else if (LOWORD(wParam) == ID_SAVE)
@@ -1768,7 +1880,7 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	    return 0;
 	}
     case WM_ERASEBKGND: return 1;
-    case WM_DESTROY: KillTimer(hWnd, UI_HOTZONE_TIMER_ID); PostQuitMessage(0); return 0;
+    case WM_DESTROY: KillTimer(hWnd, UI_HOTZONE_TIMER_ID); KillTimer(hWnd, AUTO_GRAVITY_TIMER_ID); PostQuitMessage(0); return 0;
     }
     return DefWindowProc(hWnd, msg, wParam, lParam);
 }

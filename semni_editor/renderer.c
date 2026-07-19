@@ -49,21 +49,28 @@ void drawCircle(PointF c, float r)
     glEnd();
 }
 
-// Draws a circular arc that passes through p0, p1, and p2 (p1 is the
-// "bulge" handle, same role it played as the bezier control point).
-void drawArc(PointF p0, PointF p1, PointF p2)
+// Computes the same circumcircle + sweep-direction curve drawArc renders
+// between p0 and p2 (sweeping the short way around, through p1 -- p1 is
+// the "bulge" handle, same role it played as the bezier control point),
+// as a poly-line written into out (up to ARC_SAMPLE_COUNT points -- see
+// renderer.h). Returns how many points were written: 3 if p0/p1/p2 are
+// (nearly) collinear (out just holds p0, p1, p2 directly, matching
+// drawArc's own straight-line fallback), ARC_SAMPLE_COUNT otherwise.
+// Factored out of drawArc so other code (canvas.c's ground-collision
+// check) can walk the exact same curve without duplicating this math --
+// same "shared computation" reasoning as computeSemniCircleSegments/
+// computeSemniBodyCircles elsewhere in this file.
+static int computeArcPoints(PointF p0, PointF p1, PointF p2, PointF out[ARC_SAMPLE_COUNT])
 {
     CircleF circle = circumcircle(p0, p1, p2);
 
     if (!circle.valid)
     {
         // p0, p1, p2 are (nearly) collinear -- fall back to straight lines
-        glBegin(GL_LINE_STRIP);
-        glVertex2f(p0.x, p0.y);
-        glVertex2f(p1.x, p1.y);
-        glVertex2f(p2.x, p2.y);
-        glEnd();
-        return;
+        out[0] = p0;
+        out[1] = p1;
+        out[2] = p2;
+        return 3;
     }
 
     float a0 = atan2f(p0.y - circle.center.y, p0.x - circle.center.x);
@@ -90,21 +97,30 @@ void drawArc(PointF p0, PointF p1, PointF p2)
     if (!midOnShortPath)
         sweep = (sweep >= 0.0f) ? sweep - TWO_PI : sweep + TWO_PI;
 
-    const int segments = 40;
-
-    glBegin(GL_LINE_STRIP);
+    const int segments = ARC_SAMPLE_COUNT - 1;
 
     for (int i = 0; i <= segments; i++)
     {
         float t = (float)i / (float)segments;
         float a = a0 + sweep * t;
 
-        glVertex2f(
-            circle.center.x + cosf(a) * circle.radius,
-            circle.center.y + sinf(a) * circle.radius
-        );
+        out[i].x = circle.center.x + cosf(a) * circle.radius;
+        out[i].y = circle.center.y + sinf(a) * circle.radius;
     }
 
+    return ARC_SAMPLE_COUNT;
+}
+
+// Draws a circular arc that passes through p0, p1, and p2 (p1 is the
+// "bulge" handle, same role it played as the bezier control point).
+void drawArc(PointF p0, PointF p1, PointF p2)
+{
+    PointF pts[ARC_SAMPLE_COUNT];
+    int count = computeArcPoints(p0, p1, p2, pts);
+
+    glBegin(GL_LINE_STRIP);
+    for (int i = 0; i < count; i++)
+        glVertex2f(pts[i].x, pts[i].y);
     glEnd();
 }
 
@@ -561,6 +577,71 @@ void computeSemniCircleSegments(Semni b, CircleSegment out[NUM_ROBOT_CIRCLE_SEGM
 
     out[5].center = nestedJointToWorld(shin2Fillet.center, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle);
     out[5].radius = shin2Fillet.radius;
+}
+
+// Computes each of the 6 fillet arcs' actual TRIMMED curve (not the full
+// circle computeSemniCircleSegments above returns) as a world-space
+// poly-line, in the same seam1/seam2/thigh1/thigh2/shin1/shin2 order. The
+// p0 (first-circle tangent point) / p1 (near/bulge point) / p2 (second-
+// circle tangent point) triples computed here are the exact same points
+// drawSemniBody/drawThigh/drawShin feed into drawArc for rendering -- see
+// each of those for the derivation of which tangent-point function
+// (internalTangentPoint vs circleTowardPoint) applies to which arc, and
+// why. Duplicated here (rather than having those draw functions call this
+// instead) so this stays a pure, side-effect-free query usable from
+// outside renderer.c, same relationship computeSemniCircleSegments/
+// computeSemniBodyCircles already have with their own drawSemni* callers.
+void computeSemniArcPoints(Semni b, PointF out[NUM_ROBOT_CIRCLE_SEGMENTS][ARC_SAMPLE_COUNT], int outCounts[NUM_ROBOT_CIRCLE_SEGMENTS])
+{
+    PointF center = getCenter(b);
+    float angle = b.angle;
+
+    // seam arcs 1/2 -- same local-frame math as drawSemniBody
+    PointF headLocal = { b.headX, b.y };
+    PointF buttLocal = { b.buttX, b.y };
+    PointF bodyMidLocal = { (headLocal.x + buttLocal.x) * 0.5f, (headLocal.y + buttLocal.y) * 0.5f };
+
+    Fillet seamArc1Fillet = filletFromAttachAngle(headLocal, b.headRadius, buttLocal, b.buttRadius, b.seamArc1Angle, MIN_ARC_R, MAX_ARC_R);
+    PointF seamArc1P0 = rotatePoint(circleEdge(headLocal, b.headRadius, b.seamArc1Angle), center, angle);
+    PointF seamArc1P1 = rotatePoint(circleTowardPoint(seamArc1Fillet.center, seamArc1Fillet.radius, bodyMidLocal), center, angle);
+    PointF seamArc1P2 = rotatePoint(internalTangentPoint(seamArc1Fillet.center, seamArc1Fillet.radius, buttLocal, b.buttRadius), center, angle);
+    outCounts[0] = computeArcPoints(seamArc1P0, seamArc1P1, seamArc1P2, out[0]);
+
+    Fillet seamArc2Fillet = filletFromAttachAngle(headLocal, b.headRadius, buttLocal, b.buttRadius, b.seamArc2Angle, MIN_ARC_R, MAX_ARC_R);
+    PointF seamArc2P0 = rotatePoint(circleEdge(headLocal, b.headRadius, b.seamArc2Angle), center, angle);
+    PointF seamArc2P1 = rotatePoint(circleTowardPoint(seamArc2Fillet.center, seamArc2Fillet.radius, bodyMidLocal), center, angle);
+    PointF seamArc2P2 = rotatePoint(internalTangentPoint(seamArc2Fillet.center, seamArc2Fillet.radius, buttLocal, b.buttRadius), center, angle);
+    outCounts[1] = computeArcPoints(seamArc2P0, seamArc2P1, seamArc2P2, out[1]);
+
+    // thigh arcs 1/2 -- same local-frame math as drawThigh
+    PointF thighAxisMidLocal = { (b.innerCircle.x + b.kneeCircle.x) * 0.5f, (b.innerCircle.y + b.kneeCircle.y) * 0.5f };
+
+    Fillet thigh1Fillet = filletFromAttachAngle(b.innerCircle, b.innerRadius, b.kneeCircle, b.kneeRadius, b.thighArc1Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC_R);
+    PointF thigh1P0 = jointToWorld(circleEdge(b.innerCircle, b.innerRadius, b.thighArc1Angle), b.innerCircle, b.hipAngle, center, angle);
+    PointF thigh1P1 = jointToWorld(circleTowardPoint(thigh1Fillet.center, thigh1Fillet.radius, thighAxisMidLocal), b.innerCircle, b.hipAngle, center, angle);
+    PointF thigh1P2 = jointToWorld(internalTangentPoint(thigh1Fillet.center, thigh1Fillet.radius, b.kneeCircle, b.kneeRadius), b.innerCircle, b.hipAngle, center, angle);
+    outCounts[2] = computeArcPoints(thigh1P0, thigh1P1, thigh1P2, out[2]);
+
+    Fillet thigh2Fillet = filletFromAttachAngleConcave(b.innerCircle, b.innerRadius, b.kneeCircle, b.kneeRadius, b.thighArc2Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC2_CONCAVE_R);
+    PointF thigh2P0 = jointToWorld(circleEdge(b.innerCircle, b.innerRadius, b.thighArc2Angle), b.innerCircle, b.hipAngle, center, angle);
+    PointF thigh2P1 = jointToWorld(circleTowardPoint(thigh2Fillet.center, thigh2Fillet.radius, thighAxisMidLocal), b.innerCircle, b.hipAngle, center, angle);
+    PointF thigh2P2 = jointToWorld(circleTowardPoint(thigh2Fillet.center, thigh2Fillet.radius, b.kneeCircle), b.innerCircle, b.hipAngle, center, angle);
+    outCounts[3] = computeArcPoints(thigh2P0, thigh2P1, thigh2P2, out[3]);
+
+    // shin arcs 1/2 -- same local-frame math as drawShin
+    PointF shinAxisMidLocal = { (b.kneeCircle.x + b.ankleCircle.x) * 0.5f, (b.kneeCircle.y + b.ankleCircle.y) * 0.5f };
+
+    Fillet shin1Fillet = filletFromAttachAngle(b.kneeCircle, b.kneeRadius, b.ankleCircle, b.ankleRadius, b.shinArc1Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC_R);
+    PointF shin1P0 = nestedJointToWorld(circleEdge(b.kneeCircle, b.kneeRadius, b.shinArc1Angle), b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle);
+    PointF shin1P1 = nestedJointToWorld(circleTowardPoint(shin1Fillet.center, shin1Fillet.radius, shinAxisMidLocal), b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle);
+    PointF shin1P2 = nestedJointToWorld(internalTangentPoint(shin1Fillet.center, shin1Fillet.radius, b.ankleCircle, b.ankleRadius), b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle);
+    outCounts[4] = computeArcPoints(shin1P0, shin1P1, shin1P2, out[4]);
+
+    Fillet shin2Fillet = filletFromAttachAngleConcave(b.kneeCircle, b.kneeRadius, b.ankleCircle, b.ankleRadius, b.shinArc2Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC2_CONCAVE_R);
+    PointF shin2P0 = nestedJointToWorld(circleEdge(b.kneeCircle, b.kneeRadius, b.shinArc2Angle), b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle);
+    PointF shin2P1 = nestedJointToWorld(circleTowardPoint(shin2Fillet.center, shin2Fillet.radius, shinAxisMidLocal), b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle);
+    PointF shin2P2 = nestedJointToWorld(circleTowardPoint(shin2Fillet.center, shin2Fillet.radius, b.ankleCircle), b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle);
+    outCounts[5] = computeArcPoints(shin2P0, shin2P1, shin2P2, out[5]);
 }
 
 // One distinguishable color per circle segment, same palette values as

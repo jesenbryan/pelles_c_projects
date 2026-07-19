@@ -106,6 +106,24 @@ typedef struct {
 // rotatePoint for both drawing and hit-testing elsewhere in this codebase.
 void computeSemniCircleSegments(Semni b, CircleSegment out[NUM_ROBOT_CIRCLE_SEGMENTS]);
 
+// Matches drawArc's own 40-segment sweep sampling (renderer.c) -- 41
+// points covering both endpoints. Also large enough to hold its 3-point
+// straight-line fallback (nearly-collinear p0/p1/p2), which uses far fewer.
+#define ARC_SAMPLE_COUNT 41
+
+// Computes a world-space poly-line approximation of each of the 6 fillet
+// ARCS -- the actual TRIMMED curve drawSemniBody/drawThigh/drawShin render
+// via drawArc, not the full circle computeSemniCircleSegments above
+// returns -- in the same seam1/seam2/thigh1/thigh2/shin1/shin2 order.
+// outCounts[i] is how many of out[i]'s ARC_SAMPLE_COUNT slots are actually
+// filled (3 in the rare nearly-collinear fallback case, ARC_SAMPLE_COUNT
+// otherwise). Used by canvas.c's ground-collision check so gravity can
+// stop the robot's LIMBS (not just its 5 base circles) from sinking into
+// drawn ground -- the full-circle version would be far too generous, since
+// a fillet's own circle is often much bigger than the trimmed arc actually
+// visible on screen.
+void computeSemniArcPoints(Semni b, PointF out[NUM_ROBOT_CIRCLE_SEGMENTS][ARC_SAMPLE_COUNT], int outCounts[NUM_ROBOT_CIRCLE_SEGMENTS]);
+
 // Overlays the full circle behind each fillet arc (seam1/2, thigh1/2,
 // shin1/2) -- every curve on Semni is genuinely just an arc trimmed from
 // some circle (see app.h's seamArc1Angle comment), so this makes that
