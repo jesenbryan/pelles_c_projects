@@ -35,6 +35,21 @@ typedef struct {
     int end;
     Circle circle;
 
+    // Average local stroke radius (in SOURCE IMAGE pixels), measured from
+    // the pre-thinning binary raster at each of this segment's skeleton
+    // points (see pipeline.c's measureLocalRadiusPx/runPipelineOnImage) --
+    // thinningZhangSuen collapses every stroke down to a 1px-wide
+    // centerline before arc-fitting ever runs, which is what the fit
+    // needs, but it also destroys the original stroke's width in the
+    // process. This is how that width gets recovered, so the "reconstructed"
+    // arcs (canvas.c's segment ghost overlay, render.c's
+    // renderSegmentsToImage) can be drawn at roughly the same thickness as
+    // the drawing they were fit from instead of one hardcoded flat width.
+    // Set to 0 for segments this wasn't computed for (e.g. a segment built
+    // directly rather than via runPipelineOnImage) -- callers should treat
+    // 0 as "use a default thickness."
+    float avgRadiusPx;
+
 } ArcSegment;
 
 double curvature(Point a, Point b, Point c);

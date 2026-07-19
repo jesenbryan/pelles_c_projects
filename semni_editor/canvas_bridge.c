@@ -246,6 +246,21 @@ void setSegmentOverlay(ArcSegment* segments, int count, int imgW, int imgH, BOOL
             segmentCircleRadiusWorldY[usedSegments] = 0.0f;
         }
 
+        // This segment's original stroke radius, in raw SOURCE-IMAGE
+        // pixels -- the exact same unit strokeThickness[] (canvas.c) is
+        // already in, since canvasToImage stamped the raster this was
+        // measured from using strokeThickness[s]/2 as the radius in the
+        // first place. Deliberately NOT converted to a world-space length
+        // here (unlike the ghost circle radius above) -- canvas.c's real
+        // strokes render at a CONSTANT SCREEN-PIXEL width regardless of
+        // zoom (halfW = strokeThickness[s] * canvas.zoom / glWindowWidth),
+        // and the segment ghost overlay/BMP export both apply that exact
+        // same formula to this value at their own render time, so a
+        // reconstructed line reads as the same weight as the strokes it
+        // was fit from at any zoom level and any window size -- not just
+        // the specific size/zoom this trace happened to run at.
+        segmentAvgRadiusPx[usedSegments] = (segments[s].avgRadiusPx > 0.0f) ? segments[s].avgRadiusPx : 1.0f;
+
         for (int i = 0; i < arcCount; i++)
         {
             float wx, wy;

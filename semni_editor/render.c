@@ -61,28 +61,34 @@ static void stampSegmentForArc(Image* img, float x0, float y0, float x1, float y
     }
 }
 
-void renderSegmentsToImage(Image* img, float* segmentPointsWorld, int* segmentStarts, 
-                           int* segmentCounts, int segmentResultCount, int imgW, int imgH)
+void renderSegmentsToImage(Image* img, float* segmentPointsWorld, int* segmentStarts,
+                           int* segmentCounts, float* segmentAvgRadiusPx,
+                           int segmentResultCount, int imgW, int imgH)
 {
     // Clear image to white
     memset(img->data, 255, (size_t)imgW * imgH * 3);
-    
+
     // Convert world coordinates to pixel coordinates
     // World space: -aspect to +aspect (X), -1 to +1 (Y) at zoom=1, pan=0
     float aspect = (float)imgW / (float)imgH;
-    
-    float thickness = 2.0f;  // Same as default brush thickness
-    
+
     for (int s = 0; s < segmentResultCount; s++)
     {
         int start = segmentStarts[s];
         int count = segmentCounts[s];
         if (count < 2) continue;
 
+        // This segment's own recovered original radius, used directly as
+        // this stamp's radius -- used to be one flat `thickness/2.0f` for
+        // every segment regardless of how thick the original stroke it was
+        // fit from actually was. See render.h's comment.
+        float r = segmentAvgRadiusPx[s];
+        if (r < 1.0f) r = 1.0f;
+
         // Convert first point from world to pixel coords
         float wx0 = segmentPointsWorld[start * 2];
         float wy0 = segmentPointsWorld[start * 2 + 1];
-        
+
         float px0, py0;
         if (aspect >= 1.0f) {
             px0 = (imgW / 2.0f) * (wx0 / aspect + 1.0f);
@@ -93,7 +99,7 @@ void renderSegmentsToImage(Image* img, float* segmentPointsWorld, int* segmentSt
         }
 
         if (count == 1) {
-            stampDiscForArc(img, px0, py0, thickness / 2.0f);
+            stampDiscForArc(img, px0, py0, r);
             continue;
         }
 
@@ -101,7 +107,7 @@ void renderSegmentsToImage(Image* img, float* segmentPointsWorld, int* segmentSt
         {
             float wx1 = segmentPointsWorld[(start + i) * 2];
             float wy1 = segmentPointsWorld[(start + i) * 2 + 1];
-            
+
             float px1, py1;
             if (aspect >= 1.0f) {
                 px1 = (imgW / 2.0f) * (wx1 / aspect + 1.0f);
@@ -110,8 +116,8 @@ void renderSegmentsToImage(Image* img, float* segmentPointsWorld, int* segmentSt
                 px1 = (imgW / 2.0f) * (wx1 + 1.0f);
                 py1 = (imgH / 2.0f) * (1.0f - (wy1 * aspect));
             }
-            
-            stampSegmentForArc(img, px0, py0, px1, py1, thickness / 2.0f);
+
+            stampSegmentForArc(img, px0, py0, px1, py1, r);
             px0 = px1;
             py0 = py1;
         }

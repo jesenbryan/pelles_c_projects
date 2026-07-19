@@ -38,6 +38,18 @@ float segmentCircleRadiusWorldY[MAX_ARC_SEGMENTS];    // NEW: ghost circle radii
                                                        // x/y independently, so the ghost circle is
                                                        // really an ellipse in world space
 
+// Each reconstructed segment's original stroke radius, in raw SOURCE-IMAGE
+// pixels -- the same unit strokeThickness[] above is already in. See
+// canvas_bridge.c's setSegmentOverlay for how it's derived (measured from
+// the pre-thinning raster, since thinningZhangSuen collapses every stroke
+// to a 1px skeleton before arc-fitting ever runs, destroying its width).
+// Used by the segment ghost overlay below (with the exact same
+// *canvas.zoom/glWindowWidth constant-screen-pixel-width formula real
+// strokes use) and render.c's renderSegmentsToImage, so the
+// "reconstructed" drawing reads as the same weight as whatever it was fit
+// from, instead of one hardcoded flat width regardless of the original.
+float segmentAvgRadiusPx[MAX_ARC_SEGMENTS];
+
 // NEW: which segment (if any) the mouse is currently hovering over.
 // -1 means "none". Declared here (before ResetCanvas) since it's referenced there.
 static int hoveredSegment = -1;
@@ -788,7 +800,6 @@ void canvasRenderFrame(float dimAmount)
 	    glEnable(GL_BLEND);
 	    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-	    float ghostHalfW = (0.01f * canvas.zoom);  // Always use same thickness
 	    float ghostAlpha = isComparisonActive ? 0.95f : 0.35f;
 	    if (isRobotLayerActive) ghostAlpha *= 0.3f;  // extra-dim: Environment reference while on Robot layer
 
@@ -811,6 +822,14 @@ void canvasRenderFrame(float dimAmount)
 	        }
 	        glColor4f(r, g, b, (isHovered ? 1.0f : ghostAlpha) * opacity);
 
+	        // Per-segment now (used to be one flat ghostHalfW for every
+	        // segment) -- same *canvas.zoom/glWindowWidth constant-screen-
+	        // pixel-width formula real strokes use just above, applied to
+	        // THIS segment's own recovered original radius (segmentAvgRadiusPx,
+	        // canvas_bridge.c), so the reconstruction respects each stroke's
+	        // actual original thickness instead of rendering every segment
+	        // at the same made-up width regardless of how thick it really was.
+	        float ghostHalfW = (segmentAvgRadiusPx[s] * canvas.zoom) / (float)glWindowWidth;
 	        float halfW = isHovered ? ghostHalfW * 1.5f : ghostHalfW;
 
 	        glBegin(GL_TRIANGLE_STRIP);
@@ -2016,8 +2035,9 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	                
 	                if (img->data)
 	                {
-	                    renderSegmentsToImage(img, segmentPointsWorld, segmentStarts, segmentCounts, 
-	                                         canvas.segmentResultCount, img->width, img->height);
+	                    renderSegmentsToImage(img, segmentPointsWorld, segmentStarts, segmentCounts,
+	                                         segmentAvgRadiusPx, canvas.segmentResultCount,
+	                                         img->width, img->height);
 	                    saveBMP_UI("", img, NULL, BMP_RGB);
 	                }
 	                

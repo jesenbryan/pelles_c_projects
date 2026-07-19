@@ -110,3 +110,8 @@ extern float segmentCircleRadiusWorld[MAX_ARC_SEGMENTS];   // world X radius
 extern float segmentCircleRadiusWorldY[MAX_ARC_SEGMENTS];  // world Y radius (differs from X
                                                              // when the background is stretched
                                                              // non-uniformly to fill the window)
+
+// Each segment's recovered original stroke radius, in raw source-image
+// pixels (same unit as strokeThickness[]) -- see canvas.c's definition for
+// the full explanation.
+extern float segmentAvgRadiusPx[MAX_ARC_SEGMENTS];

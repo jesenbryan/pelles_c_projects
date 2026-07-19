@@ -94,12 +94,65 @@ static void extractComponent(uint8_t* remaining, uint8_t* compBin, int w, int h,
     free(stackY);
 }
 
+// Approximates the local stroke half-width (radius, in source-image pixels)
+// at skeleton point (x,y), by finding the smallest Chebyshev (square-ring)
+// distance at which the ring around (x,y) first touches a background pixel
+// or the image edge. thinningZhangSuen collapses a stroke down to its
+// 1px-wide medial axis before this is ever called, and along that medial
+// axis, distance-to-background approximates the ORIGINAL stroke's
+// half-thickness at that point (standard property of a skeleton/medial
+// axis) -- which is exactly why `bin` here has to be the PRESERVED
+// pre-thinning raster (origBin below), not the thinned one (every point in
+// the thinned image is background-adjacent almost immediately, since it's
+// only 1px wide). Chebyshev rather than a true Euclidean distance transform
+// -- cheaper, and the difference is negligible for the roughly-circular
+// brush strokes this measures.
+static float measureLocalRadiusPx(const uint8_t* bin, int w, int h, int x, int y, int maxR)
+{
+    for (int r = 1; r <= maxR; r++)
+    {
+        int yTop = y - r, yBot = y + r;
+        for (int dx = -r; dx <= r; dx++)
+        {
+            int xTest = x + dx;
+            if (xTest < 0 || xTest >= w) return (float)r;
+            if (yTop < 0 || !bin[yTop * w + xTest]) return (float)r;
+            if (yBot >= h || !bin[yBot * w + xTest]) return (float)r;
+        }
+
+        int xLeft = x - r, xRight = x + r;
+        for (int dy = -r + 1; dy <= r - 1; dy++)
+        {
+            int yTest = y + dy;
+            if (yTest < 0 || yTest >= h) return (float)r;
+            if (xLeft < 0 || !bin[yTest * w + xLeft]) return (float)r;
+            if (xRight >= w || !bin[yTest * w + xRight]) return (float)r;
+        }
+    }
+
+    return (float)maxR;
+}
+
+// Generous enough for any thickness the brush slider actually allows, small
+// enough that measureLocalRadiusPx's worst case (a huge solid blob with no
+// nearby background at all) stays cheap.
+#define MAX_MEASURED_STROKE_RADIUS_PX 40
+
 static void runPipelineOnImage(Image* img, const char* sourceLabel, BOOL stretched)
 {
-    thinningZhangSuen(img);
-
     int w = img->width;
     int h = img->height;
+
+    // Preserve the RAW (pre-thinning) binary raster -- canvasToImage/
+    // img_to_bin stamp it with the actual drawn stroke width, but
+    // thinningZhangSuen below immediately collapses every stroke down to a
+    // 1px-wide skeleton (which the arc-fit needs), destroying that width
+    // info in the process. Keeping a copy is what lets
+    // measureLocalRadiusPx recover it afterward, per skeleton point.
+    uint8_t* origBin = (uint8_t*)malloc((size_t)w * h);
+    memcpy(origBin, img->bin, (size_t)w * h);
+
+    thinningZhangSuen(img);
 
     uint8_t* remaining = (uint8_t*)malloc((size_t)w * h);
     memcpy(remaining, img->bin, (size_t)w * h);
@@ -142,6 +195,25 @@ static void runPipelineOnImage(Image* img, const char* sourceLabel, BOOL stretch
             ArcSegment segs[MAX_ARC_SEGMENTS];
             int segCount = buildSegments(path, numPoints, segs);
 
+            // Recover each segment's original stroke width (see
+            // measureLocalRadiusPx above) from the preserved pre-thinning
+            // raster, before the segment (and the path buffer its pts[]
+            // point into) gets copied off and this component's own
+            // buildSegments locals go out of scope.
+            for (int i = 0; i < segCount; i++)
+            {
+                double sum = 0.0;
+                int n = segs[i].count;
+                for (int k = 0; k < n; k++)
+                {
+                    sum += measureLocalRadiusPx(origBin, w, h,
+                                                 segs[i].pts[k].x, segs[i].pts[k].y,
+                                                 MAX_MEASURED_STROKE_RADIUS_PX);
+                }
+                segs[i].avgRadiusPx = (n > 0) ? (float)(sum / n) : 1.0f;
+                if (segs[i].avgRadiusPx < 1.0f) segs[i].avgRadiusPx = 1.0f;
+            }
+
             for (int i = 0; i < segCount && totalSegCount < MAX_ARC_SEGMENTS; i++)
                 allSegments[totalSegCount++] = segs[i];
         }
@@ -158,6 +230,7 @@ static void runPipelineOnImage(Image* img, const char* sourceLabel, BOOL stretch
     for (int i = 0; i < componentPathCount; i++) free(componentPaths[i]);
     free(remaining);
     free(compBin);
+    free(origBin);
 
     free(img->data);
     free(img->bin);
