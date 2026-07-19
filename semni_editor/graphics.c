@@ -250,3 +250,12 @@ float graphicsGetRobotScale(void)
 {
     return g_robotScale;
 }
+
+void graphicsResetView(void)
+{
+    g_zoom = 1.0f;
+    g_panX = 0.0f;
+    g_panY = 0.0f;
+
+    applyProjection();
+}

@@ -1035,6 +1035,22 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
 
         case WM_KEYDOWN:
         {
+            // Ctrl+Numpad0: reset the view (zoom to 100%, pan back to
+            // center) -- same shortcut/convention as the ArcSpline canvas's
+            // own Ctrl+Numpad0 (see canvas.c's WM_KEYDOWN) and Simulation's
+            // (sim_camera.h's simCameraReset). Deliberately VK_NUMPAD0, not
+            // the top-row '0' (see canvas.c's WM_KEYDOWN for why those are
+            // different VK codes). Also deliberately leaves
+            // graphicsSetRobotScale's "size" slider alone -- that's the
+            // robot's own configured size, not a camera position, so this
+            // shouldn't undo it.
+            if (wParam == VK_NUMPAD0 && (GetAsyncKeyState(VK_CONTROL) & 0x8000))
+            {
+                graphicsResetView();
+                InvalidateRect(hwnd, NULL, FALSE);
+                break;
+            }
+
             if (wParam == VK_LEFT)
                 app->robotScene.robot.angle += 2.0f;
 

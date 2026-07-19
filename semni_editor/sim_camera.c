@@ -48,3 +48,10 @@ void simCameraGetWorldPan(float halfExtentX, float halfExtentY, float* panX, flo
     *panX = simPanFracX * halfExtentX;
     *panY = simPanFracY * halfExtentY;
 }
+
+void simCameraReset(void)
+{
+    simZoom = 1.0f;
+    simPanFracX = 0.0f;
+    simPanFracY = 0.0f;
+}

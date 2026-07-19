@@ -55,3 +55,10 @@ void simCameraPan(int dxPixels, int dyPixels);
 // still end up shifted by the exact same number of screen pixels for a
 // single simCameraPan() call.
 void simCameraGetWorldPan(float halfExtentX, float halfExtentY, float* panX, float* panY);
+
+// Resets zoom to 100% and pan to center -- bound to Ctrl+0 in Simulation
+// mode (see canvas.c's WM_KEYDOWN). Does NOT touch graphics.c's
+// g_robotScale (the size slider) -- that's the robot's own configured
+// size, not a camera position, same reasoning as everywhere else this
+// camera deliberately leaves it alone.
+void simCameraReset(void);

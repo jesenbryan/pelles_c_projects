@@ -41,3 +41,9 @@ float graphicsGetZoom(void);
 // means the slider gets that same guarantee for free.
 void graphicsSetRobotScale(float scale);
 float graphicsGetRobotScale(void);
+
+// Resets zoom to 100% and pan to center -- bound to Ctrl+0 in Design >
+// Robot mode (see input.c's WM_KEYDOWN). Does NOT touch g_robotScale (the
+// size slider) -- that's the robot's own configured size, not a camera
+// position, so Ctrl+0 shouldn't undo it.
+void graphicsResetView(void);

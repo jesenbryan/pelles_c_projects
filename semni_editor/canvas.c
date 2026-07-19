@@ -53,6 +53,28 @@ static BOOL hotZoneHighlighted = FALSE; // cursor is currently inside the corner
 static BOOL uiShown            = FALSE; // panel is at least partially faded in
 static int  uiAlpha             = 0;    // current fade alpha, 0 (invisible) - 255 (opaque)
 
+// The Clear/Thickness/Color/Trace/View Segments/Comparison Mode panel
+// (hWndUI, ui.c) is Design > Environment-only tooling -- none of it applies
+// to Robot design mode or Simulation. WM_TIMER's hot-zone check below
+// already refuses to show it outside Design > Environment, but that check
+// only runs while canvas.c's own WndProc is actually receiving WM_TIMER --
+// which it ISN'T while Robot design mode is active (editorModeState.
+// currentMode routes WM_TIMER to input.c's handleInput instead once Robot
+// takes over the shared window -- see main.c's WndProcShared). So if the
+// panel was already showing right when the user switches to Robot mode (or
+// Simulation, which forces ArcSpline to be "active" but still isn't
+// Environment), it would otherwise stay stuck on screen indefinitely with
+// no WM_TIMER ever ticking to fade it back out. Called directly from the
+// mode-switch WM_COMMAND handling below instead, so hiding it doesn't
+// depend on the timer being alive at all.
+static void HideUIPanelImmediately(void)
+{
+    if (hWndUI) ShowWindow(hWndUI, SW_HIDE);
+    uiShown = FALSE;
+    uiAlpha = 0;
+    hotZoneHighlighted = FALSE;
+}
+
 void ResetCanvas(void)
 {
     canvas.pointCount = 0;
@@ -974,11 +996,14 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
             BOOL wantVisible = inHotZone || inUIWindow;
 
-            // Robot layer has no drawing tools of its own yet (reserved for
-            // a separate project) - keep the Clear/Trace/etc. panel from
-            // popping up at all while it's the active design layer, even
-            // if the cursor is sitting in its hot corner.
-            if (appMode == APP_MODE_DESIGN && designLayer == LAYER_ROBOT)
+            // This panel is Design > Environment-only tooling (Clear,
+            // thickness, color, Trace, View Segments, Comparison Mode) --
+            // none of it applies to Robot design mode or Simulation, so
+            // only ever let the hot corner reveal it while Environment is
+            // actually the active design layer, even if the cursor is
+            // sitting in its hot corner in some other mode.
+            BOOL envDesignActive = (appMode == APP_MODE_DESIGN && designLayer == LAYER_ENVIRONMENT);
+            if (!envDesignActive)
                 wantVisible = FALSE;
 
             if (wantVisible && !uiShown)
@@ -1057,6 +1082,40 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         UpdateProjection();
         InvalidateRect(hWnd, NULL, FALSE);
         UpdateWindow(hWnd);
+        return 0;
+    }
+    case WM_KEYDOWN:
+    {
+        // Ctrl+Numpad0: reset the view (zoom to 100%, pan back to center --
+        // i.e. canvas.panX/panY or sim_camera's pan back to exactly 0, not
+        // just whatever this session's camera happened to start at) -- this
+        // WndProc handles both Design > Environment and Simulation (see
+        // editorModeState.currentMode's routing in main.c's
+        // WndProcShared -- Simulation forces EDITOR_MODE_ARCSPLINE so it
+        // ends up here too), so branch the same way WM_MOUSEWHEEL/panning
+        // above do: Simulation resets sim_camera, Environment resets
+        // canvas.zoom/panX/panY. Same shortcut as Design > Robot's own
+        // Ctrl+Numpad0 (see input.c's WM_KEYDOWN). Deliberately VK_NUMPAD0,
+        // not the top-row '0' -- top-row digits are VK_0..VK_9 (0x30-0x39,
+        // same as their ASCII codes) while the numpad digits are their own
+        // separate VK_NUMPAD0..VK_NUMPAD9 (0x60-0x69) range, so this only
+        // fires for the numpad key specifically.
+        if (wParam == VK_NUMPAD0 && (GetAsyncKeyState(VK_CONTROL) & 0x8000))
+        {
+            if (appMode == APP_MODE_SIMULATION)
+            {
+                simCameraReset();
+            }
+            else
+            {
+                canvas.zoom = 1.0f;
+                canvas.panX = 0.0f;
+                canvas.panY = 0.0f;
+            }
+
+            UpdateProjection();
+            InvalidateRect(hWnd, NULL, FALSE);
+        }
         return 0;
     }
     case WM_SETCURSOR:
@@ -1499,6 +1558,14 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	        }
 
 	        CheckMenuItem(hModeMenu, ID_MODE_SIMULATION, MF_BYCOMMAND | (appMode == APP_MODE_SIMULATION ? MF_CHECKED : MF_UNCHECKED));
+
+	        // The Environment-only panel (hWndUI) can't rely on WM_TIMER to
+	        // fade itself out here -- see HideUIPanelImmediately's comment --
+	        // so force it closed immediately whenever the mode we just
+	        // switched TO isn't Design > Environment, in case it was left
+	        // showing from before this switch.
+	        if (!(appMode == APP_MODE_DESIGN && designLayer == LAYER_ENVIRONMENT))
+	            HideUIPanelImmediately();
 
 	        if (hWndGL) InvalidateRect(hWndGL, NULL, FALSE);
 	    }
