@@ -329,14 +329,22 @@ void canvasRenderFrame(float dimAmount)
     glLoadIdentity();
 
     // In Simulation mode, pan through sim_camera instead of canvas.panX/
-    // panY -- scaled for this subsystem's own base half-extent (1.0f, see
-    // UpdateProjection above) so it stays in exact pixel-lockstep with
+    // panY -- converted into THIS subsystem's own current half-extent (the
+    // exact same aspect/zoom math UpdateProjection above just used) via
+    // simCameraGetWorldPan, so it stays in exact pixel-lockstep with
     // however far the robot itself pans (see graphics.c's graphicsGetPan),
-    // despite the two subsystems' projections not sharing a base unit.
+    // despite the two subsystems' projections not sharing a base unit or
+    // formula.
     if (appMode == APP_MODE_SIMULATION)
     {
+        float aspect = (float)glWindowWidth / (float)glWindowHeight;
+        float zoom = 1.0f / simCameraGetZoom();
+        float halfX, halfY;
+        if (aspect >= 1.0f) { halfX = aspect * zoom; halfY = zoom; }
+        else                { halfX = zoom; halfY = zoom / aspect; }
+
         float simPanX, simPanY;
-        simCameraGetPanScaled(1.0f, &simPanX, &simPanY);
+        simCameraGetWorldPan(halfX, halfY, &simPanX, &simPanY);
         glTranslatef(-simPanX, -simPanY, 0.0f);
     }
     else

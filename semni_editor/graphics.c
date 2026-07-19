@@ -63,21 +63,18 @@ HDC graphicsGetHDC(void)
 // drift out of sync with each other or with screenToGL.
 //
 // In Simulation mode, the robot is driven by sim_camera's own independent
-// zoom instead of g_zoom/g_robotScale -- see sim_camera.h for why (keeps
-// the robot and the ArcSpline environment zooming/panning together as one
-// scene, without disturbing either subsystem's own Design-mode camera).
-// g_robotScale is deliberately NOT layered in here during Simulation: the
-// pan-pixel math in sim_camera.c's simCameraPan assumes the robot's base
-// 1.5 half-extent unscaled -- multiplying an extra g_robotScale in on top
-// here without also threading it through that pan math would make the
-// robot and the environment drift apart while panning (they'd no longer
-// move the same number of screen pixels per drag), which defeats the
-// whole point of sharing one camera. The Scale slider itself is Semni-
-// editor-only UI anyway (hidden during Simulation, see
-// editor_mode.c's applyEditorModeVisibility), so this only means a
-// robot sized down in Design mode renders at its un-scaled size while
-// simulating -- a minor, deliberate trade-off for keeping the shared
-// camera's pixel-tracking exact.
+// zoom instead of g_zoom -- see sim_camera.h for why (keeps the robot and
+// the ArcSpline environment zooming/panning together as one scene, without
+// disturbing either subsystem's own Design-mode camera). g_robotScale (the
+// "size" slider) is still layered on top here exactly like it is in
+// effectiveZoom() below -- it's the robot's own configured size, not a
+// camera position, so it should render at that same size regardless of
+// which camera is currently driving the view. sim_camera's pan tracking
+// (simCameraGetWorldPan) is written to not care about this extra
+// multiplier -- it converts into whatever half-extent this function
+// actually computes, so folding g_robotScale in here doesn't desync the
+// robot's panning from the environment's the way it would have with an
+// earlier, more naive version of this pan math.
 static void applyProjection(void)
 {
     if (g_lastH == 0) g_lastH = 1;
@@ -88,7 +85,7 @@ static void applyProjection(void)
     glLoadIdentity();
 
     float aspect = (float)g_lastW / (float)g_lastH;
-    float zoom = (appMode == APP_MODE_SIMULATION) ? simCameraGetZoom() : effectiveZoom();
+    float zoom = (appMode == APP_MODE_SIMULATION) ? (simCameraGetZoom() * g_robotScale) : effectiveZoom();
     float halfY = 1.5f / zoom;
     float halfX = halfY * aspect;
 
@@ -162,21 +159,22 @@ void screenToGL(HWND hwnd, int mx, int my, float *x, float *y)
     float nx = (mx / w) * 2.0f - 1.0f;
     float ny = 1.0f - (my / h) * 2.0f;
 
-    float zoom, panX, panY;
+    float zoom, panX, panY, halfY, halfX;
     if (appMode == APP_MODE_SIMULATION)
     {
-        zoom = simCameraGetZoom(); // deliberately no g_robotScale -- see applyProjection's comment
-        simCameraGetPan(&panX, &panY);
+        zoom = simCameraGetZoom() * g_robotScale; // keep in sync with applyProjection above
+        halfY = 1.5f / zoom;
+        halfX = halfY * aspect;
+        simCameraGetWorldPan(halfX, halfY, &panX, &panY);
     }
     else
     {
         zoom = effectiveZoom();
+        halfY = 1.5f / zoom;
+        halfX = halfY * aspect;
         panX = g_panX;
         panY = g_panY;
     }
-
-    float halfY = 1.5f / zoom;
-    float halfX = halfY * aspect;
 
     *x = (nx * halfX) + panX;
     *y = (ny * halfY) + panY;
@@ -210,15 +208,23 @@ void graphicsPan(int dxPixels, int dyPixels)
     g_panY += dyPixels * worldPerPixelY;
 }
 
-// In Simulation mode, returns sim_camera's pan instead of g_panX/g_panY --
-// renderer.c's renderRobotScene/renderApp call this to position the robot,
-// so this branch is what actually makes the robot follow the sim camera
-// during simulation instead of Semni's own Design-mode pan.
+// In Simulation mode, returns sim_camera's pan (converted into the robot's
+// own current world units -- see simCameraGetWorldPan) instead of g_panX/
+// g_panY -- renderer.c's renderRobotScene/renderApp call this to position
+// the robot, so this branch is what actually makes the robot follow the
+// sim camera during simulation instead of Semni's own Design-mode pan.
 void graphicsGetPan(float* panX, float* panY)
 {
     if (appMode == APP_MODE_SIMULATION)
     {
-        simCameraGetPan(panX, panY);
+        // Same half-extent as applyProjection (including g_robotScale), so
+        // the pan this hands back agrees exactly with the projection the
+        // robot was actually just drawn with this frame.
+        float aspect = (float)g_lastW / (float)g_lastH;
+        float zoom = simCameraGetZoom() * g_robotScale;
+        float halfY = 1.5f / zoom;
+        float halfX = halfY * aspect;
+        simCameraGetWorldPan(halfX, halfY, panX, panY);
         return;
     }
     *panX = g_panX;
