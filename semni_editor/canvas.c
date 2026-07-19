@@ -177,6 +177,18 @@ static float shiftHoldWorldY       = 0.0f;
 static DWORD shiftHoldLastMoveTick = 0;     // GetTickCount() at the last meaningful cursor move
 static float shiftHoldSnapAngleRad = 0.0f;  // locked angle, valid only if shiftHoldSnapped
 
+// Snapshot of the in-progress stroke's freehand points from the instant
+// Shift was first pressed this drag (see updateDrawingPoint) -- Shift
+// truncates points[] down to just the stroke's start point and re-derives
+// a straight line from there every move, which would otherwise permanently
+// throw away whatever freehand path came before Shift was pressed.
+// Restored verbatim the moment Shift is released, so releasing it goes
+// back to exactly what was drawn before, not wherever the straight line
+// happened to end up. Sized like points[] itself since the in-progress
+// stroke could in principle be almost that long.
+static float shiftHoldFreehandBackup[MAX_POINTS];
+static int   shiftHoldFreehandBackupCount = 0;
+
 float points[MAX_POINTS];
 int strokeStarts[MAX_STROKES];
 float strokeThickness[MAX_STROKES];
@@ -1229,6 +1241,159 @@ void renderCombinedFrame(void)
     SwapBuffers(hDC);
 }
 
+// Appends (or, while Shift is held, re-derives) the in-progress stroke's
+// next point from a CLIENT-space pixel position -- the exact logic
+// WM_MOUSEMOVE's drawing branch used to have inline. Factored out so
+// WM_KEYDOWN's VK_SHIFT handling below can run the same "constrain to a
+// straight line" computation using GetCursorPos, not just WM_MOUSEMOVE
+// using lParam -- see that handler's comment for why that matters. mx/my
+// are CLIENT window pixel coordinates in both cases (WM_MOUSEMOVE's
+// LOWORD/HIWORD(lParam) already are; the caller is responsible for
+// ScreenToClient-ing a GetCursorPos result first).
+static void updateDrawingPoint(HWND hWnd, int mx, int my, BOOL shiftHeld, BOOL ctrlHeld)
+{
+    float x = (float)mx;
+    float y = (float)my;
+    float aspect = (float)glWindowWidth / (float)glWindowHeight;
+    float nx, ny;
+    if (aspect >= 1.0f) {
+        nx = ((2.0f * x / glWindowWidth) - 1.0f) * aspect * canvas.zoom;
+        ny = (1.0f - (2.0f * y / glWindowHeight)) * canvas.zoom;
+    } else {
+        nx = ((2.0f * x / glWindowWidth) - 1.0f) * canvas.zoom;
+        ny = (1.0f - (2.0f * y / glWindowHeight)) * (1.0f / aspect) * canvas.zoom;
+    }
+    nx += canvas.panX;
+    ny += canvas.panY;
+
+    // Holding Shift constrains the stroke to a straight line from its
+    // start point to the current cursor. Re-derived every call (truncate +
+    // re-append) rather than appended to, so it tracks the cursor like a
+    // rubber-band preview instead of accumulating a freehand trail
+    // underneath it. Releasing Shift mid-drag restores the freehand path
+    // exactly as it was before Shift was first pressed (see the backup
+    // snapshot/restore below) -- Shift is a temporary preview, not a commit.
+    //
+    // Adding Ctrl on top of Shift instantly snaps that line's angle to the
+    // nearest 45 degrees (horizontal / vertical / diagonal), same idea as
+    // the axis-lock in most drawing tools.
+    //
+    // Holding the cursor still (no Ctrl needed) for SHIFT_HOLD_SNAP_MS near
+    // one of those same angles snaps it too -- see the dwell check in
+    // WM_TIMER, since a stationary cursor generates no WM_MOUSEMOVE
+    // messages for that check to run inside. This function only tracks raw
+    // cursor state and applies the lock once WM_TIMER has set
+    // shiftHoldSnapped; it never decides to snap itself.
+    if (shiftHeld)
+    {
+        int curStrokeStart = strokeStarts[canvas.strokeCount - 1];
+
+        if (!shiftHoldActive)
+        {
+            // Fresh activation for this drag (first Shift-held call since
+            // the last release) -- snapshot the freehand points drawn so
+            // far, BEFORE they get truncated away below, so releasing
+            // Shift can restore them exactly instead of leaving whatever
+            // the straight-line preview ended up at.
+            shiftHoldFreehandBackupCount = canvas.pointCount;
+            memcpy(shiftHoldFreehandBackup, points, sizeof(float) * (size_t)canvas.pointCount);
+        }
+
+        canvas.pointCount = curStrokeStart + 2; // keep only the stroke's first point
+
+        int dxPix = mx - shiftHoldPixelX;
+        int dyPix = my - shiftHoldPixelY;
+        BOOL movedSignificantly = !shiftHoldActive ||
+            (dxPix * dxPix + dyPix * dyPix) > (SHIFT_HOLD_JITTER_PX * SHIFT_HOLD_JITTER_PX);
+
+        if (movedSignificantly)
+        {
+            shiftHoldActive       = TRUE;
+            shiftHoldStrokeStart  = curStrokeStart;
+            shiftHoldPixelX       = mx;
+            shiftHoldPixelY       = my;
+            shiftHoldLastMoveTick = GetTickCount();
+            shiftHoldSnapped      = FALSE;   // moving again releases any dwell-lock
+        }
+        // Always track the latest raw position (even tiny sub-jitter
+        // moves), so the WM_TIMER dwell check judges the angle against
+        // where the cursor actually is right now.
+        shiftHoldWorldX = nx;
+        shiftHoldWorldY = ny;
+
+        if (ctrlHeld)
+        {
+            // points[curStrokeStart]/[+1] is the stroke's untouched first
+            // point - only pointCount was rewound above, the underlying
+            // data is still there, so this is a safe anchor to snap from.
+            float startX = points[curStrokeStart];
+            float startY = points[curStrokeStart + 1];
+
+            float dx = nx - startX;
+            float dy = ny - startY;
+            float len = sqrtf(dx * dx + dy * dy);
+
+            if (len > 1e-6f)
+            {
+                const float step = 3.14159265f / 4.0f; // 45 degrees
+                float angle = atan2f(dy, dx);
+                float snapped = roundf(angle / step) * step;
+
+                nx = startX + len * cosf(snapped);
+                ny = startY + len * sinf(snapped);
+            }
+        }
+        else if (shiftHoldSnapped)
+        {
+            // Dwell-locked (set in WM_TIMER): the ANGLE is fixed, but the
+            // LENGTH stays live - project the raw cursor onto the locked
+            // ray so the user can still drag the endpoint back and forth.
+            float startX = points[curStrokeStart];
+            float startY = points[curStrokeStart + 1];
+            float dirX = cosf(shiftHoldSnapAngleRad);
+            float dirY = sinf(shiftHoldSnapAngleRad);
+            float relX = nx - startX;
+            float relY = ny - startY;
+            float proj = relX * dirX + relY * dirY;
+
+            nx = startX + dirX * proj;
+            ny = startY + dirY * proj;
+        }
+    }
+    else
+    {
+        if (shiftHoldActive)
+        {
+            // Shift just released mid-drag -- restore the freehand points
+            // from the snapshot taken when Shift was first pressed this
+            // drag, discarding the straight-line preview entirely instead
+            // of keeping it or continuing freehand from its endpoint.
+            // Returns immediately after, so the restored path is exactly
+            // what it was before Shift touched it -- no extra point tacked
+            // on at wherever the cursor happens to be right now (ordinary
+            // freehand drawing will naturally continue from here on the
+            // next real mouse move, same as any other gap between moves).
+            canvas.pointCount = shiftHoldFreehandBackupCount;
+            memcpy(points, shiftHoldFreehandBackup, sizeof(float) * (size_t)shiftHoldFreehandBackupCount);
+
+            shiftHoldActive  = FALSE;
+            shiftHoldSnapped = FALSE;
+
+            InvalidateRect(hWnd, NULL, FALSE);
+            return;
+        }
+
+        shiftHoldActive  = FALSE;   // Shift released - drop any dwell tracking/lock
+        shiftHoldSnapped = FALSE;
+    }
+
+    if (canvas.pointCount < MAX_POINTS - 1) {
+        points[canvas.pointCount++] = nx;
+        points[canvas.pointCount++] = ny;
+        InvalidateRect(hWnd, NULL, FALSE);
+    }
+}
+
 LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
     switch(msg)
@@ -1533,6 +1698,37 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             return 0;
         }
 
+        // Shift (pressed while actively drawing, i.e. mid-drag): kicks off
+        // the straight-line constraint immediately, using WHEREVER the
+        // cursor already is, instead of waiting for it to also move.
+        // updateDrawingPoint (used here and by WM_MOUSEMOVE) is only ever
+        // driven by WM_MOUSEMOVE otherwise -- and Windows does NOT send
+        // WM_MOUSEMOVE just because a modifier key's state changed, only
+        // on actual cursor movement -- so pressing Shift mid-stroke used to
+        // visibly do nothing at all until the user nudged the mouse
+        // afterward, even though the key registered fine. Explicitly
+        // pulling the current cursor position here (GetCursorPos, then
+        // ScreenToClient to match lParam's coordinate space) and running
+        // the exact same logic closes that gap: the line preview appears
+        // the instant Shift goes down, full stop.
+        //
+        // Guarded by the lParam bit 30 auto-repeat check (same reasoning
+        // as Shift+G below) so holding Shift down doesn't re-run this on
+        // every OS key-repeat tick -- harmless if it did (idempotent), just
+        // wasted work.
+        if (wParam == VK_SHIFT && drawing && appMode != APP_MODE_SIMULATION)
+        {
+            BOOL isAutoRepeat = (lParam & 0x40000000) != 0;
+            if (!isAutoRepeat)
+            {
+                POINT pt;
+                GetCursorPos(&pt);
+                ScreenToClient(hWnd, &pt);
+                updateDrawingPoint(hWnd, pt.x, pt.y, TRUE, (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0);
+            }
+            return 0;
+        }
+
         // Shift+G: toggles "auto gravity" on/off (Simulation mode only) --
         // starts/stops AUTO_GRAVITY_TIMER_ID, which calls applyGravityStep
         // on its own every SIMULATION_AUTO_GRAVITY_INTERVAL_MS (config.h)
@@ -1587,6 +1783,26 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             return 0;
         }
 
+        return 0;
+    }
+    case WM_KEYUP:
+    {
+        // Mirror image of WM_KEYDOWN's VK_SHIFT branch above: releasing
+        // Shift should restore the pre-Shift freehand drawing immediately,
+        // not just whenever the next WM_MOUSEMOVE happens to arrive (which,
+        // same as on the press side, Windows won't send just because a
+        // modifier key's state changed). Pulling the cursor position here
+        // and calling updateDrawingPoint with shiftHeld=FALSE runs the
+        // exact restore-from-backup logic it already has for the release
+        // case, right now instead of on the next mouse nudge.
+        if (wParam == VK_SHIFT && drawing && appMode != APP_MODE_SIMULATION)
+        {
+            POINT pt;
+            GetCursorPos(&pt);
+            ScreenToClient(hWnd, &pt);
+            updateDrawingPoint(hWnd, pt.x, pt.y, FALSE, (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0);
+            return 0;
+        }
         return 0;
     }
     case WM_SETCURSOR:
@@ -1865,114 +2081,12 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	        return 0;
 	    }
 
-	    float x = (float)LOWORD(lParam);
-	    float y = (float)HIWORD(lParam);
-	    float aspect = (float)glWindowWidth / (float)glWindowHeight;
-	    float nx, ny;
-	    if (aspect >= 1.0f) {
-	        nx = ((2.0f * x / glWindowWidth) - 1.0f) * aspect * canvas.zoom;
-	        ny = (1.0f - (2.0f * y / glWindowHeight)) * canvas.zoom;
-	    } else {
-	        nx = ((2.0f * x / glWindowWidth) - 1.0f) * canvas.zoom;
-	        ny = (1.0f - (2.0f * y / glWindowHeight)) * (1.0f / aspect) * canvas.zoom;
-	    }
-	    nx += canvas.panX;   // NEW: store true world coords, independent of current pan
-	    ny += canvas.panY;   // NEW
-
-	    // NEW: holding Shift constrains the stroke to a straight line from
-	    // its start point to the current cursor. Re-derived every move
-	    // (truncate + re-append) rather than appended to, so it tracks the
-	    // cursor like a rubber-band preview instead of accumulating a
-	    // freehand trail underneath it. Releasing Shift mid-drag simply
-	    // resumes freehand from wherever the line last snapped to.
-	    //
-	    // NEW: adding Ctrl on top of Shift instantly snaps that line's angle
-	    // to the nearest 45 degrees (horizontal / vertical / diagonal),
-	    // same idea as the axis-lock in most drawing tools.
-	    //
-	    // NEW: holding the cursor still (no Ctrl needed) for
-	    // SHIFT_HOLD_SNAP_MS near one of those same angles snaps it too -
-	    // see the dwell check in WM_TIMER, since a stationary cursor
-	    // generates no WM_MOUSEMOVE messages for that check to run inside.
-	    // This block only tracks raw cursor state and applies the lock once
-	    // WM_TIMER has set shiftHoldSnapped; it never decides to snap itself.
-	    if (wParam & MK_SHIFT)
-	    {
-	        int curStrokeStart = strokeStarts[canvas.strokeCount - 1];
-	        canvas.pointCount = curStrokeStart + 2; // keep only the stroke's first point
-
-	        int mx = LOWORD(lParam);
-	        int my = HIWORD(lParam);
-	        int dxPix = mx - shiftHoldPixelX;
-	        int dyPix = my - shiftHoldPixelY;
-	        BOOL movedSignificantly = !shiftHoldActive ||
-	            (dxPix * dxPix + dyPix * dyPix) > (SHIFT_HOLD_JITTER_PX * SHIFT_HOLD_JITTER_PX);
-
-	        if (movedSignificantly)
-	        {
-	            shiftHoldActive       = TRUE;
-	            shiftHoldStrokeStart  = curStrokeStart;
-	            shiftHoldPixelX       = mx;
-	            shiftHoldPixelY       = my;
-	            shiftHoldLastMoveTick = GetTickCount();
-	            shiftHoldSnapped      = FALSE;   // moving again releases any dwell-lock
-	        }
-	        // Always track the latest raw position (even tiny sub-jitter
-	        // moves), so the WM_TIMER dwell check judges the angle against
-	        // where the cursor actually is right now.
-	        shiftHoldWorldX = nx;
-	        shiftHoldWorldY = ny;
-
-	        if (wParam & MK_CONTROL)
-	        {
-	            // points[curStrokeStart]/[+1] is the stroke's untouched first
-	            // point - only pointCount was rewound above, the underlying
-	            // data is still there, so this is a safe anchor to snap from.
-	            float startX = points[curStrokeStart];
-	            float startY = points[curStrokeStart + 1];
-
-	            float dx = nx - startX;
-	            float dy = ny - startY;
-	            float len = sqrtf(dx * dx + dy * dy);
-
-	            if (len > 1e-6f)
-	            {
-	                const float step = 3.14159265f / 4.0f; // 45 degrees
-	                float angle = atan2f(dy, dx);
-	                float snapped = roundf(angle / step) * step;
-
-	                nx = startX + len * cosf(snapped);
-	                ny = startY + len * sinf(snapped);
-	            }
-	        }
-	        else if (shiftHoldSnapped)
-	        {
-	            // Dwell-locked (set in WM_TIMER): the ANGLE is fixed, but the
-	            // LENGTH stays live - project the raw cursor onto the locked
-	            // ray so the user can still drag the endpoint back and forth.
-	            float startX = points[curStrokeStart];
-	            float startY = points[curStrokeStart + 1];
-	            float dirX = cosf(shiftHoldSnapAngleRad);
-	            float dirY = sinf(shiftHoldSnapAngleRad);
-	            float relX = nx - startX;
-	            float relY = ny - startY;
-	            float proj = relX * dirX + relY * dirY;
-
-	            nx = startX + dirX * proj;
-	            ny = startY + dirY * proj;
-	        }
-	    }
-	    else
-	    {
-	        shiftHoldActive  = FALSE;   // NEW: Shift released - drop any dwell tracking/lock
-	        shiftHoldSnapped = FALSE;
-	    }
-
-	    if (canvas.pointCount < MAX_POINTS - 1) {
-	        points[canvas.pointCount++] = nx;
-	        points[canvas.pointCount++] = ny;
-	        InvalidateRect(hWnd, NULL, FALSE);
-	    }
+	    // Shared with WM_KEYDOWN's VK_SHIFT handling below (see its comment)
+	    // -- both funnel through updateDrawingPoint so a fresh point/preview
+	    // can never disagree about how it was computed depending on which
+	    // message happened to trigger it.
+	    updateDrawingPoint(hWnd, LOWORD(lParam), HIWORD(lParam),
+	                       (wParam & MK_SHIFT) != 0, (wParam & MK_CONTROL) != 0);
 	    return 0;
 	}
 	case WM_MOUSELEAVE:
