@@ -174,3 +174,14 @@
 // so the inactive one stays visible as background context rather than
 // vanishing outright. 0 = invisible overlay (no dimming), 1 = fully black.
 #define INACTIVE_MODE_DIM_ALPHA 0.65f
+
+// Simulation mode: pressing G nudges the whole robot straight down by this
+// much (world units, same translateRobot used by the whole-robot drag --
+// see canvas.c's WM_KEYDOWN). "Holding G repeats it" needs no extra
+// bookkeeping here -- Windows' own key-repeat keeps re-sending WM_KEYDOWN
+// for as long as the key is held, at whatever repeat rate the user's
+// keyboard settings specify, so each repeat is just another ordinary
+// single press of this same step. Kept in the same ballpark as input.c's
+// arrow-key nudge step (0.05f) so it reads as a gentle, controllable pull
+// rather than an instant drop.
+#define SIMULATION_GRAVITY_STEP 0.02f

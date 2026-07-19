@@ -1116,7 +1116,23 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
             UpdateProjection();
             InvalidateRect(hWnd, NULL, FALSE);
+            return 0;
         }
+
+        // G ("gravity"): Simulation mode only -- nudges the whole robot
+        // straight down by SIMULATION_GRAVITY_STEP (config.h), same
+        // translateRobot the whole-robot drag uses, so it's a pure rigid
+        // move that doesn't touch the pose. "Holding G repeats it" is just
+        // Windows' own WM_KEYDOWN auto-repeat firing this same branch again
+        // and again for as long as the key stays down -- no separate timer
+        // or held-key tracking needed.
+        if (wParam == 'G' && appMode == APP_MODE_SIMULATION)
+        {
+            translateRobot(&app.robotScene.robot, 0.0f, -SIMULATION_GRAVITY_STEP);
+            InvalidateRect(hWnd, NULL, FALSE);
+            return 0;
+        }
+
         return 0;
     }
     case WM_SETCURSOR:
