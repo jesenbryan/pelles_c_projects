@@ -24,8 +24,15 @@ typedef struct {
     int hoverButt;
 
     // Shift held during the most recent mouse move -- combined with
-    // hoverHip to preview the shift+scroll hip rotation's reach (thigh,
-    // knee, shin, foot) in blue before any rotation actually happens
+    // hoverHip/hoverKnee to preview the shift+scroll joint rotation's
+    // reach (thigh/knee, or shin/foot) in blue before any rotation
+    // actually happens. Sampled live every frame (see renderRobot), not
+    // cached from a mouse message, so pressing/releasing Shift while the
+    // cursor sits still over a joint toggles the preview immediately.
+    // Used identically in both Design > Robot mode and Simulation mode --
+    // canvas.c's WM_MOUSEWHEEL Shift-gates the Simulation-mode joint
+    // rotate the same way input.c's own version does, so this same field
+    // means the same thing in both places.
     int shiftHeld;
 
     // "View Segments" toggle (app->showCircleSegments) -- when set,

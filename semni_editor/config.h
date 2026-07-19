@@ -313,9 +313,21 @@
 #define SIMULATION_SLOW_MOTION_SCALE 0.2f
 
 // Simulation mode: hovering the hip or knee's own visible body circle and
-// scrolling the wheel rotates that joint's angle (hipAngle/kneeAngle)
+// Shift+scrolling the wheel rotates that joint's angle (hipAngle/kneeAngle)
 // directly -- see canvas.c's simHoveredJoint/findHoveredJointSim and its
-// WM_MOUSEWHEEL handling. Degrees per wheel notch, same value Design >
-// Robot mode's own Shift+scroll joint rotate uses (input.c), so the feel
-// is consistent between the two places it's available.
+// WM_MOUSEWHEEL handling. Shift-gated for the same reason Design > Robot
+// mode's own hip/knee scroll-rotate is (input.c): a plain scroll while the
+// cursor happens to be over a joint should still zoom, not surprise-rotate
+// a limb. Degrees per wheel notch, same value Design mode's own
+// Shift+scroll joint rotate uses, so the feel is consistent between the
+// two places it's available.
 #define SIMULATION_JOINT_ROTATE_STEP_DEG 2.0f
+
+// Simulation mode: plain Left/Right (no Shift) rotates the WHOLE robot
+// (Semni.angle) -- see canvas.c's WM_KEYDOWN. Same value (and Left =
+// positive / Right = negative sign convention) as Design > Robot mode's
+// own Left/Right nudge (input.c's WM_KEYDOWN, `angle += 2.0f` / `-=
+// 2.0f`), so a press feels identical between the two editors. Joint
+// rotation (hip/knee) is the Shift-gated action instead -- see
+// SIMULATION_JOINT_ROTATE_STEP_DEG and WM_MOUSEWHEEL's Shift check.
+#define SIMULATION_WHOLE_BODY_ROTATE_STEP_DEG 2.0f

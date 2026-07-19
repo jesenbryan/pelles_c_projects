@@ -21,17 +21,26 @@
 // draggingRobotSim/hoveringRobotSim) force every line blue while actively
 // dragging the robot, or yellow while just hovering it (dragging takes
 // priority over hovering -- see hoveringWhole's comment in renderer.h for
-// why), regardless of the per-part active/hover state Design mode's own
-// handles use. Reverts to normal per-part coloring (usually black, or
-// `active`'s r/g/b for a Design-mode hover/drag) once neither is true.
+// why). `active` (the per-part hover/drag highlight Design mode's own
+// handles use, e.g. hipRotateHint/shinAffected below) now comes BEFORE
+// hoveringWhole's generic yellow, though, not after -- Simulation mode
+// feeds those same per-part conditions too now (Shift+hovering hip/knee
+// there arms hipRotateHint/shinAffected exactly like Design mode, see
+// canvas.c's WM_MOUSEWHEEL and renderRobot's rs.shiftHeld), so holding
+// Shift over a joint shows exactly which limb is about to rotate, the
+// same precise feedback Design mode gives, rather than the whole robot
+// just uniformly flashing yellow the way a plain hover elsewhere on the
+// body still does. draggingWhole still wins over everything -- an active
+// whole-robot drag should never be second-guessed by a stale per-part
+// hover highlight.
 static void setColor(RenderState* rs, int active, float r, float g, float b, float opacity)
 {
     if (rs->draggingWhole)
         glColor4f(0.2f, 0.4f, 1.0f, opacity);        // Simulation: grabbed and moving
-    else if (rs->hoveringWhole)
-        glColor4f(1.0f, 0.82f, 0.0f, opacity);       // Simulation: hovered, not yet grabbed
     else if (active)
         glColor4f(r, g, b, opacity);
+    else if (rs->hoveringWhole)
+        glColor4f(1.0f, 0.82f, 0.0f, opacity);       // Simulation: hovered, not yet grabbed
     else
         glColor4f(0.0f, 0.0f, 0.0f, opacity);
 }
@@ -207,9 +216,19 @@ void drawSemniBody(Semni b, RenderState* rs, float opacity)
     // hip-rotate scroll, which swings the whole leg rather than the hip
     // itself, so that combo highlights the leg instead (drawThigh/
     // drawShin's hipRotateHint) and leaves the hip circle unhighlighted.
-    // A plain hover (no shift) still means "scroll resizes this circle",
-    // so it keeps the highlight.
-    setColor(rs, rs->draggingInner || (rs->hoverHip && !rs->shiftHeld), 0.2f, 0.4f, 1.0f, opacity);
+    // A plain hover (no shift) still means "scroll resizes this circle" in
+    // DESIGN mode, so it keeps this blue highlight there.
+    //
+    // "&& !rs->hoveringWhole" excludes this in SIMULATION mode though --
+    // rs->hoveringWhole is only ever set there (app->hoveringRobotSim,
+    // Design mode never touches it), and there's no resize action to
+    // preview in Simulation at all (scrolling a joint only ever rotates
+    // it, and only with Shift held -- see canvas.c's WM_MOUSEWHEEL), so a
+    // plain hover on the hip circle there should read exactly like
+    // hovering anywhere else on the body: setColor's own generic yellow
+    // (hoveringWhole), not this blue "you can resize this" hint that
+    // doesn't apply.
+    setColor(rs, rs->draggingInner || (rs->hoverHip && !rs->shiftHeld && !rs->hoveringWhole), 0.2f, 0.4f, 1.0f, opacity);
     drawCircle(inner, b.innerRadius);
 
     // seam arc 1/2 (formerly "top"/"bottom"): each is a circular arc
@@ -303,7 +322,12 @@ static void drawThigh(Semni b, RenderState* rs, float opacity)
     // sitting on the handle for the whole drag (that's what started it),
     // so without this the hover term alone would keep re-lighting the
     // circle every frame regardless of the exclusion above.
-    setColor(rs, hipRotateHint || (rs->hoverKnee && !rs->shiftHeld && !rs->draggingKnee), 0.2f, 0.4f, 1.0f, opacity);
+    //
+    // "&& !rs->hoveringWhole" excludes the plain-hover resize hint in
+    // Simulation mode, same reasoning as the hip circle's own version in
+    // drawSemniBody -- there's no resize action there, so it should fall
+    // through to setColor's generic yellow instead of this blue hint.
+    setColor(rs, hipRotateHint || (rs->hoverKnee && !rs->shiftHeld && !rs->draggingKnee && !rs->hoveringWhole), 0.2f, 0.4f, 1.0f, opacity);
     drawCircle(kneeWorld, b.kneeRadius);
 
     // the two thigh arcs: same tangent-fillet construction as the
@@ -783,11 +807,17 @@ void drawSemni(Semni b, RenderState* rs, int includeHandles, float opacity)
     // The draggable handles are editor UI, not part of the robot itself --
     // skip them when rendering a frame that's about to be exported, and
     // hard-gate on actually being in the Semni editor right now (same
-    // reasoning as segmentsVisible above): in Simulation mode individual
-    // joints aren't interactable (only the whole-robot drag works), and in
+    // reasoning as segmentsVisible above): in Simulation mode the small
+    // drag-handle dots would be misleading (you can't drag an individual
+    // joint there, only the whole robot -- see canvas.c's WM_LBUTTONDOWN),
+    // even though hip/knee CAN be rotated there now via Shift+hover+scroll
+    // (WM_MOUSEWHEEL) -- that feedback comes from drawSemniBody/drawThigh/
+    // drawShin's own hover coloring above instead (rs.shiftHeld, see
+    // renderRobot below), which isn't gated by handlesVisible at all. In
     // Design > Environment mode this is just the dimmed background copy of
     // the robot, not something being actively edited -- either way, the
-    // handles would be misleading clutter rather than useful UI.
+    // handles would be misleading clutter rather
+    // than useful UI.
     BOOL handlesVisible = includeHandles && (editorModeState.currentMode == EDITOR_MODE_SEMNI);
 
     if (handlesVisible)

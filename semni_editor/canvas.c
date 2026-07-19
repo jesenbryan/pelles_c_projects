@@ -1861,13 +1861,18 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
     {
         short zDelta = GET_WHEEL_DELTA_WPARAM(wParam);
 
-        // Simulation mode, hovering the hip or knee body circle: rotate
-        // that joint instead of zooming -- see simHoveredJoint/
-        // findHoveredJointSim's comments. Plain scroll (no modifier
-        // needed) since hovering a joint already makes the intent
-        // unambiguous; scrolling anywhere else on the canvas still zooms
-        // exactly as before.
-        if (appMode == APP_MODE_SIMULATION && simHoveredJoint != -1)
+        // Simulation mode, hovering the hip or knee body circle WHILE
+        // HOLDING SHIFT: rotate that joint instead of zooming -- see
+        // simHoveredJoint/findHoveredJointSim's comments. Gated behind
+        // Shift for the same reason Design > Robot mode's own hip/knee
+        // scroll-rotate is (input.c's WM_MOUSEWHEEL): a plain scroll while
+        // the cursor happens to be over a joint should still zoom, same as
+        // scrolling anywhere else, rather than surprise-rotating a limb.
+        // WM_MOUSEWHEEL packs the modifier keys held during the scroll
+        // into the low word of wParam (MK_SHIFT), same as WM_MOUSEMOVE --
+        // no GetAsyncKeyState polling needed (same trick input.c's own
+        // version already uses).
+        if (appMode == APP_MODE_SIMULATION && simHoveredJoint != -1 && (LOWORD(wParam) & MK_SHIFT))
         {
             float step = (zDelta > 0) ? SIMULATION_JOINT_ROTATE_STEP_DEG : -SIMULATION_JOINT_ROTATE_STEP_DEG;
 
@@ -2022,6 +2027,32 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         if (wParam == 'G' && appMode == APP_MODE_SIMULATION)
         {
             applyGravityStep(hWnd, SIMULATION_GRAVITY_STEP);
+            return 0;
+        }
+
+        // Plain Left/Right (no Shift): rotates the WHOLE robot
+        // (Semni.angle), not any one joint -- joints are a Shift+scroll-
+        // over-the-hovered-circle action instead (WM_MOUSEWHEEL above),
+        // gated behind Shift specifically so a plain scroll still zooms
+        // (see that branch's own comment) -- unrelated to this. Same angle
+        // field and same per-press step Design > Robot mode's own
+        // Left/Right already nudges (input.c's WM_KEYDOWN, `angle +=
+        // 2.0f` / `-= 2.0f`), same Left = positive / Right = negative sign
+        // convention too, so a press feels identical between the two
+        // editors. Windows' own key-repeat re-fires this while held, same
+        // as plain G above, so no repeat bookkeeping needed.
+        if ((wParam == VK_LEFT || wParam == VK_RIGHT) && appMode == APP_MODE_SIMULATION)
+        {
+            float step = (wParam == VK_LEFT) ? SIMULATION_WHOLE_BODY_ROTATE_STEP_DEG : -SIMULATION_WHOLE_BODY_ROTATE_STEP_DEG;
+
+            app.robotScene.robot.angle += step;
+
+            // Same re-settle WM_MOUSEWHEEL's joint-rotate branch and slope
+            // response both use -- keeps a rotate from visibly sinking the
+            // robot into ground it's already resting on.
+            resolveUpwardIfPenetrating(hWnd, SIMULATION_SLOPE_CORRECTION_MAX);
+
+            InvalidateRect(hWnd, NULL, FALSE);
             return 0;
         }
 
@@ -2202,8 +2233,22 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
 	        // Keep simHoveredJoint current too -- see its own comment and
 	        // findHoveredJointSim's, used by WM_MOUSEWHEEL below to decide
-	        // whether a scroll rotates the hovered joint instead of zooming.
+	        // whether a Shift+scroll rotates the hovered joint instead of
+	        // zooming. (WM_KEYDOWN's plain Left/Right is unrelated -- that
+	        // rotates the WHOLE robot, not a specific joint, so it doesn't
+	        // read simHoveredJoint at all.)
 	        simHoveredJoint = findHoveredJointSim(app.robotScene.robot, wx, wy);
+
+	        // Mirror it into the SAME hover fields Design > Robot mode's own
+	        // hip/knee handles use (app.hoverHip/hoverKnee) -- renderer.c's
+	        // drawSemniBody/drawThigh/drawShin already color the thigh/shin
+	        // from these whenever Shift is ALSO held (RenderState.shiftHeld,
+	        // sampled live every frame in renderRobot -- same field, same
+	        // gating Design mode itself uses), so this is all that's needed
+	        // to get the exact same "which limb is about to rotate"
+	        // highlight Design mode shows, for free.
+	        app.hoverHip  = (simHoveredJoint == 2);
+	        app.hoverKnee = (simHoveredJoint == 3);
 
 	        InvalidateRect(hWnd, NULL, FALSE);
 	    }
@@ -2357,6 +2402,8 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	    if (simHoveredJoint != -1)
 	    {
 	        simHoveredJoint = -1;
+	        app.hoverHip = FALSE;
+	        app.hoverKnee = FALSE;
 	        InvalidateRect(hWnd, NULL, FALSE);
 	    }
 	    return 0;
@@ -2398,6 +2445,46 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	        if (LOWORD(wParam) == ID_MODE_SIMULATION)
 	        {
 	            appMode = APP_MODE_SIMULATION;
+
+	            // Design > Robot mode's own hover flags (app.hoverHead/
+	            // hoverButt/hoverAnkle/hoverHip/hoverKnee) are only ever
+	            // updated by input.c's WM_MOUSEMOVE, which stops receiving
+	            // messages the moment editor mode leaves EDITOR_MODE_SEMNI --
+	            // so if the user was hovering a handle there right before
+	            // switching to Simulation, a stale TRUE would otherwise keep
+	            // that part highlighted blue here even with the cursor
+	            // nowhere near it (drawSemniBody/drawThigh/drawShin read
+	            // these fields unconditionally, regardless of editor mode).
+	            // Clearing them here guarantees Simulation always starts
+	            // with a clean, accurate hover state; WM_MOUSEMOVE/
+	            // WM_MOUSELEAVE below keep hoverHip/hoverKnee current for
+	            // the rest of the session (simHoveredJoint's own comment).
+	            app.hoverHead = FALSE;
+	            app.hoverButt = FALSE;
+	            app.hoverAnkle = FALSE;
+	            app.hoverHip = FALSE;
+	            app.hoverKnee = FALSE;
+	            simHoveredJoint = -1;
+
+	            // Belt-and-suspenders alongside the hover reset above: these
+	            // normally always get cleared on WM_LBUTTONUP (input.c), but
+	            // reset them here too on the off chance a drag ever got left
+	            // stuck active (e.g. the button-up landed somewhere that
+	            // didn't reach input.c) -- setColor's `active` parameter now
+	            // takes priority over hoveringWhole's yellow (see its own
+	            // comment), so a stale TRUE here would otherwise paint a
+	            // spurious blue highlight throughout Simulation instead of
+	            // being silently masked the way it used to be.
+	            app.draggingSeamArc1 = 0;
+	            app.draggingSeamArc2 = 0;
+	            app.draggingInner = 0;
+	            app.draggingKnee = 0;
+	            app.draggingThigh1 = 0;
+	            app.draggingThigh2 = 0;
+	            app.draggingAnkle = 0;
+	            app.draggingShin1 = 0;
+	            app.draggingShin2 = 0;
+	            app.activeHandle = 0;
 
 	            // Ground collision (robotCollidesWithEnvironment ->
 	            // pointCollidesWithAnyEnvironmentStroke) tests against the
