@@ -255,6 +255,19 @@ typedef struct {
     // RenderState.draggingWhole so the robot's outline renders blue for as
     // long as this is true, and back to normal the instant it's released.
     int draggingRobotSim;
+
+    // TRUE while the cursor is over the robot's body in Simulation mode,
+    // whether or not a drag is actually in progress (see
+    // isPointInsideRobotBody, robot.c, and canvas.c's WM_MOUSEMOVE, which
+    // keeps this current every move). Used for two things in canvas.c:
+    // showing the move cursor and gating whether a click starts a drag --
+    // and, via RenderState.hoveringWhole (renderer.c), for turning the
+    // robot's outline yellow as hover feedback. draggingRobotSim above
+    // takes priority over this for color purposes (dragging stays blue),
+    // since this flag is deliberately left stale/TRUE for the whole
+    // duration of a drag (WM_MOUSEMOVE's drag branch returns before
+    // reaching the code that updates this).
+    int hoveringRobotSim;
 } AppState;
 
 // The single running instance of the Semni app's state, defined in main.c.

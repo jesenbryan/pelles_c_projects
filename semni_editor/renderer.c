@@ -18,14 +18,20 @@
 // out everywhere rather than just its own strokes/lines fading -- scaling
 // each draw's own alpha keeps the shared background untouched and only
 // fades this subsystem's actual ink.
-// rs->draggingWhole (Simulation mode, actively dragging the robot -- see
-// app->draggingRobotSim) forces every line blue regardless of its own
-// per-part active/hover state, so the whole robot reads as "this is
-// grabbed and moving" while the drag is in progress, then reverts to its
-// normal per-part coloring (usually black) the instant it's released.
+// rs->draggingWhole/hoveringWhole (Simulation mode -- see app->
+// draggingRobotSim/hoveringRobotSim) force every line blue while actively
+// dragging the robot, or yellow while just hovering it (dragging takes
+// priority over hovering -- see hoveringWhole's comment in renderer.h for
+// why), regardless of the per-part active/hover state Design mode's own
+// handles use. Reverts to normal per-part coloring (usually black, or
+// `active`'s r/g/b for a Design-mode hover/drag) once neither is true.
 static void setColor(RenderState* rs, int active, float r, float g, float b, float opacity)
 {
-    if (active || rs->draggingWhole)
+    if (rs->draggingWhole)
+        glColor4f(0.2f, 0.4f, 1.0f, opacity);        // Simulation: grabbed and moving
+    else if (rs->hoveringWhole)
+        glColor4f(1.0f, 0.82f, 0.0f, opacity);       // Simulation: hovered, not yet grabbed
+    else if (active)
         glColor4f(r, g, b, opacity);
     else
         glColor4f(0.0f, 0.0f, 0.0f, opacity);
@@ -734,6 +740,7 @@ static void renderRobot(AppState* app, int includeHandles, float opacity)
     rs.hoveredCircleSegment = app->hoveredCircleSegment;
     rs.hoveredBodyCircle = app->hoveredBodyCircle;
     rs.draggingWhole = app->draggingRobotSim;
+    rs.hoveringWhole = app->hoveringRobotSim;
 
     // sampled live every frame (the render loop runs continuously -- see
     // main.c) rather than cached from WM_MOUSEMOVE's wParam, which would

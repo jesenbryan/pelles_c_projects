@@ -122,14 +122,15 @@ static int  panLastX = 0, panLastY = 0;
 // this file.
 static float dragRobotLastWX = 0.0f, dragRobotLastWY = 0.0f;
 
-// TRUE while the cursor is over the robot's body (see
-// isPointInsideRobotBody, robot.c) in Simulation mode -- updated every
-// WM_MOUSEMOVE (the only place the current cursor position is known) and
-// read back by WM_SETCURSOR (whose lParam/wParam don't carry a position)
-// to only show the move cursor, and by WM_LBUTTONDOWN to only start a
-// whole-robot drag, when the mouse is genuinely over the robot rather than
-// anywhere on the canvas.
-static BOOL hoveringRobotBodySim = FALSE;
+// app.hoveringRobotSim (app.h) tracks whether the cursor is over the
+// robot's body in Simulation mode -- updated every WM_MOUSEMOVE below (the
+// only place the current cursor position is known) and read back by
+// WM_SETCURSOR (whose lParam/wParam don't carry a position) to only show
+// the move cursor, and by WM_LBUTTONDOWN to only start a whole-robot drag,
+// when the mouse is genuinely over the robot rather than anywhere on the
+// canvas. Lives on app (like draggingRobotSim above) rather than as a
+// local static here, so renderRobot (renderer.c) can also read it to
+// highlight the robot yellow on hover.
 
 // NEW: shift-line "hold still to snap" state - lets the user snap to a
 // horizontal / vertical / 45-degree diagonal line just by holding the
@@ -1123,12 +1124,12 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         // Simulation mode: dragging the robot's own body moves it (see
         // WM_LBUTTONDOWN/WM_MOUSEMOVE below) -- a 4-way move cursor
         // signals that specifically while hovering over the robot
-        // (hoveringRobotBodySim, kept up to date every WM_MOUSEMOVE),
+        // (app.hoveringRobotSim, kept up to date every WM_MOUSEMOVE),
         // rather than implying anywhere on the canvas is draggable.
         // Outside Simulation mode, off the robot, or over the window's
         // border/caption/etc (hit-test isn't HTCLIENT), fall through to
         // the default arrow.
-        if (appMode == APP_MODE_SIMULATION && LOWORD(lParam) == HTCLIENT && hoveringRobotBodySim)
+        if (appMode == APP_MODE_SIMULATION && LOWORD(lParam) == HTCLIENT && app.hoveringRobotSim)
         {
             SetCursor(LoadCursor(NULL, IDC_SIZEALL));
             return TRUE;
@@ -1238,15 +1239,17 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	        return 0;
 	    }
 
-	    // Simulation mode, not currently dragging: keep hoveringRobotBodySim
-	    // (used by WM_SETCURSOR/WM_LBUTTONDOWN above) up to date so the move
-	    // cursor -- and the ability to start a drag -- only ever appears
-	    // while genuinely over the robot's body.
+	    // Simulation mode, not currently dragging: keep app.hoveringRobotSim
+	    // (used by WM_SETCURSOR/WM_LBUTTONDOWN above, and by renderRobot for
+	    // the yellow hover highlight) up to date so the move cursor -- and
+	    // the ability to start a drag -- only ever appears while genuinely
+	    // over the robot's body.
 	    if (appMode == APP_MODE_SIMULATION)
 	    {
 	        float wx, wy;
 	        screenToGL(hWnd, LOWORD(lParam), HIWORD(lParam), &wx, &wy);
-	        hoveringRobotBodySim = isPointInsideRobotBody(app.robotScene.robot, wx, wy);
+	        app.hoveringRobotSim = isPointInsideRobotBody(app.robotScene.robot, wx, wy);
+	        InvalidateRect(hWnd, NULL, FALSE);
 	    }
 
 	    if (panning)
@@ -1482,9 +1485,10 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	}
 	case WM_MOUSELEAVE:
 	{
-	    if (hoveringRobotBodySim)
+	    if (app.hoveringRobotSim)
 	    {
-	        hoveringRobotBodySim = FALSE;
+	        app.hoveringRobotSim = FALSE;
+	        InvalidateRect(hWnd, NULL, FALSE);
 	    }
 	    if (hoveredSegment != -1)
 	    {

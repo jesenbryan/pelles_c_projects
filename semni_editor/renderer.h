@@ -49,12 +49,23 @@ typedef struct {
 
     // TRUE while the user is actively dragging the whole robot in
     // Simulation mode (app->draggingRobotSim, set by canvas.c's
-    // WM_LBUTTONDOWN/WM_MOUSEMOVE) -- setColor (renderer.c) ORs this into
-    // its "active" check so every line of the robot's own outline renders
-    // in the hover/drag blue while a drag is in progress, reverting to
-    // normal per-part coloring the instant it's released, as feedback that
-    // it's being moved.
+    // WM_LBUTTONDOWN/WM_MOUSEMOVE) -- setColor (renderer.c) checks this
+    // first, before hoveringWhole/active below, so every line of the
+    // robot's own outline renders blue for as long as a drag is in
+    // progress, reverting to normal per-part coloring the instant it's
+    // released, as feedback that it's being moved.
     int draggingWhole;
+
+    // TRUE while the cursor is over the robot's body in Simulation mode,
+    // whether or not a drag is actually in progress (app->hoveringRobotSim,
+    // kept current by canvas.c's WM_MOUSEMOVE) -- setColor renders the
+    // robot's outline yellow while this is true, UNLESS draggingWhole above
+    // is also true, in which case dragging wins and it stays blue (this
+    // flag is deliberately left stale/TRUE for the whole duration of a drag
+    // -- see app.h's comment on hoveringRobotSim -- so draggingWhole taking
+    // priority is what keeps the color from flickering between blue and
+    // yellow mid-drag).
+    int hoveringWhole;
 } RenderState;
 
 void renderApp(AppState* app, HDC hdc);
