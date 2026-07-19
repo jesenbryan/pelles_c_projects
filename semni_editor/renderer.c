@@ -815,7 +815,15 @@ void renderRobotScene(AppState* app, float dimAmount)
         glTranslatef(-panX, -panY, 0.0f);
     }
 
-    drawDashedHorizontalLine(-1.1f, 1.5f, opacity);
+    // Ground reference line: a Design > Robot editing aid for laying down
+    // poses (see renderApp's comment), not something Simulation needs --
+    // Simulation already has the actual traced environment to pose the
+    // robot against, so the fake ground line would just be visual clutter
+    // (and isn't even the right "ground" once the robot's been dragged
+    // somewhere else in the scene). Still shown for Design > Robot itself,
+    // including its dimmed-background copy while Environment is active.
+    if (appMode != APP_MODE_SIMULATION)
+        drawDashedHorizontalLine(-1.1f, 1.5f, opacity);
 
     renderRobot(app, 1, opacity);
 }
