@@ -1,4 +1,5 @@
 #include "canvas.h"
+#include "ui.h"            // For SetComparisonModeUI
 #include "pipeline.h"      // For RunUploadPipeline
 #include "canvas_bridge.h" // For canvasToImage
 #include "bmp_ui.h"        // For saveBMP_UI
@@ -292,29 +293,42 @@ static float robotLengthToEnvWorld(float rlen)
     return rlen * (envHalfY / robotHalfY);
 }
 
-// TRUE if the env-world-space point (ecx, ecy) comes within eRadius of any
-// Environment-layer stroke. Shared by robotCollidesWithEnvironment below
-// for both the robot's body circles (eRadius = that circle's actual
-// radius, converted) and its connecting arcs (eRadius =
-// SIMULATION_ARC_COLLISION_THICKNESS, converted -- see config.h for why
-// the arcs need a stand-in "thickness" the circles don't).
+// TRUE if the env-world-space point (ecx, ecy) comes within eRadius of the
+// RECONSTRUCTED (arc-fitted) environment, not the raw hand-drawn strokes --
+// segmentPointsWorld/segmentStarts/segmentCounts (canvas_bridge.c's
+// setSegmentOverlay), the same poly-line-sampled arc data the Comparison
+// Mode/View Segments ghost overlay renders. Each fitted arc is still
+// walked as consecutive point-pairs here (distPointToSegment doesn't care
+// whether those points came from a raw stroke or a sampled arc), so this
+// is a drop-in swap of the DATA SOURCE, not the collision math itself.
+//
+// Deliberately not filtered by layer -- unlike the raw strokes this used
+// to read from, segments have no per-segment layer tag (setSegmentOverlay
+// doesn't carry one through), but that's moot in practice: the Robot
+// layer can't have strokes drawn into it at all (see WM_LBUTTONDOWN), so
+// canvasToImage's rasterization -- and therefore every fitted segment --
+// only ever comes from Environment-layer content anyway.
+//
+// Requires a trace to have actually run first (see the ID_MODE_SIMULATION
+// handler in WM_COMMAND, which re-traces automatically on every entry into
+// Simulation so this never runs stale or empty against strokes drawn since
+// the last manual Trace press). If canvas.segmentResultCount is 0 (nothing
+// traceable, or tracing never ran), the loop below just does nothing and
+// this returns FALSE -- same as "no strokes" used to behave.
 static BOOL pointCollidesWithAnyEnvironmentStroke(float ecx, float ecy, float eRadius)
 {
-    for (int s = 0; s < canvas.strokeCount; s++)
+    for (int s = 0; s < canvas.segmentResultCount; s++)
     {
-        if (strokeLayer[s] != LAYER_ENVIRONMENT) continue;
-
-        int start = strokeStarts[s];
-        int end = (s == canvas.strokeCount - 1) ? canvas.pointCount : strokeStarts[s + 1];
-        int count = (end - start) / 2;
+        int start = segmentStarts[s];
+        int count = segmentCounts[s];
         if (count < 2) continue;
 
         for (int i = 0; i < count - 1; i++)
         {
-            float ax = points[start + i * 2];
-            float ay = points[start + i * 2 + 1];
-            float bx = points[start + (i + 1) * 2];
-            float by = points[start + (i + 1) * 2 + 1];
+            float ax = segmentPointsWorld[(start + i) * 2];
+            float ay = segmentPointsWorld[(start + i) * 2 + 1];
+            float bx = segmentPointsWorld[(start + (i + 1)) * 2];
+            float by = segmentPointsWorld[(start + (i + 1)) * 2 + 1];
 
             if (distPointToSegment(ecx, ecy, ax, ay, bx, by) < eRadius)
                 return TRUE;
@@ -1977,6 +1991,33 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	        if (LOWORD(wParam) == ID_MODE_SIMULATION)
 	        {
 	            appMode = APP_MODE_SIMULATION;
+
+	            // Ground collision (robotCollidesWithEnvironment ->
+	            // pointCollidesWithAnyEnvironmentStroke) tests against the
+	            // arc-fitted RECONSTRUCTION (segmentPointsWorld) now, not the
+	            // raw hand-drawn strokes -- see that function's comment for
+	            // why. That data is normally only produced by a manual Trace
+	            // press (the Environment-only panel's button), which the user
+	            // could easily forget to do before simulating, and even if
+	            // they didn't forget, it goes stale the moment they draw or
+	            // edit another stroke afterward. Re-tracing right here, every
+	            // time Simulation is entered, closes both gaps for free: it's
+	            // always present and always current, without the user having
+	            // to think about it. Cheap to do unconditionally -- environment
+	            // strokes can't be added or edited while Simulation is active
+	            // (WM_LBUTTONDOWN only grabs the robot in this mode), so this
+	            // is the one moment per Simulation session where re-tracing
+	            // actually needs to happen at all.
+	            RunTracePipeline();
+
+	            // Since the environment strokes shown on screen aren't what
+	            // collision actually tests against anymore, show the user
+	            // what physics sees instead of what they drew -- switches
+	            // the Environment view from the original strokes over to
+	            // the reconstructed/arc-fitted drawing (same as manually
+	            // checking "Comparison Mode"), so it's obvious what the
+	            // robot is really going to land on.
+	            SetComparisonModeUI(TRUE);
 
 	            // Simulation is driven from the ArcSpline canvas's own
 	            // WndProc (this file), not the Semni editor's -- make sure

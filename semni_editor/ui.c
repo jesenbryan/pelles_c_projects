@@ -258,3 +258,21 @@ void createUIWindow(HINSTANCE hInst, HWND hWndParent)
 
     hWndUI = hwnd;
 }
+
+// See ui.h for why this exists instead of a raw canvas.comparisonMode
+// write -- mirrors the ID_COMPARISON WM_COMMAND handler's own logic
+// (trace on demand if nothing's been traced yet, keep the checkbox in
+// sync) so callers outside this file get the exact same behavior a real
+// click on the button would produce.
+void SetComparisonModeUI(BOOL on)
+{
+    if (on && canvas.segmentResultCount == 0)
+        RunTracePipeline();
+
+    canvas.comparisonMode = on;
+
+    if (hComparisonBtn)
+        SendMessage(hComparisonBtn, BM_SETCHECK, on ? BST_CHECKED : BST_UNCHECKED, 0);
+
+    if (hWndGL) InvalidateRect(hWndGL, NULL, FALSE);
+}
