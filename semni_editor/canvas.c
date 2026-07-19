@@ -72,6 +72,13 @@ static int hoveredSegment = -1;
 static BOOL  snapEndpointAvailable = FALSE;
 static float snapEndpointX = 0.0f, snapEndpointY = 0.0f;
 
+// Simulation mode only: which of the robot's rotatable joints the cursor
+// is currently hovering -- a computeSemniBodyCircles (renderer.h) index,
+// 2 (hip) or 3 (knee), or -1 for neither. Kept current every WM_MOUSEMOVE
+// (see findHoveredJointSim) and read by WM_MOUSEWHEEL to decide whether a
+// scroll should rotate that joint instead of zooming the camera.
+static int simHoveredJoint = -1;
+
 // NEW: state for the "hover top-right corner to reveal the UI panel" behavior
 static BOOL hotZoneHighlighted = FALSE; // cursor is currently inside the corner hot zone
 static BOOL uiShown            = FALSE; // panel is at least partially faded in
@@ -439,6 +446,32 @@ static BOOL robotCollidesWithEnvironment(Semni robot)
     }
 
     return FALSE;
+}
+
+// Simulation mode only: which of the robot's ROTATABLE joints (hip = body
+// circle index 2, knee = index 3 -- see computeSemniBodyCircles' documented
+// ordering, renderer.h) the given world-space point falls inside, or -1 if
+// neither. Head/butt/ankle are deliberately excluded -- they have no
+// independent rotation angle of their own to spin (ankle's position is
+// fully determined by kneeCircle + kneeAngle + a fixed local offset, no
+// extra degree of freedom there). Feeds WM_MOUSEWHEEL's joint-rotate
+// feature below: hovering the hip or knee's own visible body circle and
+// scrolling rotates hipAngle/kneeAngle directly, without needing to leave
+// Simulation and go pose it in the separate Design > Robot editor.
+static int findHoveredJointSim(Semni robot, float wx, float wy)
+{
+    CircleSegment bodyCircles[NUM_ROBOT_BODY_CIRCLES];
+    computeSemniBodyCircles(robot, bodyCircles);
+
+    for (int i = 2; i <= 3; i++)
+    {
+        float dx = wx - bodyCircles[i].center.x;
+        float dy = wy - bodyCircles[i].center.y;
+        if (sqrtf(dx * dx + dy * dy) <= bodyCircles[i].radius)
+            return i;
+    }
+
+    return -1;
 }
 
 // Slope response: scans the robot's 5 body circles against every fitted
@@ -1828,6 +1861,30 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
     {
         short zDelta = GET_WHEEL_DELTA_WPARAM(wParam);
 
+        // Simulation mode, hovering the hip or knee body circle: rotate
+        // that joint instead of zooming -- see simHoveredJoint/
+        // findHoveredJointSim's comments. Plain scroll (no modifier
+        // needed) since hovering a joint already makes the intent
+        // unambiguous; scrolling anywhere else on the canvas still zooms
+        // exactly as before.
+        if (appMode == APP_MODE_SIMULATION && simHoveredJoint != -1)
+        {
+            float step = (zDelta > 0) ? SIMULATION_JOINT_ROTATE_STEP_DEG : -SIMULATION_JOINT_ROTATE_STEP_DEG;
+
+            if (simHoveredJoint == 2)      app.robotScene.robot.hipAngle  += step;
+            else if (simHoveredJoint == 3) app.robotScene.robot.kneeAngle += step;
+
+            // Rotating a joint can push the limb hanging off it into the
+            // ground if the robot's already resting on something -- same
+            // upward-only correction slope response uses after its own
+            // rotation, so a joint tweak mid-rest can never visibly sink
+            // through the terrain.
+            resolveUpwardIfPenetrating(hWnd, SIMULATION_SLOPE_CORRECTION_MAX);
+
+            InvalidateRect(hWnd, NULL, FALSE);
+            return 0;
+        }
+
         // Simulation mode: zoom through sim_camera (shared with the robot
         // -- see UpdateProjection/sim_camera.h) instead of canvas.zoom, so
         // Design > Environment's own zoom is left untouched by anything
@@ -2142,6 +2199,12 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	        float wx, wy;
 	        screenToGL(hWnd, LOWORD(lParam), HIWORD(lParam), &wx, &wy);
 	        app.hoveringRobotSim = isPointInsideRobotBody(app.robotScene.robot, wx, wy);
+
+	        // Keep simHoveredJoint current too -- see its own comment and
+	        // findHoveredJointSim's, used by WM_MOUSEWHEEL below to decide
+	        // whether a scroll rotates the hovered joint instead of zooming.
+	        simHoveredJoint = findHoveredJointSim(app.robotScene.robot, wx, wy);
+
 	        InvalidateRect(hWnd, NULL, FALSE);
 	    }
 
@@ -2291,6 +2354,11 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	        snapEndpointAvailable = FALSE;
 	        InvalidateRect(hWnd, NULL, FALSE);
 	    }
+	    if (simHoveredJoint != -1)
+	    {
+	        simHoveredJoint = -1;
+	        InvalidateRect(hWnd, NULL, FALSE);
+	    }
 	    return 0;
 	}
 	case WM_COMMAND:
@@ -2309,6 +2377,14 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	        // ui.c's Trace/Comparison Mode buttons use).
 	        BOOL nowChecked = (SendMessage(hSlowMotionBtn, BM_GETCHECK, 0, 0) == BST_CHECKED);
 	        simTimeScale = nowChecked ? SIMULATION_SLOW_MOTION_SCALE : 1.0f;
+
+	        // Clicking a button gives IT keyboard focus by default -- left
+	        // there, G/Shift+G/Ctrl+Numpad0 (all handled in this window's own
+	        // WM_KEYDOWN) would stop working after the first Slow Motion
+	        // click, since WM_KEYDOWN would go to the button instead of here.
+	        // Hand focus straight back to the main window so keyboard control
+	        // keeps working immediately, with no extra click needed.
+	        SetFocus(hWnd);
 	    }
 	    else if (LOWORD(wParam) == ID_LAYER_ROBOT || LOWORD(wParam) == ID_LAYER_ENVIRONMENT || LOWORD(wParam) == ID_MODE_SIMULATION)
 	    {

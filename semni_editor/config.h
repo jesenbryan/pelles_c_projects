@@ -311,3 +311,11 @@
 // same terminal velocity, same alignment behavior, just stretched out over
 // more real time so it's easier to watch closely).
 #define SIMULATION_SLOW_MOTION_SCALE 0.2f
+
+// Simulation mode: hovering the hip or knee's own visible body circle and
+// scrolling the wheel rotates that joint's angle (hipAngle/kneeAngle)
+// directly -- see canvas.c's simHoveredJoint/findHoveredJointSim and its
+// WM_MOUSEWHEEL handling. Degrees per wheel notch, same value Design >
+// Robot mode's own Shift+scroll joint rotate uses (input.c), so the feel
+// is consistent between the two places it's available.
+#define SIMULATION_JOINT_ROTATE_STEP_DEG 2.0f
