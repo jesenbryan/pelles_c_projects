@@ -300,6 +300,24 @@ typedef struct {
     int hoverRockyEdge;
     int draggingRockyEdge;
 
+    // Rocky's knee handle -- the joint where the leg (kneeCircle->
+    // ankleCircle, see the Rocky struct comment) attaches to the
+    // rectangle, same role Semni's own kneeCircle plays relative to its
+    // hip. Mirrors Semni's hoverKnee/draggingKnee treatment: hover to
+    // highlight, drag to change how far the knee sits from the body
+    // center (constrainToAxis, same as Semni's hip->knee drag), plain
+    // scroll to resize kneeRadius, Shift+scroll to bend kneeAngle (swings
+    // ankleCircle around the knee) -- see input.c's WM_LBUTTONDOWN/
+    // WM_MOUSEMOVE/WM_MOUSEWHEEL ROBOT_KIND_ROCKY branches.
+    int hoverRockyKnee;
+    int draggingRockyKnee;
+
+    // captured once, when a Rocky knee drag starts: ankleCircle's fixed
+    // offset from kneeCircle at that moment, re-applied fresh every
+    // WM_MOUSEMOVE -- same "pin the shin's shape, only the knee's own
+    // distance from the body changes" idea as kneeDragAnkleOffset below.
+    PointF rockyKneeDragAnkleOffset;
+
     // captured once, when a Rocky body drag starts: kneeCircle's and
     // ankleCircle's fixed offsets from (bodyX, bodyY) at that moment --
     // same "re-applied fresh every WM_MOUSEMOVE" pattern as
