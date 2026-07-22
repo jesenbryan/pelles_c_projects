@@ -2334,22 +2334,6 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
     }
     case WM_KEYUP:
     {
-        // Mirror image of WM_KEYDOWN's VK_SHIFT branch above: releasing
-        // Shift should restore the pre-Shift freehand drawing immediately,
-        // not just whenever the next WM_MOUSEMOVE happens to arrive (which,
-        // same as on the press side, Windows won't send just because a
-        // modifier key's state changed). Pulling the cursor position here
-        // and calling updateDrawingPoint with shiftHeld=FALSE runs the
-        // exact restore-from-backup logic it already has for the release
-        // case, right now instead of on the next mouse nudge.
-        if (wParam == VK_SHIFT && drawing && appMode != APP_MODE_SIMULATION)
-        {
-            POINT pt;
-            GetCursorPos(&pt);
-            ScreenToClient(hWnd, &pt);
-            updateDrawingPoint(hWnd, pt.x, pt.y, FALSE, (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0);
-            return 0;
-        }
         return 0;
     }
     case WM_SETCURSOR:
