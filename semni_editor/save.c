@@ -226,14 +226,25 @@ int saveStiloAsEquations(const char* filename, AppState* app)
     fprintf(f, "HIP_RADIUS=%.6f\n", s->innerRadius);
     fprintf(f, "HIP_ANGLE=%.6f\n", s->hipAngle);
 
-    // LEG - Foot Circle (no knee stage -- see app.h's Stilo comment)
+    // THIGH - Knee Circle (Stilo now has the same hip->knee->foot chain
+    // as Semni -- see app.h's Stilo comment)
+    fprintf(f, "KNEE_X=%.6f\n", s->kneeCircle.x);
+    fprintf(f, "KNEE_Y=%.6f\n", s->kneeCircle.y);
+    fprintf(f, "KNEE_RADIUS=%.6f\n", s->kneeRadius);
+    fprintf(f, "KNEE_ANGLE=%.6f\n", s->kneeAngle);
+
+    // THIGH - Arcs (hip-to-knee)
+    fprintf(f, "THIGH_ARC1_ANGLE=%.6f\n", s->thighArc1Angle);
+    fprintf(f, "THIGH_ARC2_ANGLE=%.6f\n", s->thighArc2Angle);
+
+    // SHIN - Foot Circle
     fprintf(f, "FOOT_X=%.6f\n", s->footCircle.x);
     fprintf(f, "FOOT_Y=%.6f\n", s->footCircle.y);
     fprintf(f, "FOOT_RADIUS=%.6f\n", s->footRadius);
 
-    // LEG - hip-to-foot Arcs
-    fprintf(f, "LEG_ARC1_ANGLE=%.6f\n", s->thighArc1Angle);
-    fprintf(f, "LEG_ARC2_ANGLE=%.6f\n", s->thighArc2Angle);
+    // SHIN - Arcs (knee-to-foot)
+    fprintf(f, "SHIN_ARC1_ANGLE=%.6f\n", s->shinArc1Angle);
+    fprintf(f, "SHIN_ARC2_ANGLE=%.6f\n", s->shinArc2Angle);
 
     // BODY - Whole
     fprintf(f, "BODY_ANGLE=%.6f\n", s->angle);
@@ -366,6 +377,12 @@ int loadStiloPoseFromFile(const char* filename, Stilo* out)
         else if (strcmp(key, "HIP_Y") == 0) out->innerCircle.y = value;
         else if (strcmp(key, "HIP_RADIUS") == 0) out->innerRadius = value;
         else if (strcmp(key, "HIP_ANGLE") == 0) out->hipAngle = value;
+        else if (strcmp(key, "KNEE_X") == 0) out->kneeCircle.x = value;
+        else if (strcmp(key, "KNEE_Y") == 0) out->kneeCircle.y = value;
+        else if (strcmp(key, "KNEE_RADIUS") == 0) out->kneeRadius = value;
+        else if (strcmp(key, "KNEE_ANGLE") == 0) out->kneeAngle = value;
+        else if (strcmp(key, "THIGH_ARC1_ANGLE") == 0) out->thighArc1Angle = value;
+        else if (strcmp(key, "THIGH_ARC2_ANGLE") == 0) out->thighArc2Angle = value;
         else if (strcmp(key, "FOOT_X") == 0) out->footCircle.x = value;
         else if (strcmp(key, "FOOT_Y") == 0) out->footCircle.y = value;
         else if (strcmp(key, "FOOT_RADIUS") == 0) out->footRadius = value;
@@ -373,8 +390,17 @@ int loadStiloPoseFromFile(const char* filename, Stilo* out)
         else if (strcmp(key, "ANKLE_X") == 0) out->footCircle.x = value;
         else if (strcmp(key, "ANKLE_Y") == 0) out->footCircle.y = value;
         else if (strcmp(key, "ANKLE_RADIUS") == 0) out->footRadius = value;
-        else if (strcmp(key, "LEG_ARC1_ANGLE") == 0) out->thighArc1Angle = value;
-        else if (strcmp(key, "LEG_ARC2_ANGLE") == 0) out->thighArc2Angle = value;
+        else if (strcmp(key, "SHIN_ARC1_ANGLE") == 0) out->shinArc1Angle = value;
+        else if (strcmp(key, "SHIN_ARC2_ANGLE") == 0) out->shinArc2Angle = value;
+        // LEG_ARC1_ANGLE/LEG_ARC2_ANGLE (the old key names, from before
+        // Stilo had a knee stage) are deliberately NOT accepted here, even
+        // though the ANKLE_*/FOOT_* legacy aliasing above is -- unlike a
+        // pure rename, those old values described a hip-to-FOOT arc, which
+        // means something different from the new hip-to-KNEE thighArc1/2
+        // they'd otherwise map onto, so silently reinterpreting them would
+        // produce a wrong-looking pose instead of the same one under a new
+        // name. Any pose file saved under the old Stilo (no knee) needs to
+        // be re-saved from scratch under the new structure.
         else if (strcmp(key, "BODY_ANGLE") == 0) out->angle = value;
     }
 

@@ -159,13 +159,16 @@ typedef struct {
 
 // ---- robot model ("Stilo") ----
 //
-// Same torso as Semni (head/butt circles + two seam arcs between them,
-// identical fields/construction -- see drawSemniBody), but the leg has no
-// knee stage: it goes straight from the hip (innerCircle) to the foot
-// (footCircle) via ONE pair of tangent-fillet arcs instead of two, so
-// thighArc1Angle/thighArc2Angle here connect innerCircle directly to
-// footCircle (same convex/concave split as Semni's own thigh arcs, just
-// spanning the whole leg instead of stopping at a knee).
+// For now, Stilo is built exactly like Semni: same torso (head/butt
+// circles + two seam arcs between them) AND the same hip->knee->foot leg
+// chain (innerCircle -> kneeCircle -> footCircle, each pair connected by
+// its own convex/concave tangent-fillet arc pair) -- see the Semni struct
+// above for the full field-by-field explanation, every one of which
+// applies here unchanged, just under app->robotScene.stilo instead of
+// app->robotScene.robot. Kept as its own distinct struct/type (rather than
+// literally reusing Semni's) so the two can diverge later -- only the
+// SHAPE of the data and the interactive behavior are the same right now,
+// not the underlying storage.
 typedef struct {
     float headX, buttX;
     float y;
@@ -179,14 +182,21 @@ typedef struct {
     PointF innerCircle;
     float innerRadius;
 
+    PointF kneeCircle;
+    float kneeRadius;
+
+    float thighArc1Angle;   // hip-to-knee arc 1 (convex)
+    float thighArc2Angle;   // hip-to-knee arc 2 (concave)
+
     PointF footCircle;
     float footRadius;
 
-    float thighArc1Angle;   // hip-to-foot arc 1 (convex)
-    float thighArc2Angle;   // hip-to-foot arc 2 (concave)
+    float shinArc1Angle;    // knee-to-foot arc 1 (convex)
+    float shinArc2Angle;    // knee-to-foot arc 2 (concave)
 
     float angle;      // whole-body rotation
-    float hipAngle;   // rotates the leg (footCircle) around innerCircle
+    float hipAngle;   // rotates the leg (kneeCircle, footCircle) around innerCircle
+    float kneeAngle;  // rotates just the shin (footCircle) around kneeCircle
 } Stilo;
 
 // Which of the three robot models the Robot editor (input.c) is currently
@@ -409,6 +419,46 @@ typedef struct {
     // these two fields too.
     float shinArcDragStartPerp;
     float shinArcDragStartAngle;
+
+    // Stilo's own per-joint dragging/hover state -- same fields, same
+    // roles as Semni's own draggingSeamArc1/draggingInner/draggingKnee/
+    // draggingThigh1/draggingThigh2/draggingFoot/draggingShin1/
+    // draggingShin2 and hoverHip/hoverKnee/hoverFoot/hoverButt/hoverHead
+    // above, just kept as separate fields (rather than reused) since a
+    // completely different struct (Stilo, not Semni) is what's actually
+    // being edited -- same reasoning as Rocky's own hoverRockyBody/
+    // draggingRockyBody split from Semni's fields.
+    int draggingStiloSeamArc1;
+    int draggingStiloSeamArc2;
+    int draggingStiloInner;
+    int draggingStiloKnee;
+    int draggingStiloThigh1;
+    int draggingStiloThigh2;
+    int draggingStiloFoot;
+    int draggingStiloShin1;
+    int draggingStiloShin2;
+
+    int hoverStiloHip;
+    int hoverStiloKnee;
+    int hoverStiloFoot;
+    int hoverStiloButt;
+    int hoverStiloHead;
+
+    // same offset-capture idea as kneeDragFootOffset/hipDragKneeOffset/
+    // hipDragFootOffset above, for Stilo's own hip/knee drags
+    PointF stiloKneeDragFootOffset;
+    PointF stiloHipDragKneeOffset;
+    PointF stiloHipDragFootOffset;
+
+    // same drag-start-angle capture idea as arcDragStartMouseY/Angle,
+    // thighArcDragStartPerp/Angle, and shinArcDragStartPerp/Angle above,
+    // for Stilo's own seam/thigh/shin arc drags
+    float stiloArcDragStartMouseY;
+    float stiloArcDragStartAngle;
+    float stiloThighArcDragStartPerp;
+    float stiloThighArcDragStartAngle;
+    float stiloShinArcDragStartPerp;
+    float stiloShinArcDragStartAngle;
 
     PointF mouseGL;
 

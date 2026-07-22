@@ -110,15 +110,12 @@
 // draggable range down noticeably. Tune further by adjusting this same
 // constant (up for more room, down for less).
 //
-// Named Semni-specific (rather than the old shared MAX_THIGH_ARC_R) because
-// Stilo's own hip-to-foot leg (drawStilo, renderer.c) reuses this exact
-// same fillet construction and field naming for its own thighArc1Angle/
-// thighArc2Angle, but has no interactive drag handle for it at all (see
-// app.h's Stilo comment) -- its angle is a fixed pose default, never user-
-// dragged, so tuning Semni's draggable RANGE has nothing to do with it.
-// Splitting the constant means changing one can never silently change the
-// other's rendered shape. See MAX_STILO_LEG_ARC_R below for Stilo's own,
-// which keeps the original un-lowered value so Stilo's look is unaffected.
+// Named Semni-specific (rather than a plain MAX_THIGH_ARC_R) for
+// historical reasons -- Stilo used to have a simpler hip-to-foot leg (no
+// knee stage) that reused this same constant for a differently-scoped
+// arc. Stilo now has the exact same hip->knee thigh-arc construction as
+// Semni (see app.h's Stilo comment) and shares this constant for real --
+// "exactly the same as Semni" for now includes the same draggable range.
 #define MIN_THIGH_ARC_R 0.05f
 #define MAX_SEMNI_THIGH_ARC_R 1.2f
 
@@ -140,22 +137,16 @@
 // every reachable angle's natural radius safely inside [MIN_THIGH_ARC_R,
 // MAX_SEMNI_THIGH_ARC_R] with no clamp ever firing, so tangency can't break.
 
-// Stilo's own hip-to-foot leg arc cap (drawStilo's leg1Fillet, renderer.c)
-// -- kept at the ORIGINAL, un-lowered value MAX_SEMNI_THIGH_ARC_R used to
-// share with it, since Stilo's leg has no drag handle to reduce the range
-// of in the first place (see the comment above). Reuses MIN_THIGH_ARC_R
-// (the lower bound needs no Semni/Stilo split -- neither side has touched
-// that one).
-#define MAX_STILO_LEG_ARC_R 2.5f
-
 // same role as ARC_ANGLE_MARGIN_DEG/ARC_SIDE_MARGIN_DEG, kept as separate
 // constants so the thigh arcs' feel can be tuned independently of the seam
 // arcs'. THIGH_ARC_ANGLE_MARGIN_DEG is shared with thighArc2's own maxDelta
 // calc; THIGH_ARC_SIDE_MARGIN_DEG is used ONLY by thighArc1 (thighArc2's
 // concave range doesn't need a one-sided lock -- see the comment below).
+// Both are shared with Stilo's own thighArc1Angle drag, same reasoning as
+// MAX_SEMNI_THIGH_ARC_R above.
 //
 // THIGH_ARC_SIDE_MARGIN_DEG is the SAFE way to shrink thigh arc 1's
-// draggable range (see the comment above MAX_STILO_LEG_ARC_R for why a
+// draggable range (see the MIN-radius-floor warning above for why a
 // radius floor isn't): it's a pure ANGLE restriction on the near-center end
 // of the range WM_MOUSEMOVE's draggingThigh1 clamps delta to, and every
 // angle in the range still solves to its own natural, un-clamped radius --
@@ -207,11 +198,11 @@
 // the head-butt distance, same reasoning as MAX_THIGH_ARC_R.
 //
 // MAX_SHIN_ARC_R and SHIN_ARC_SIDE_MARGIN_DEG below are also read by
-// Rocky (adjustRockyShinArcs / drawRockyLeg's shin1Fillet), unlike
-// MAX_THIGH_ARC_R which had to be split into MAX_SEMNI_THIGH_ARC_R /
-// MAX_STILO_LEG_ARC_R -- no split needed here because Rocky's own
-// knee/foot layout is deliberately near-identical to Semni's (same
-// 0.08/0.05 radii, ~0.30 vs ~0.2986 knee-foot distance), so tightening
+// Rocky (adjustRockyShinArcs / drawRockyLeg's shin1Fillet) and by Stilo
+// (its own knee->foot shin arcs, same construction as Semni's) -- no
+// split needed for Rocky because its own knee/foot layout is deliberately
+// near-identical to Semni's (same 0.08/0.05 radii, ~0.30 vs ~0.2986
+// knee-foot distance), so tightening
 // these for Semni's interactive shin arc 1 drag leaves Rocky's shared
 // default shinArc1Angle (169.821564 deg, ~79.8 deg off its own centerDeg)
 // comfortably inside its own safe range too -- verified numerically for

@@ -28,42 +28,109 @@ static float mirrorArcAngle(float angleDeg)
     return mirrored;
 }
 
-// The leg's joints (innerCircle, kneeCircle, footCircle) are stored as
-// raw local coordinates, in the frame BEFORE hipAngle/kneeAngle rotate
-// them into place (see app.h's comments on those fields) -- so mirroring
-// the leg is a plain x-reflection of each one, about the body's own
-// center line (the buttX/headX midpoint, same reference getCenter uses).
+// Mirroring is supposed to reflect the leg about a TRUE vertical line on
+// screen, through the body's own centerline (buttX/headX midpoint, same
+// reference getCenter uses) -- but Semni's whole body is very often
+// itself rotated (b.angle; e.g. the saved Standing/Home poses use 88/178
+// degrees, not 0), and mirroring is only supposed to flip the LEG, not
+// spin the body too, so b.angle stays exactly as it is. A plain per-field
+// x-reflection of innerCircle/kneeCircle/footCircle (the old approach)
+// only produces a true mirror image WITHIN the frame before that shared
+// b.angle is applied -- composing it with an unchanged, nonzero b.angle
+// on top reflects around a version of the centerline TILTED by b.angle,
+// not the actual vertical line the user sees on screen, which is exactly
+// why the leg used to come out looking wrong and needed a manual hip
+// rotation afterward to compensate.
 //
-// A reflection alone would only flip the joints' REST positions though --
-// to also flip the VISIBLE (rotated) pose, hipAngle and kneeAngle, which
-// each compose a rotation on top of those joints, have to negate too:
-// reflecting a point and then rotating it by angle T lands in the same
-// place as rotating it by -T and then reflecting (a standard fact about
-// 2D isometries -- reflection∘rotate(T) == rotate(-T)∘reflection), so
-// negating every rotation angle downstream of a reflected joint is what
-// keeps the whole chain self-consistent as a true mirror image instead of
-// just moving the joints while leaving them bent the original way.
-//
-// The four arc attach angles (thighArc1Angle/thighArc2Angle/
-// shinArc1Angle/shinArc2Angle) aren't rotations being composed, though --
-// they're points parameterized around their own circle (circleEdge), so
-// they mirror via mirrorArcAngle (180 - angle) instead of negation; see
-// its comment.
+// hipAngle and kneeAngle still simply negate (reflecting a point and then
+// rotating it by angle T lands in the same place as rotating it by -T and
+// then reflecting -- reflection∘rotate(T) == rotate(-T)∘reflection), but
+// every stored local point (innerCircle, kneeCircle, footCircle, and the
+// four arc attach angles) has to be solved backward through the FULL
+// chain of stages down to the screen -- world position, reflect about
+// axisX, then inverseRotate back through bodyAngle/hipAngle/kneeAngle one
+// stage at a time (in reverse order) -- instead of just negating its x,
+// so the forward render reproduces a true screen-space mirror image
+// regardless of what b.angle happens to be. Each arc angle is recovered
+// via atan2f on its own mirrored local point, same idea as
+// mirrorArcAngle's old 180-angle trick but general enough to survive an
+// arbitrary bodyAngle (that trick assumed no outer rotation at all).
 void mirrorHipLeg(Semni* b)
 {
-    float centerX = (b->buttX + b->headX) * 0.5f;
+    PointF center = getCenter(*b);
+    float  bodyAngle = b->angle;
+    float  axisX = center.x;
 
-    b->innerCircle.x = 2.0f * centerX - b->innerCircle.x;
-    b->kneeCircle.x  = 2.0f * centerX - b->kneeCircle.x;
-    b->footCircle.x = 2.0f * centerX - b->footCircle.x;
+    float oldHipAngle  = b->hipAngle;
+    float oldKneeAngle = b->kneeAngle;
+    float newHipAngle  = -oldHipAngle;
+    float newKneeAngle = -oldKneeAngle;
 
-    b->hipAngle  = -b->hipAngle;
-    b->kneeAngle = -b->kneeAngle;
+    PointF oldInner = b->innerCircle;
+    PointF oldKnee  = b->kneeCircle;
+    PointF oldFoot  = b->footCircle;
 
-    b->thighArc1Angle = mirrorArcAngle(b->thighArc1Angle);
-    b->thighArc2Angle = mirrorArcAngle(b->thighArc2Angle);
-    b->shinArc1Angle  = mirrorArcAngle(b->shinArc1Angle);
-    b->shinArc2Angle  = mirrorArcAngle(b->shinArc2Angle);
+    // hip: one stage, bodyAngle around center
+    PointF hipWorld  = rotatePoint(oldInner, center, bodyAngle);
+    PointF hipTarget = hipWorld; hipTarget.x = 2.0f * axisX - hipWorld.x;
+    PointF newInner  = inverseRotate(hipTarget, center, bodyAngle);
+
+    // knee: hipAngle around innerCircle, then bodyAngle around center
+    PointF kneeWorld  = jointToWorld(oldKnee, oldInner, oldHipAngle, center, bodyAngle);
+    PointF kneeTarget = kneeWorld; kneeTarget.x = 2.0f * axisX - kneeWorld.x;
+    PointF kneeAfterBody = inverseRotate(kneeTarget, center, bodyAngle);
+    PointF newKnee        = inverseRotate(kneeAfterBody, newInner, newHipAngle);
+
+    // foot: kneeAngle around kneeCircle, hipAngle around innerCircle, bodyAngle around center
+    PointF footWorld  = nestedJointToWorld(oldFoot, oldKnee, oldKneeAngle, oldInner, oldHipAngle, center, bodyAngle);
+    PointF footTarget = footWorld; footTarget.x = 2.0f * axisX - footWorld.x;
+    PointF footAfterBody = inverseRotate(footTarget, center, bodyAngle);
+    PointF footAfterHip  = inverseRotate(footAfterBody, newInner, newHipAngle);
+    PointF newFoot        = inverseRotate(footAfterHip, newKnee, newKneeAngle);
+
+    // thigh arc 1/2: same two stages as the knee, from innerCircle's own circle
+    PointF thigh1Local  = circleEdge(oldInner, b->innerRadius, b->thighArc1Angle);
+    PointF thigh1World  = jointToWorld(thigh1Local, oldInner, oldHipAngle, center, bodyAngle);
+    PointF thigh1Target = thigh1World; thigh1Target.x = 2.0f * axisX - thigh1World.x;
+    PointF thigh1AfterBody = inverseRotate(thigh1Target, center, bodyAngle);
+    PointF newThigh1Local  = inverseRotate(thigh1AfterBody, newInner, newHipAngle);
+    float newThighArc1Angle = atan2f(newThigh1Local.y - newInner.y, newThigh1Local.x - newInner.x) * 180.0f / 3.1415926f;
+
+    PointF thigh2Local  = circleEdge(oldInner, b->innerRadius, b->thighArc2Angle);
+    PointF thigh2World  = jointToWorld(thigh2Local, oldInner, oldHipAngle, center, bodyAngle);
+    PointF thigh2Target = thigh2World; thigh2Target.x = 2.0f * axisX - thigh2World.x;
+    PointF thigh2AfterBody = inverseRotate(thigh2Target, center, bodyAngle);
+    PointF newThigh2Local  = inverseRotate(thigh2AfterBody, newInner, newHipAngle);
+    float newThighArc2Angle = atan2f(newThigh2Local.y - newInner.y, newThigh2Local.x - newInner.x) * 180.0f / 3.1415926f;
+
+    // shin arc 1/2: same three stages as the foot, from kneeCircle's own circle
+    PointF shin1Local  = circleEdge(oldKnee, b->kneeRadius, b->shinArc1Angle);
+    PointF shin1World  = nestedJointToWorld(shin1Local, oldKnee, oldKneeAngle, oldInner, oldHipAngle, center, bodyAngle);
+    PointF shin1Target = shin1World; shin1Target.x = 2.0f * axisX - shin1World.x;
+    PointF shin1AfterBody = inverseRotate(shin1Target, center, bodyAngle);
+    PointF shin1AfterHip  = inverseRotate(shin1AfterBody, newInner, newHipAngle);
+    PointF newShin1Local  = inverseRotate(shin1AfterHip, newKnee, newKneeAngle);
+    float newShinArc1Angle = atan2f(newShin1Local.y - newKnee.y, newShin1Local.x - newKnee.x) * 180.0f / 3.1415926f;
+
+    PointF shin2Local  = circleEdge(oldKnee, b->kneeRadius, b->shinArc2Angle);
+    PointF shin2World  = nestedJointToWorld(shin2Local, oldKnee, oldKneeAngle, oldInner, oldHipAngle, center, bodyAngle);
+    PointF shin2Target = shin2World; shin2Target.x = 2.0f * axisX - shin2World.x;
+    PointF shin2AfterBody = inverseRotate(shin2Target, center, bodyAngle);
+    PointF shin2AfterHip  = inverseRotate(shin2AfterBody, newInner, newHipAngle);
+    PointF newShin2Local  = inverseRotate(shin2AfterHip, newKnee, newKneeAngle);
+    float newShinArc2Angle = atan2f(newShin2Local.y - newKnee.y, newShin2Local.x - newKnee.x) * 180.0f / 3.1415926f;
+
+    b->innerCircle = newInner;
+    b->kneeCircle  = newKnee;
+    b->footCircle  = newFoot;
+
+    b->hipAngle  = newHipAngle;
+    b->kneeAngle = newKneeAngle;
+
+    b->thighArc1Angle = newThighArc1Angle;
+    b->thighArc2Angle = newThighArc2Angle;
+    b->shinArc1Angle  = newShinArc1Angle;
+    b->shinArc2Angle  = newShinArc2Angle;
 }
 
 // All of headX/buttX/y, innerCircle, kneeCircle, and footCircle live in
@@ -200,17 +267,87 @@ PointF getStiloCenter(Stilo s)
     return c;
 }
 
+// Same chain-aware, bodyAngle-correct construction as mirrorHipLeg above --
+// see its comment for the full derivation. Stilo now has the identical
+// hip->knee->foot chain (innerCircle -> kneeCircle -> footCircle, plus
+// thighArc1/2 between hip/knee and shinArc1/2 between knee/foot), so this
+// is that same math verbatim, just reading/writing Stilo's own fields.
 void mirrorStiloLeg(Stilo* s)
 {
-    float centerX = (s->buttX + s->headX) * 0.5f;
+    PointF center = getStiloCenter(*s);
+    float  bodyAngle = s->angle;
+    float  axisX = center.x;
 
-    s->innerCircle.x = 2.0f * centerX - s->innerCircle.x;
-    s->footCircle.x = 2.0f * centerX - s->footCircle.x;
+    float oldHipAngle  = s->hipAngle;
+    float oldKneeAngle = s->kneeAngle;
+    float newHipAngle  = -oldHipAngle;
+    float newKneeAngle = -oldKneeAngle;
 
-    s->hipAngle = -s->hipAngle;
+    PointF oldInner = s->innerCircle;
+    PointF oldKnee  = s->kneeCircle;
+    PointF oldFoot  = s->footCircle;
 
-    s->thighArc1Angle = mirrorArcAngle(s->thighArc1Angle);
-    s->thighArc2Angle = mirrorArcAngle(s->thighArc2Angle);
+    // hip: one stage, bodyAngle around center
+    PointF hipWorld  = rotatePoint(oldInner, center, bodyAngle);
+    PointF hipTarget = hipWorld; hipTarget.x = 2.0f * axisX - hipWorld.x;
+    PointF newInner  = inverseRotate(hipTarget, center, bodyAngle);
+
+    // knee: hipAngle around innerCircle, then bodyAngle around center
+    PointF kneeWorld  = jointToWorld(oldKnee, oldInner, oldHipAngle, center, bodyAngle);
+    PointF kneeTarget = kneeWorld; kneeTarget.x = 2.0f * axisX - kneeWorld.x;
+    PointF kneeAfterBody = inverseRotate(kneeTarget, center, bodyAngle);
+    PointF newKnee        = inverseRotate(kneeAfterBody, newInner, newHipAngle);
+
+    // foot: kneeAngle around kneeCircle, hipAngle around innerCircle, bodyAngle around center
+    PointF footWorld  = nestedJointToWorld(oldFoot, oldKnee, oldKneeAngle, oldInner, oldHipAngle, center, bodyAngle);
+    PointF footTarget = footWorld; footTarget.x = 2.0f * axisX - footWorld.x;
+    PointF footAfterBody = inverseRotate(footTarget, center, bodyAngle);
+    PointF footAfterHip  = inverseRotate(footAfterBody, newInner, newHipAngle);
+    PointF newFoot        = inverseRotate(footAfterHip, newKnee, newKneeAngle);
+
+    // thigh arc 1/2: same two stages as the knee, from innerCircle's own circle
+    PointF thigh1Local  = circleEdge(oldInner, s->innerRadius, s->thighArc1Angle);
+    PointF thigh1World  = jointToWorld(thigh1Local, oldInner, oldHipAngle, center, bodyAngle);
+    PointF thigh1Target = thigh1World; thigh1Target.x = 2.0f * axisX - thigh1World.x;
+    PointF thigh1AfterBody = inverseRotate(thigh1Target, center, bodyAngle);
+    PointF newThigh1Local  = inverseRotate(thigh1AfterBody, newInner, newHipAngle);
+    float newThighArc1Angle = atan2f(newThigh1Local.y - newInner.y, newThigh1Local.x - newInner.x) * 180.0f / 3.1415926f;
+
+    PointF thigh2Local  = circleEdge(oldInner, s->innerRadius, s->thighArc2Angle);
+    PointF thigh2World  = jointToWorld(thigh2Local, oldInner, oldHipAngle, center, bodyAngle);
+    PointF thigh2Target = thigh2World; thigh2Target.x = 2.0f * axisX - thigh2World.x;
+    PointF thigh2AfterBody = inverseRotate(thigh2Target, center, bodyAngle);
+    PointF newThigh2Local  = inverseRotate(thigh2AfterBody, newInner, newHipAngle);
+    float newThighArc2Angle = atan2f(newThigh2Local.y - newInner.y, newThigh2Local.x - newInner.x) * 180.0f / 3.1415926f;
+
+    // shin arc 1/2: same three stages as the foot, from kneeCircle's own circle
+    PointF shin1Local  = circleEdge(oldKnee, s->kneeRadius, s->shinArc1Angle);
+    PointF shin1World  = nestedJointToWorld(shin1Local, oldKnee, oldKneeAngle, oldInner, oldHipAngle, center, bodyAngle);
+    PointF shin1Target = shin1World; shin1Target.x = 2.0f * axisX - shin1World.x;
+    PointF shin1AfterBody = inverseRotate(shin1Target, center, bodyAngle);
+    PointF shin1AfterHip  = inverseRotate(shin1AfterBody, newInner, newHipAngle);
+    PointF newShin1Local  = inverseRotate(shin1AfterHip, newKnee, newKneeAngle);
+    float newShinArc1Angle = atan2f(newShin1Local.y - newKnee.y, newShin1Local.x - newKnee.x) * 180.0f / 3.1415926f;
+
+    PointF shin2Local  = circleEdge(oldKnee, s->kneeRadius, s->shinArc2Angle);
+    PointF shin2World  = nestedJointToWorld(shin2Local, oldKnee, oldKneeAngle, oldInner, oldHipAngle, center, bodyAngle);
+    PointF shin2Target = shin2World; shin2Target.x = 2.0f * axisX - shin2World.x;
+    PointF shin2AfterBody = inverseRotate(shin2Target, center, bodyAngle);
+    PointF shin2AfterHip  = inverseRotate(shin2AfterBody, newInner, newHipAngle);
+    PointF newShin2Local  = inverseRotate(shin2AfterHip, newKnee, newKneeAngle);
+    float newShinArc2Angle = atan2f(newShin2Local.y - newKnee.y, newShin2Local.x - newKnee.x) * 180.0f / 3.1415926f;
+
+    s->innerCircle = newInner;
+    s->kneeCircle  = newKnee;
+    s->footCircle  = newFoot;
+
+    s->hipAngle  = newHipAngle;
+    s->kneeAngle = newKneeAngle;
+
+    s->thighArc1Angle = newThighArc1Angle;
+    s->thighArc2Angle = newThighArc2Angle;
+    s->shinArc1Angle  = newShinArc1Angle;
+    s->shinArc2Angle  = newShinArc2Angle;
 }
 
 void printStiloAsInit(Stilo s)
@@ -231,15 +368,24 @@ void printStiloAsInit(Stilo s)
     printf("app->robotScene.stilo.innerRadius = %.6ff;\n\n", s.innerRadius);
 
     printf("app->robotScene.stilo.angle = %.6ff;\n", s.angle);
-    printf("app->robotScene.stilo.hipAngle = %.6ff;\n\n", s.hipAngle);
+    printf("app->robotScene.stilo.hipAngle = %.6ff;\n", s.hipAngle);
+    printf("app->robotScene.stilo.kneeAngle = %.6ff;\n\n", s.kneeAngle);
+
+    printf("app->robotScene.stilo.kneeCircle.x = %.6ff;\n", s.kneeCircle.x);
+    printf("app->robotScene.stilo.kneeCircle.y = %.6ff;\n\n", s.kneeCircle.y);
+
+    printf("app->robotScene.stilo.kneeRadius = %.6ff;\n\n", s.kneeRadius);
+
+    printf("app->robotScene.stilo.thighArc1Angle = %.6ff;\n", s.thighArc1Angle);
+    printf("app->robotScene.stilo.thighArc2Angle = %.6ff;\n\n", s.thighArc2Angle);
 
     printf("app->robotScene.stilo.footCircle.x = %.6ff;\n", s.footCircle.x);
     printf("app->robotScene.stilo.footCircle.y = %.6ff;\n\n", s.footCircle.y);
 
     printf("app->robotScene.stilo.footRadius = %.6ff;\n\n", s.footRadius);
 
-    printf("app->robotScene.stilo.thighArc1Angle = %.6ff;\n", s.thighArc1Angle);
-    printf("app->robotScene.stilo.thighArc2Angle = %.6ff;\n", s.thighArc2Angle);
+    printf("app->robotScene.stilo.shinArc1Angle = %.6ff;\n", s.shinArc1Angle);
+    printf("app->robotScene.stilo.shinArc2Angle = %.6ff;\n", s.shinArc2Angle);
 
     printf("----\n");
 }

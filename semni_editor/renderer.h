@@ -46,6 +46,26 @@ typedef struct {
     int hoverHead;
     int hoverButt;
 
+    // Stilo's own per-joint dragging/hover state -- mirrors app.h's
+    // draggingStilo*/hoverStilo* fields the same way the Semni fields
+    // above mirror app's own draggingSeamArc1/draggingInner/etc., so
+    // drawStilo can highlight its handles independently of Semni's.
+    int draggingStiloSeamArc1;
+    int draggingStiloSeamArc2;
+    int draggingStiloInner;
+    int draggingStiloKnee;
+    int draggingStiloThigh1;
+    int draggingStiloThigh2;
+    int draggingStiloFoot;
+    int draggingStiloShin1;
+    int draggingStiloShin2;
+
+    int hoverStiloHip;
+    int hoverStiloKnee;
+    int hoverStiloFoot;
+    int hoverStiloHead;
+    int hoverStiloButt;
+
     // Shift held during the most recent mouse move -- combined with
     // hoverHip/hoverKnee to preview the shift+scroll joint rotation's
     // reach (thigh/knee, or shin/foot) in blue before any rotation
@@ -118,13 +138,14 @@ void renderRobotScene(AppState* app, float dimAmount);
 
 void drawSemni(Semni b, RenderState* rs, int includeHandles, float opacity);
 
-// Rocky/Stilo (see app.h) -- switcher + default poses only for now, so
-// unlike drawSemni these don't draw a View Segments overlay yet regardless
-// of rs->showSegments (that's a planned follow-up, see input.c's
+// Rocky/Stilo (see app.h) -- neither draws a View Segments overlay yet
+// regardless of rs->showSegments (that's a planned follow-up, see input.c's
 // WM_LBUTTONDOWN/WM_MOUSEMOVE/WM_MOUSEWHEEL comments). Rocky's rectangular
-// torso IS draggable/resizable now though (rs->hoverRockyBody/
-// draggingRockyBody, same hip-like handle interaction as Semni's own hip
-// circle) -- Stilo still has none. includeHandles gates both.
+// torso IS draggable/resizable (rs->hoverRockyBody/draggingRockyBody, same
+// hip-like handle interaction as Semni's own hip circle), and Stilo now has
+// Semni's FULL set of interactive handles too (hip/knee/foot circles, both
+// thigh arcs, both shin arcs -- rs->hoverStiloHip/draggingStiloInner/etc.,
+// see app.h's Stilo comment). includeHandles gates both.
 void drawRocky(Rocky b, RenderState* rs, int includeHandles, float opacity);
 void drawStilo(Stilo b, RenderState* rs, int includeHandles, float opacity);
 

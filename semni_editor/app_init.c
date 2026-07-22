@@ -105,61 +105,69 @@ void initRockyHomePosition(AppState* app)
 
 // ---- Stilo ----
 //
-// Same torso construction as Semni (head/butt/seam arcs), so angle = 90
-// again turns the local horizontal head/butt pair into a vertical stack
-// (see rotatePoint's math: a point offset (dx, 0) from the pivot lands at
-// world offset (0, dx) after a 90 degree rotation -- exactly what makes
-// Semni's own Standing pose read as upright). innerCircle is placed
-// EXACTLY at the torso's own pivot (getStiloCenter), same coincidence
-// Semni's Standing pose has (its innerCircle sits at its own getCenter
-// too) -- that pins the hip in place regardless of angle. hipAngle is set
-// to exactly -angle so the two rotations cancel (rotating twice around
-// the SAME point is just one rotation by their sum), which means
-// footCircle's stored coordinates below are already its exact final
-// on-screen offset from the hip -- no compounded rotation to reason
-// about, unlike Semni's own hand-tuned hipAngle.
+// Deliberately an exact field-for-field copy of initStandingPosition
+// (Semni's own Standing pose) above -- same reasoning as
+// initStiloHomePosition below: Stilo's struct now has the identical set
+// of fields in the identical roles (see app.h's Stilo comment), so "same
+// pose" just means the same numbers, under app->robotScene.stilo instead
+// of app->robotScene.robot.
 void initStiloStandingPosition(AppState* app)
 {
-	app->robotScene.stilo.headX = -0.100000f;
-	app->robotScene.stilo.buttX = 0.100000f;
-	app->robotScene.stilo.y = -0.300000f;
-	app->robotScene.stilo.headRadius = 0.090000f;
-	app->robotScene.stilo.buttRadius = 0.280000f;
+	app->robotScene.stilo.buttX = 0.600000f;
+	app->robotScene.stilo.headX = -0.600000f;
+	app->robotScene.stilo.y = -0.420000f;
+	app->robotScene.stilo.buttRadius = 0.288500f;
+	app->robotScene.stilo.headRadius = 0.081000f;
 	app->robotScene.stilo.seamArc1Angle = 122.854446f;
 	app->robotScene.stilo.seamArc2Angle = 237.145584f;
 	app->robotScene.stilo.innerCircle.x = 0.000000f;
-	app->robotScene.stilo.innerCircle.y = -0.300000f;
+	app->robotScene.stilo.innerCircle.y = -0.420000f;
 	app->robotScene.stilo.innerRadius = 0.120000f;
-	app->robotScene.stilo.angle = 90.000000f;
-	app->robotScene.stilo.hipAngle = -90.000000f;
+	app->robotScene.stilo.angle = 88.000000f;
+	app->robotScene.stilo.hipAngle = -760.000000f;
+	app->robotScene.stilo.kneeAngle = -26.000000f;
+	app->robotScene.stilo.kneeCircle.x = 0.000000f;
+	app->robotScene.stilo.kneeCircle.y = -0.941971f;
+	app->robotScene.stilo.kneeRadius = 0.080000f;
+	app->robotScene.stilo.thighArc1Angle = 161.913239f;
+	app->robotScene.stilo.thighArc2Angle = -19.956024f;
 	app->robotScene.stilo.footCircle.x = 0.000000f;
-	app->robotScene.stilo.footCircle.y = -0.850000f;
-	app->robotScene.stilo.footRadius = 0.060000f;
-	app->robotScene.stilo.thighArc1Angle = 170.000000f;
-	app->robotScene.stilo.thighArc2Angle = -15.000000f;
+	app->robotScene.stilo.footCircle.y = -1.240574f;
+	app->robotScene.stilo.footRadius = 0.050000f;
+	app->robotScene.stilo.shinArc1Angle = 169.821564f;
+	app->robotScene.stilo.shinArc2Angle = -22.810974f;
 }
 
+// Deliberately an exact field-for-field copy of initHomePosition (Semni's
+// own Home pose) above -- Stilo's struct now has the identical set of
+// fields in the identical roles (see app.h's Stilo comment), so "same
+// pose" just means the same numbers, under app->robotScene.stilo instead
+// of app->robotScene.robot.
 void initStiloHomePosition(AppState* app)
 {
-	app->robotScene.stilo.headX = -0.100000f;
-	app->robotScene.stilo.buttX = 0.100000f;
-	app->robotScene.stilo.y = -0.550000f;
-	app->robotScene.stilo.headRadius = 0.090000f;
-	app->robotScene.stilo.buttRadius = 0.280000f;
+	app->robotScene.stilo.buttX = 0.600000f;
+	app->robotScene.stilo.headX = -0.600000f;
+	app->robotScene.stilo.y = -0.770000f;
+	app->robotScene.stilo.buttRadius = 0.288500f;
+	app->robotScene.stilo.headRadius = 0.081000f;
 	app->robotScene.stilo.seamArc1Angle = 122.854446f;
 	app->robotScene.stilo.seamArc2Angle = 237.145584f;
 	app->robotScene.stilo.innerCircle.x = 0.000000f;
-	app->robotScene.stilo.innerCircle.y = -0.550000f;
+	app->robotScene.stilo.innerCircle.y = -0.770000f;
 	app->robotScene.stilo.innerRadius = 0.120000f;
-	app->robotScene.stilo.angle = 90.000000f;
-	app->robotScene.stilo.hipAngle = -90.000000f;
-	// leg tucked up and to the side (shorter, angled offset from the hip)
-	// for a crouched "home" pose, instead of straight down
-	app->robotScene.stilo.footCircle.x = 0.200000f;
-	app->robotScene.stilo.footCircle.y = -0.800000f;
-	app->robotScene.stilo.footRadius = 0.060000f;
-	app->robotScene.stilo.thighArc1Angle = 170.000000f;
-	app->robotScene.stilo.thighArc2Angle = -15.000000f;
+	app->robotScene.stilo.angle = 178.000000f;
+	app->robotScene.stilo.hipAngle = -836.000000f;
+	app->robotScene.stilo.kneeAngle = 36.000000f;
+	app->robotScene.stilo.kneeCircle.x = 0.000000f;
+	app->robotScene.stilo.kneeCircle.y = -1.291971f;
+	app->robotScene.stilo.kneeRadius = 0.080000f;
+	app->robotScene.stilo.thighArc1Angle = 161.913239f;
+	app->robotScene.stilo.thighArc2Angle = -19.956024f;
+	app->robotScene.stilo.footCircle.x = 0.000000f;
+	app->robotScene.stilo.footCircle.y = -1.590574f;
+	app->robotScene.stilo.footRadius = 0.050000f;
+	app->robotScene.stilo.shinArc1Angle = 169.821564f;
+	app->robotScene.stilo.shinArc2Angle = -22.810974f;
 }
 
 void initAppState(AppState* app)
