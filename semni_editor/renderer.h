@@ -66,6 +66,23 @@ typedef struct {
     int hoverStiloHead;
     int hoverStiloButt;
 
+    // Stilo's SECOND leg -- mirrors app.h's draggingStilo*Leg2/hoverStilo*Leg2
+    // fields the same way the fields above mirror its first leg's, so
+    // drawStiloThighLeg2/drawStiloShinLeg2 (renderer.c) can highlight leg 2's
+    // handles independently of leg 1's. No seam-arc or head/butt hover
+    // equivalent here -- those are torso-level, shared between both legs.
+    int draggingStiloInnerLeg2;
+    int draggingStiloKneeLeg2;
+    int draggingStiloThigh1Leg2;
+    int draggingStiloThigh2Leg2;
+    int draggingStiloFootLeg2;
+    int draggingStiloShin1Leg2;
+    int draggingStiloShin2Leg2;
+
+    int hoverStiloHipLeg2;
+    int hoverStiloKneeLeg2;
+    int hoverStiloFootLeg2;
+
     // Shift held during the most recent mouse move -- combined with
     // hoverHip/hoverKnee to preview the shift+scroll joint rotation's
     // reach (thigh/knee, or shin/foot) in blue before any rotation

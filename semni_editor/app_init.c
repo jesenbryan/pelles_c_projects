@@ -136,6 +136,32 @@ void initStiloStandingPosition(AppState* app)
 	app->robotScene.stilo.footRadius = 0.050000f;
 	app->robotScene.stilo.shinArc1Angle = 169.821564f;
 	app->robotScene.stilo.shinArc2Angle = -22.810974f;
+
+	// ---- leg 2 ----
+	//
+	// A straight copy of leg 1's pose above -- same radii, same hip/knee
+	// angles, same thigh/shin arcs -- just rigidly shifted by a fixed
+	// (+0.25, 0) in the torso's own LOCAL frame (innerCircle/kneeCircle/
+	// footCircle all shifted by the identical delta, same idea as
+	// robot.c's translateRobot), so leg 2 keeps leg 1's exact shape but no
+	// longer sits exactly on top of it -- both visible and independently
+	// draggable via its own hip/knee/foot handles. Fully interactive from
+	// here: drag any of leg 2's handles to pose it differently.
+	app->robotScene.stilo.innerCircleLeg2.x = 0.250000f;
+	app->robotScene.stilo.innerCircleLeg2.y = -0.420000f;
+	app->robotScene.stilo.innerRadiusLeg2 = 0.120000f;
+	app->robotScene.stilo.hipAngleLeg2 = -760.000000f;
+	app->robotScene.stilo.kneeAngleLeg2 = -26.000000f;
+	app->robotScene.stilo.kneeCircleLeg2.x = 0.250000f;
+	app->robotScene.stilo.kneeCircleLeg2.y = -0.941971f;
+	app->robotScene.stilo.kneeRadiusLeg2 = 0.080000f;
+	app->robotScene.stilo.thighArc1AngleLeg2 = 161.913239f;
+	app->robotScene.stilo.thighArc2AngleLeg2 = -19.956024f;
+	app->robotScene.stilo.footCircleLeg2.x = 0.250000f;
+	app->robotScene.stilo.footCircleLeg2.y = -1.240574f;
+	app->robotScene.stilo.footRadiusLeg2 = 0.050000f;
+	app->robotScene.stilo.shinArc1AngleLeg2 = 169.821564f;
+	app->robotScene.stilo.shinArc2AngleLeg2 = -22.810974f;
 }
 
 // Deliberately an exact field-for-field copy of initHomePosition (Semni's
@@ -168,6 +194,25 @@ void initStiloHomePosition(AppState* app)
 	app->robotScene.stilo.footRadius = 0.050000f;
 	app->robotScene.stilo.shinArc1Angle = 169.821564f;
 	app->robotScene.stilo.shinArc2Angle = -22.810974f;
+
+	// ---- leg 2 -- same "rigid +0.25 local-X shift of leg 1" construction
+	// as initStiloStandingPosition's own leg 2 above, just under the Home
+	// pose's own numbers.
+	app->robotScene.stilo.innerCircleLeg2.x = 0.250000f;
+	app->robotScene.stilo.innerCircleLeg2.y = -0.770000f;
+	app->robotScene.stilo.innerRadiusLeg2 = 0.120000f;
+	app->robotScene.stilo.hipAngleLeg2 = -836.000000f;
+	app->robotScene.stilo.kneeAngleLeg2 = 36.000000f;
+	app->robotScene.stilo.kneeCircleLeg2.x = 0.250000f;
+	app->robotScene.stilo.kneeCircleLeg2.y = -1.291971f;
+	app->robotScene.stilo.kneeRadiusLeg2 = 0.080000f;
+	app->robotScene.stilo.thighArc1AngleLeg2 = 161.913239f;
+	app->robotScene.stilo.thighArc2AngleLeg2 = -19.956024f;
+	app->robotScene.stilo.footCircleLeg2.x = 0.250000f;
+	app->robotScene.stilo.footCircleLeg2.y = -1.590574f;
+	app->robotScene.stilo.footRadiusLeg2 = 0.050000f;
+	app->robotScene.stilo.shinArc1AngleLeg2 = 169.821564f;
+	app->robotScene.stilo.shinArc2AngleLeg2 = -22.810974f;
 }
 
 void initAppState(AppState* app)

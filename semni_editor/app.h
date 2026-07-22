@@ -197,6 +197,37 @@ typedef struct {
     float angle;      // whole-body rotation
     float hipAngle;   // rotates the leg (kneeCircle, footCircle) around innerCircle
     float kneeAngle;  // rotates just the shin (footCircle) around kneeCircle
+
+    // ---- second leg ----
+    //
+    // Stilo grew a second, fully independent hip->knee->foot chain so it
+    // can stand on two legs instead of one -- same torso (headX/buttX/y,
+    // headRadius/buttRadius, seamArc1Angle/seamArc2Angle) and the same
+    // whole-body angle above are SHARED between both legs (there's only
+    // one body for them to hang off), but every joint from the hip down is
+    // its own independent copy, suffixed "Leg2", so it can be posed/
+    // dragged/mirrored completely separately from the first leg. See
+    // input.c's ROBOT_KIND_STILO branches and renderer.c's
+    // drawStiloThighLeg2/drawStiloShinLeg2 for the interactive/drawing
+    // side of this, and robot.c's mirrorStiloLeg/printStiloAsInit for how
+    // the two chains are kept in lockstep for those operations.
+    PointF innerCircleLeg2;
+    float innerRadiusLeg2;
+
+    PointF kneeCircleLeg2;
+    float kneeRadiusLeg2;
+
+    float thighArc1AngleLeg2;   // leg 2's hip-to-knee arc 1 (convex)
+    float thighArc2AngleLeg2;   // leg 2's hip-to-knee arc 2 (concave)
+
+    PointF footCircleLeg2;
+    float footRadiusLeg2;
+
+    float shinArc1AngleLeg2;    // leg 2's knee-to-foot arc 1 (convex)
+    float shinArc2AngleLeg2;    // leg 2's knee-to-foot arc 2 (concave)
+
+    float hipAngleLeg2;   // rotates leg 2 (kneeCircleLeg2, footCircleLeg2) around innerCircleLeg2
+    float kneeAngleLeg2;  // rotates just leg 2's shin (footCircleLeg2) around kneeCircleLeg2
 } Stilo;
 
 // Which of the three robot models the Robot editor (input.c) is currently
@@ -459,6 +490,42 @@ typedef struct {
     float stiloThighArcDragStartAngle;
     float stiloShinArcDragStartPerp;
     float stiloShinArcDragStartAngle;
+
+    // Stilo's SECOND leg -- same roles as draggingStiloInner/draggingStiloKnee/
+    // draggingStiloThigh1/draggingStiloThigh2/draggingStiloFoot/
+    // draggingStiloShin1/draggingStiloShin2 and hoverStiloHip/hoverStiloKnee/
+    // hoverStiloFoot above, just against app->robotScene.stilo's Leg2 fields
+    // (see app.h's Stilo comment) instead of its first leg. The torso-level
+    // seam arc dragging (draggingStiloSeamArc1/2) and head/butt hover
+    // (hoverStiloHead/hoverStiloButt) aren't duplicated -- both legs share
+    // the one torso, so there's nothing second-leg-specific about those.
+    int draggingStiloInnerLeg2;
+    int draggingStiloKneeLeg2;
+    int draggingStiloThigh1Leg2;
+    int draggingStiloThigh2Leg2;
+    int draggingStiloFootLeg2;
+    int draggingStiloShin1Leg2;
+    int draggingStiloShin2Leg2;
+
+    int hoverStiloHipLeg2;
+    int hoverStiloKneeLeg2;
+    int hoverStiloFootLeg2;
+
+    // same offset-capture idea as stiloKneeDragFootOffset/
+    // stiloHipDragKneeOffset/stiloHipDragFootOffset above, for leg 2's own
+    // hip/knee drags
+    PointF stiloKneeDragFootOffsetLeg2;
+    PointF stiloHipDragKneeOffsetLeg2;
+    PointF stiloHipDragFootOffsetLeg2;
+
+    // same drag-start-angle capture idea as stiloThighArcDragStartPerp/Angle
+    // and stiloShinArcDragStartPerp/Angle above, for leg 2's own thigh/shin
+    // arc drags (leg 2 has no seam arcs of its own -- those are torso-level,
+    // shared with leg 1, see draggingStiloSeamArc1/2 above)
+    float stiloThighArcDragStartPerpLeg2;
+    float stiloThighArcDragStartAngleLeg2;
+    float stiloShinArcDragStartPerpLeg2;
+    float stiloShinArcDragStartAngleLeg2;
 
     PointF mouseGL;
 

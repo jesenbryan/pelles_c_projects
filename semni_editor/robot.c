@@ -348,6 +348,81 @@ void mirrorStiloLeg(Stilo* s)
     s->thighArc2Angle = newThighArc2Angle;
     s->shinArc1Angle  = newShinArc1Angle;
     s->shinArc2Angle  = newShinArc2Angle;
+
+    // ---- leg 2 -- same chain-aware construction, same shared center/
+    // bodyAngle/axisX above (one torso, two legs), just reading/writing
+    // Stilo's own Leg2 fields (see app.h's Stilo comment) instead of its
+    // first leg's.
+    float oldHipAngleLeg2  = s->hipAngleLeg2;
+    float oldKneeAngleLeg2 = s->kneeAngleLeg2;
+    float newHipAngleLeg2  = -oldHipAngleLeg2;
+    float newKneeAngleLeg2 = -oldKneeAngleLeg2;
+
+    PointF oldInnerLeg2 = s->innerCircleLeg2;
+    PointF oldKneeLeg2  = s->kneeCircleLeg2;
+    PointF oldFootLeg2  = s->footCircleLeg2;
+
+    // hip: one stage, bodyAngle around center
+    PointF hipWorldLeg2  = rotatePoint(oldInnerLeg2, center, bodyAngle);
+    PointF hipTargetLeg2 = hipWorldLeg2; hipTargetLeg2.x = 2.0f * axisX - hipWorldLeg2.x;
+    PointF newInnerLeg2  = inverseRotate(hipTargetLeg2, center, bodyAngle);
+
+    // knee: hipAngle around innerCircle, then bodyAngle around center
+    PointF kneeWorldLeg2  = jointToWorld(oldKneeLeg2, oldInnerLeg2, oldHipAngleLeg2, center, bodyAngle);
+    PointF kneeTargetLeg2 = kneeWorldLeg2; kneeTargetLeg2.x = 2.0f * axisX - kneeWorldLeg2.x;
+    PointF kneeAfterBodyLeg2 = inverseRotate(kneeTargetLeg2, center, bodyAngle);
+    PointF newKneeLeg2        = inverseRotate(kneeAfterBodyLeg2, newInnerLeg2, newHipAngleLeg2);
+
+    // foot: kneeAngle around kneeCircle, hipAngle around innerCircle, bodyAngle around center
+    PointF footWorldLeg2  = nestedJointToWorld(oldFootLeg2, oldKneeLeg2, oldKneeAngleLeg2, oldInnerLeg2, oldHipAngleLeg2, center, bodyAngle);
+    PointF footTargetLeg2 = footWorldLeg2; footTargetLeg2.x = 2.0f * axisX - footWorldLeg2.x;
+    PointF footAfterBodyLeg2 = inverseRotate(footTargetLeg2, center, bodyAngle);
+    PointF footAfterHipLeg2  = inverseRotate(footAfterBodyLeg2, newInnerLeg2, newHipAngleLeg2);
+    PointF newFootLeg2        = inverseRotate(footAfterHipLeg2, newKneeLeg2, newKneeAngleLeg2);
+
+    // thigh arc 1/2: same two stages as the knee, from innerCircleLeg2's own circle
+    PointF thigh1LocalLeg2  = circleEdge(oldInnerLeg2, s->innerRadiusLeg2, s->thighArc1AngleLeg2);
+    PointF thigh1WorldLeg2  = jointToWorld(thigh1LocalLeg2, oldInnerLeg2, oldHipAngleLeg2, center, bodyAngle);
+    PointF thigh1TargetLeg2 = thigh1WorldLeg2; thigh1TargetLeg2.x = 2.0f * axisX - thigh1WorldLeg2.x;
+    PointF thigh1AfterBodyLeg2 = inverseRotate(thigh1TargetLeg2, center, bodyAngle);
+    PointF newThigh1LocalLeg2  = inverseRotate(thigh1AfterBodyLeg2, newInnerLeg2, newHipAngleLeg2);
+    float newThighArc1AngleLeg2 = atan2f(newThigh1LocalLeg2.y - newInnerLeg2.y, newThigh1LocalLeg2.x - newInnerLeg2.x) * 180.0f / 3.1415926f;
+
+    PointF thigh2LocalLeg2  = circleEdge(oldInnerLeg2, s->innerRadiusLeg2, s->thighArc2AngleLeg2);
+    PointF thigh2WorldLeg2  = jointToWorld(thigh2LocalLeg2, oldInnerLeg2, oldHipAngleLeg2, center, bodyAngle);
+    PointF thigh2TargetLeg2 = thigh2WorldLeg2; thigh2TargetLeg2.x = 2.0f * axisX - thigh2WorldLeg2.x;
+    PointF thigh2AfterBodyLeg2 = inverseRotate(thigh2TargetLeg2, center, bodyAngle);
+    PointF newThigh2LocalLeg2  = inverseRotate(thigh2AfterBodyLeg2, newInnerLeg2, newHipAngleLeg2);
+    float newThighArc2AngleLeg2 = atan2f(newThigh2LocalLeg2.y - newInnerLeg2.y, newThigh2LocalLeg2.x - newInnerLeg2.x) * 180.0f / 3.1415926f;
+
+    // shin arc 1/2: same three stages as the foot, from kneeCircleLeg2's own circle
+    PointF shin1LocalLeg2  = circleEdge(oldKneeLeg2, s->kneeRadiusLeg2, s->shinArc1AngleLeg2);
+    PointF shin1WorldLeg2  = nestedJointToWorld(shin1LocalLeg2, oldKneeLeg2, oldKneeAngleLeg2, oldInnerLeg2, oldHipAngleLeg2, center, bodyAngle);
+    PointF shin1TargetLeg2 = shin1WorldLeg2; shin1TargetLeg2.x = 2.0f * axisX - shin1WorldLeg2.x;
+    PointF shin1AfterBodyLeg2 = inverseRotate(shin1TargetLeg2, center, bodyAngle);
+    PointF shin1AfterHipLeg2  = inverseRotate(shin1AfterBodyLeg2, newInnerLeg2, newHipAngleLeg2);
+    PointF newShin1LocalLeg2  = inverseRotate(shin1AfterHipLeg2, newKneeLeg2, newKneeAngleLeg2);
+    float newShinArc1AngleLeg2 = atan2f(newShin1LocalLeg2.y - newKneeLeg2.y, newShin1LocalLeg2.x - newKneeLeg2.x) * 180.0f / 3.1415926f;
+
+    PointF shin2LocalLeg2  = circleEdge(oldKneeLeg2, s->kneeRadiusLeg2, s->shinArc2AngleLeg2);
+    PointF shin2WorldLeg2  = nestedJointToWorld(shin2LocalLeg2, oldKneeLeg2, oldKneeAngleLeg2, oldInnerLeg2, oldHipAngleLeg2, center, bodyAngle);
+    PointF shin2TargetLeg2 = shin2WorldLeg2; shin2TargetLeg2.x = 2.0f * axisX - shin2WorldLeg2.x;
+    PointF shin2AfterBodyLeg2 = inverseRotate(shin2TargetLeg2, center, bodyAngle);
+    PointF shin2AfterHipLeg2  = inverseRotate(shin2AfterBodyLeg2, newInnerLeg2, newHipAngleLeg2);
+    PointF newShin2LocalLeg2  = inverseRotate(shin2AfterHipLeg2, newKneeLeg2, newKneeAngleLeg2);
+    float newShinArc2AngleLeg2 = atan2f(newShin2LocalLeg2.y - newKneeLeg2.y, newShin2LocalLeg2.x - newKneeLeg2.x) * 180.0f / 3.1415926f;
+
+    s->innerCircleLeg2 = newInnerLeg2;
+    s->kneeCircleLeg2  = newKneeLeg2;
+    s->footCircleLeg2  = newFootLeg2;
+
+    s->hipAngleLeg2  = newHipAngleLeg2;
+    s->kneeAngleLeg2 = newKneeAngleLeg2;
+
+    s->thighArc1AngleLeg2 = newThighArc1AngleLeg2;
+    s->thighArc2AngleLeg2 = newThighArc2AngleLeg2;
+    s->shinArc1AngleLeg2  = newShinArc1AngleLeg2;
+    s->shinArc2AngleLeg2  = newShinArc2AngleLeg2;
 }
 
 void printStiloAsInit(Stilo s)
@@ -385,7 +460,32 @@ void printStiloAsInit(Stilo s)
     printf("app->robotScene.stilo.footRadius = %.6ff;\n\n", s.footRadius);
 
     printf("app->robotScene.stilo.shinArc1Angle = %.6ff;\n", s.shinArc1Angle);
-    printf("app->robotScene.stilo.shinArc2Angle = %.6ff;\n", s.shinArc2Angle);
+    printf("app->robotScene.stilo.shinArc2Angle = %.6ff;\n\n", s.shinArc2Angle);
+
+    // ---- leg 2 ----
+    printf("app->robotScene.stilo.innerCircleLeg2.x = %.6ff;\n", s.innerCircleLeg2.x);
+    printf("app->robotScene.stilo.innerCircleLeg2.y = %.6ff;\n\n", s.innerCircleLeg2.y);
+
+    printf("app->robotScene.stilo.innerRadiusLeg2 = %.6ff;\n\n", s.innerRadiusLeg2);
+
+    printf("app->robotScene.stilo.hipAngleLeg2 = %.6ff;\n", s.hipAngleLeg2);
+    printf("app->robotScene.stilo.kneeAngleLeg2 = %.6ff;\n\n", s.kneeAngleLeg2);
+
+    printf("app->robotScene.stilo.kneeCircleLeg2.x = %.6ff;\n", s.kneeCircleLeg2.x);
+    printf("app->robotScene.stilo.kneeCircleLeg2.y = %.6ff;\n\n", s.kneeCircleLeg2.y);
+
+    printf("app->robotScene.stilo.kneeRadiusLeg2 = %.6ff;\n\n", s.kneeRadiusLeg2);
+
+    printf("app->robotScene.stilo.thighArc1AngleLeg2 = %.6ff;\n", s.thighArc1AngleLeg2);
+    printf("app->robotScene.stilo.thighArc2AngleLeg2 = %.6ff;\n\n", s.thighArc2AngleLeg2);
+
+    printf("app->robotScene.stilo.footCircleLeg2.x = %.6ff;\n", s.footCircleLeg2.x);
+    printf("app->robotScene.stilo.footCircleLeg2.y = %.6ff;\n\n", s.footCircleLeg2.y);
+
+    printf("app->robotScene.stilo.footRadiusLeg2 = %.6ff;\n\n", s.footRadiusLeg2);
+
+    printf("app->robotScene.stilo.shinArc1AngleLeg2 = %.6ff;\n", s.shinArc1AngleLeg2);
+    printf("app->robotScene.stilo.shinArc2AngleLeg2 = %.6ff;\n", s.shinArc2AngleLeg2);
 
     printf("----\n");
 }

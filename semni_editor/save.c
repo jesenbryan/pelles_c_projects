@@ -249,6 +249,30 @@ int saveStiloAsEquations(const char* filename, AppState* app)
     // BODY - Whole
     fprintf(f, "BODY_ANGLE=%.6f\n", s->angle);
 
+    // ---- leg 2 -- same fields as leg 1 above, LEG2_-prefixed keys so they
+    // can't collide with leg 1's (see app.h's Stilo comment). No LEG2_
+    // equivalent of the torso keys (HEAD_*/BUTT_*/SEAM_ARC*/BODY_ANGLE) --
+    // both legs share the one torso, already written above.
+    fprintf(f, "LEG2_HIP_X=%.6f\n", s->innerCircleLeg2.x);
+    fprintf(f, "LEG2_HIP_Y=%.6f\n", s->innerCircleLeg2.y);
+    fprintf(f, "LEG2_HIP_RADIUS=%.6f\n", s->innerRadiusLeg2);
+    fprintf(f, "LEG2_HIP_ANGLE=%.6f\n", s->hipAngleLeg2);
+
+    fprintf(f, "LEG2_KNEE_X=%.6f\n", s->kneeCircleLeg2.x);
+    fprintf(f, "LEG2_KNEE_Y=%.6f\n", s->kneeCircleLeg2.y);
+    fprintf(f, "LEG2_KNEE_RADIUS=%.6f\n", s->kneeRadiusLeg2);
+    fprintf(f, "LEG2_KNEE_ANGLE=%.6f\n", s->kneeAngleLeg2);
+
+    fprintf(f, "LEG2_THIGH_ARC1_ANGLE=%.6f\n", s->thighArc1AngleLeg2);
+    fprintf(f, "LEG2_THIGH_ARC2_ANGLE=%.6f\n", s->thighArc2AngleLeg2);
+
+    fprintf(f, "LEG2_FOOT_X=%.6f\n", s->footCircleLeg2.x);
+    fprintf(f, "LEG2_FOOT_Y=%.6f\n", s->footCircleLeg2.y);
+    fprintf(f, "LEG2_FOOT_RADIUS=%.6f\n", s->footRadiusLeg2);
+
+    fprintf(f, "LEG2_SHIN_ARC1_ANGLE=%.6f\n", s->shinArc1AngleLeg2);
+    fprintf(f, "LEG2_SHIN_ARC2_ANGLE=%.6f\n", s->shinArc2AngleLeg2);
+
     fclose(f);
 
     char path[MAX_PATH];
@@ -402,6 +426,28 @@ int loadStiloPoseFromFile(const char* filename, Stilo* out)
         // name. Any pose file saved under the old Stilo (no knee) needs to
         // be re-saved from scratch under the new structure.
         else if (strcmp(key, "BODY_ANGLE") == 0) out->angle = value;
+        // ---- leg 2 -- same LEG2_-prefixed keys saveStiloAsEquations
+        // writes above. An older pose file saved before leg 2 existed
+        // simply has none of these keys, so out->*Leg2 is left whatever it
+        // already was (zero on a fresh launch) -- same "seed the hardcoded
+        // default first, then load on top" fix input.c's
+        // ID_STANDING_POSITION_BUTTON/ID_HOME_POSITION_BUTTON already apply
+        // for exactly this reason.
+        else if (strcmp(key, "LEG2_HIP_X") == 0) out->innerCircleLeg2.x = value;
+        else if (strcmp(key, "LEG2_HIP_Y") == 0) out->innerCircleLeg2.y = value;
+        else if (strcmp(key, "LEG2_HIP_RADIUS") == 0) out->innerRadiusLeg2 = value;
+        else if (strcmp(key, "LEG2_HIP_ANGLE") == 0) out->hipAngleLeg2 = value;
+        else if (strcmp(key, "LEG2_KNEE_X") == 0) out->kneeCircleLeg2.x = value;
+        else if (strcmp(key, "LEG2_KNEE_Y") == 0) out->kneeCircleLeg2.y = value;
+        else if (strcmp(key, "LEG2_KNEE_RADIUS") == 0) out->kneeRadiusLeg2 = value;
+        else if (strcmp(key, "LEG2_KNEE_ANGLE") == 0) out->kneeAngleLeg2 = value;
+        else if (strcmp(key, "LEG2_THIGH_ARC1_ANGLE") == 0) out->thighArc1AngleLeg2 = value;
+        else if (strcmp(key, "LEG2_THIGH_ARC2_ANGLE") == 0) out->thighArc2AngleLeg2 = value;
+        else if (strcmp(key, "LEG2_FOOT_X") == 0) out->footCircleLeg2.x = value;
+        else if (strcmp(key, "LEG2_FOOT_Y") == 0) out->footCircleLeg2.y = value;
+        else if (strcmp(key, "LEG2_FOOT_RADIUS") == 0) out->footRadiusLeg2 = value;
+        else if (strcmp(key, "LEG2_SHIN_ARC1_ANGLE") == 0) out->shinArc1AngleLeg2 = value;
+        else if (strcmp(key, "LEG2_SHIN_ARC2_ANGLE") == 0) out->shinArc2AngleLeg2 = value;
     }
 
     fclose(f);
