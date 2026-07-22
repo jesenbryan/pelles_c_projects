@@ -93,18 +93,79 @@
 // MIN_ARC_R/MAX_ARC_R above), but the hip/knee circles are much smaller
 // and closer together than head/butt, so they get their own clamp/margin/
 // sensitivity constants instead of sharing the head/butt-tuned ones.
-// MAX_THIGH_ARC_R is picked with the same ratio to the hip-knee distance
-// (~0.52 for the default pose) that MAX_ARC_R has to the head-butt
-// distance (~1.2), so the "arc flattens past this size" cap scales with
-// the limb instead of being tuned for a completely different part.
+// MAX_SEMNI_THIGH_ARC_R is picked with the same ratio to the hip-knee
+// distance (~0.52 for the default pose) that MAX_ARC_R has to the
+// head-butt distance (~1.2), so the "arc flattens past this size" cap
+// scales with the limb instead of being tuned for a completely different
+// part.
+//
+// Used ONLY by Semni's own thighArc1 (the convex fillet) -- thighArc2
+// bulges the other way and is capped by its own MAX_THIGH_ARC2_CONCAVE_R
+// below instead. filletSafeAngleRange's halfWidthDeg (the actual draggable
+// angle range WM_MOUSEMOVE's draggingThigh1 clamps to, minus
+// THIGH_ARC_ANGLE_MARGIN_DEG) shrinks as this cap gets smaller, so
+// lowering it is how much thigh arc 1 specifically can be dragged, without
+// touching thigh arc 2's own range at all. Lowered from an earlier 2.5f --
+// that let thigh arc 1 swing much further than felt right; this cuts the
+// draggable range down noticeably. Tune further by adjusting this same
+// constant (up for more room, down for less).
+//
+// Named Semni-specific (rather than the old shared MAX_THIGH_ARC_R) because
+// Stilo's own hip-to-ankle leg (drawStilo, renderer.c) reuses this exact
+// same fillet construction and field naming for its own thighArc1Angle/
+// thighArc2Angle, but has no interactive drag handle for it at all (see
+// app.h's Stilo comment) -- its angle is a fixed pose default, never user-
+// dragged, so tuning Semni's draggable RANGE has nothing to do with it.
+// Splitting the constant means changing one can never silently change the
+// other's rendered shape. See MAX_STILO_LEG_ARC_R below for Stilo's own,
+// which keeps the original un-lowered value so Stilo's look is unaffected.
 #define MIN_THIGH_ARC_R 0.05f
-#define MAX_THIGH_ARC_R 2.5f
+#define MAX_SEMNI_THIGH_ARC_R 1.2f
+
+// A per-arc MINIMUM radius floor (tried as MIN_SEMNI_THIGH_ARC1_R, briefly)
+// is NOT a safe way to shrink thigh arc 1's draggable range, unlike the MAX
+// cap above -- filletSafeAngleRange (which derives maxDelta, the range
+// WM_MOUSEMOVE's draggingThigh1 actually clamps the ANGLE to) only takes a
+// single maxRadius parameter and guarantees every angle inside its derived
+// window already solves to a radius at or under that cap, so raising
+// MAX_SEMNI_THIGH_ARC_R's cap never needs filletFromAttachAngle's own
+// clamp to actually engage. There's no equivalent derivation for a MINIMUM
+// -- nothing stops the angle from reaching a delta whose natural radius
+// falls below a raised floor, so filletFromAttachAngle's minRadius clamp
+// DOES engage there, recentering the fillet circle at a radius that no
+// longer matches what internalTangentPoint computes assuming tangency --
+// the arc visibly detaches from the knee circle instead of just going flat.
+// Use THIGH_ARC_SIDE_MARGIN_DEG below (an ANGLE restriction, not a radius
+// one) to shrink the near-center portion of the range instead -- it keeps
+// every reachable angle's natural radius safely inside [MIN_THIGH_ARC_R,
+// MAX_SEMNI_THIGH_ARC_R] with no clamp ever firing, so tangency can't break.
+
+// Stilo's own hip-to-ankle leg arc cap (drawStilo's leg1Fillet, renderer.c)
+// -- kept at the ORIGINAL, un-lowered value MAX_SEMNI_THIGH_ARC_R used to
+// share with it, since Stilo's leg has no drag handle to reduce the range
+// of in the first place (see the comment above). Reuses MIN_THIGH_ARC_R
+// (the lower bound needs no Semni/Stilo split -- neither side has touched
+// that one).
+#define MAX_STILO_LEG_ARC_R 2.5f
 
 // same role as ARC_ANGLE_MARGIN_DEG/ARC_SIDE_MARGIN_DEG, kept as separate
-// constants (even though currently equal) so the thigh arcs' feel can be
-// tuned independently of the seam arcs'
+// constants so the thigh arcs' feel can be tuned independently of the seam
+// arcs'. THIGH_ARC_ANGLE_MARGIN_DEG is shared with thighArc2's own maxDelta
+// calc; THIGH_ARC_SIDE_MARGIN_DEG is used ONLY by thighArc1 (thighArc2's
+// concave range doesn't need a one-sided lock -- see the comment below).
+//
+// THIGH_ARC_SIDE_MARGIN_DEG is the SAFE way to shrink thigh arc 1's
+// draggable range (see the comment above MAX_STILO_LEG_ARC_R for why a
+// radius floor isn't): it's a pure ANGLE restriction on the near-center end
+// of the range WM_MOUSEMOVE's draggingThigh1 clamps delta to, and every
+// angle in the range still solves to its own natural, un-clamped radius --
+// no tangency-breaking possible. Raised from 1.0f (which let the drag reach
+// almost all the way to the degenerate centerDeg point) to noticeably eat
+// into the near-center portion of the range, on top of the far-end trim
+// MAX_SEMNI_THIGH_ARC_R above already makes -- between the two, the total
+// draggable span is now roughly half of the original.
 #define THIGH_ARC_ANGLE_MARGIN_DEG 2.0f
-#define THIGH_ARC_SIDE_MARGIN_DEG 1.0f
+#define THIGH_ARC_SIDE_MARGIN_DEG 30.0f
 
 // thigh arc 2 is built with filletFromAttachAngleConcave instead of the
 // usual filletFromAttachAngle -- it bulges INWARD (toward the hip-knee
@@ -113,7 +174,7 @@
 // angle nears its own singularity than the convex one does for the same
 // hip/knee layout (the singularity itself is a fixed ~85.6 degrees from
 // this cap's center, set by hip/knee geometry alone), so reusing
-// MAX_THIGH_ARC_R here would let it swing almost all the way to that
+// MAX_SEMNI_THIGH_ARC_R here would let it swing almost all the way to that
 // singularity before clamping kicks in. Kept deliberately tight (~51
 // degree safe half-width, vs the ~85.6 degree singularity) so the pinch
 // stays shallow and well clear of the point where the math breaks down --

@@ -337,7 +337,7 @@ static void drawThigh(Semni b, RenderState* rs, float opacity)
     // head/butt seams (which work in pre-body-angle local space)
     PointF axisMidLocal = { (b.innerCircle.x + b.kneeCircle.x) * 0.5f, (b.innerCircle.y + b.kneeCircle.y) * 0.5f };
 
-    Fillet thigh1Fillet = filletFromAttachAngle(b.innerCircle, b.innerRadius, b.kneeCircle, b.kneeRadius, b.thighArc1Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC_R);
+    Fillet thigh1Fillet = filletFromAttachAngle(b.innerCircle, b.innerRadius, b.kneeCircle, b.kneeRadius, b.thighArc1Angle, MIN_THIGH_ARC_R, MAX_SEMNI_THIGH_ARC_R);
     PointF thigh1InnerTangentLocal = circleEdge(b.innerCircle, b.innerRadius, b.thighArc1Angle);
     PointF thigh1KneeTangentLocal = internalTangentPoint(thigh1Fillet.center, thigh1Fillet.radius, b.kneeCircle, b.kneeRadius);
     PointF thigh1NearLocal = circleTowardPoint(thigh1Fillet.center, thigh1Fillet.radius, axisMidLocal);
@@ -382,7 +382,7 @@ static void drawThighHandles(Semni b, RenderState* rs, float opacity)
     // generalized version is needed instead of pinning to a fixed X
     PointF axisMidLocal = { (b.innerCircle.x + b.kneeCircle.x) * 0.5f, (b.innerCircle.y + b.kneeCircle.y) * 0.5f };
 
-    Fillet thigh1Fillet = filletFromAttachAngle(b.innerCircle, b.innerRadius, b.kneeCircle, b.kneeRadius, b.thighArc1Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC_R);
+    Fillet thigh1Fillet = filletFromAttachAngle(b.innerCircle, b.innerRadius, b.kneeCircle, b.kneeRadius, b.thighArc1Angle, MIN_THIGH_ARC_R, MAX_SEMNI_THIGH_ARC_R);
     PointF thigh1NearLocal = circleTowardPoint(thigh1Fillet.center, thigh1Fillet.radius, axisMidLocal);
     PointF thigh1MidLocal = circleAtAxisMid(thigh1Fillet.center, thigh1Fillet.radius, b.innerCircle, b.kneeCircle, thigh1NearLocal);
 
@@ -580,7 +580,7 @@ void computeSemniCircleSegments(Semni b, CircleSegment out[NUM_ROBOT_CIRCLE_SEGM
     // thigh arcs 1/2: fillets between innerCircle (hip) and kneeCircle,
     // computed in the hip-local (pre-hipAngle) frame, same as drawThigh --
     // jointToWorld carries the center through hipAngle, then bodyAngle.
-    Fillet thigh1Fillet = filletFromAttachAngle(b.innerCircle, b.innerRadius, b.kneeCircle, b.kneeRadius, b.thighArc1Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC_R);
+    Fillet thigh1Fillet = filletFromAttachAngle(b.innerCircle, b.innerRadius, b.kneeCircle, b.kneeRadius, b.thighArc1Angle, MIN_THIGH_ARC_R, MAX_SEMNI_THIGH_ARC_R);
     Fillet thigh2Fillet = filletFromAttachAngleConcave(b.innerCircle, b.innerRadius, b.kneeCircle, b.kneeRadius, b.thighArc2Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC2_CONCAVE_R);
 
     out[2].center = jointToWorld(thigh1Fillet.center, b.innerCircle, b.hipAngle, center, angle);
@@ -640,7 +640,7 @@ void computeSemniArcPoints(Semni b, PointF out[NUM_ROBOT_CIRCLE_SEGMENTS][ARC_SA
     // thigh arcs 1/2 -- same local-frame math as drawThigh
     PointF thighAxisMidLocal = { (b.innerCircle.x + b.kneeCircle.x) * 0.5f, (b.innerCircle.y + b.kneeCircle.y) * 0.5f };
 
-    Fillet thigh1Fillet = filletFromAttachAngle(b.innerCircle, b.innerRadius, b.kneeCircle, b.kneeRadius, b.thighArc1Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC_R);
+    Fillet thigh1Fillet = filletFromAttachAngle(b.innerCircle, b.innerRadius, b.kneeCircle, b.kneeRadius, b.thighArc1Angle, MIN_THIGH_ARC_R, MAX_SEMNI_THIGH_ARC_R);
     PointF thigh1P0 = jointToWorld(circleEdge(b.innerCircle, b.innerRadius, b.thighArc1Angle), b.innerCircle, b.hipAngle, center, angle);
     PointF thigh1P1 = jointToWorld(circleTowardPoint(thigh1Fillet.center, thigh1Fillet.radius, thighAxisMidLocal), b.innerCircle, b.hipAngle, center, angle);
     PointF thigh1P2 = jointToWorld(internalTangentPoint(thigh1Fillet.center, thigh1Fillet.radius, b.kneeCircle, b.kneeRadius), b.innerCircle, b.hipAngle, center, angle);
@@ -1030,7 +1030,7 @@ void drawStilo(Stilo b, RenderState* rs, int includeHandles, float opacity)
 
     PointF legAxisMidLocal = { (b.innerCircle.x + b.ankleCircle.x) * 0.5f, (b.innerCircle.y + b.ankleCircle.y) * 0.5f };
 
-    Fillet leg1Fillet = filletFromAttachAngle(b.innerCircle, b.innerRadius, b.ankleCircle, b.ankleRadius, b.thighArc1Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC_R);
+    Fillet leg1Fillet = filletFromAttachAngle(b.innerCircle, b.innerRadius, b.ankleCircle, b.ankleRadius, b.thighArc1Angle, MIN_THIGH_ARC_R, MAX_STILO_LEG_ARC_R);
     PointF leg1InnerTangentLocal = circleEdge(b.innerCircle, b.innerRadius, b.thighArc1Angle);
     PointF leg1AnkleTangentLocal = internalTangentPoint(leg1Fillet.center, leg1Fillet.radius, b.ankleCircle, b.ankleRadius);
     PointF leg1NearLocal = circleTowardPoint(leg1Fillet.center, leg1Fillet.radius, legAxisMidLocal);
