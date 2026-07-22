@@ -887,7 +887,11 @@ static void drawRockyLeg(Rocky b, RenderState* rs, float opacity)
     // shinAffected hint for its kneeAngle bend.
     int rockyShinAffected = rs->hoverRockyKnee && rs->shiftHeld;
 
-    setColor(rs, rockyShinAffected, 0.2f, 0.4f, 1.0f, opacity);
+    // Ankle circle also lights up on its own plain hover (previewing the
+    // length-change drag -- see input.c's draggingRockyAnkle), same
+    // "&& !dragging" exclusion Semni's own hoverAnkle uses so the circle
+    // doesn't stay lit for the whole drag once it's what's moving.
+    setColor(rs, rockyShinAffected || (rs->hoverRockyAnkle && !rs->draggingRockyAnkle), 0.2f, 0.4f, 1.0f, opacity);
     drawCircle(ankleWorld, b.ankleRadius);
 
     PointF axisMidLocal = { (b.kneeCircle.x + b.ankleCircle.x) * 0.5f, (b.kneeCircle.y + b.ankleCircle.y) * 0.5f };
@@ -902,12 +906,17 @@ static void drawRockyLeg(Rocky b, RenderState* rs, float opacity)
     PointF shin2AnkleTangentLocal = circleTowardPoint(shin2Fillet.center, shin2Fillet.radius, b.ankleCircle);
     PointF shin2NearLocal = circleTowardPoint(shin2Fillet.center, shin2Fillet.radius, axisMidLocal);
 
-    setColor(rs, rockyShinAffected, 0.2f, 0.4f, 1.0f, opacity);
+    // dragging the ankle circle also stretches/shrinks both shin arcs
+    // (they attach to ankleCircle, which just moved along the knee->ankle
+    // axis -- see WM_MOUSEMOVE's draggingRockyAnkle/constrainToAxis
+    // handling), same "carries the other visibly-reacting parts along"
+    // idea as Semni's own drawShin.
+    setColor(rs, rockyShinAffected || rs->draggingRockyAnkle, 0.2f, 0.4f, 1.0f, opacity);
     drawArc(jointToWorld(shin1KneeTangentLocal, b.kneeCircle, b.kneeAngle, center, angle),
             jointToWorld(shin1NearLocal, b.kneeCircle, b.kneeAngle, center, angle),
             jointToWorld(shin1AnkleTangentLocal, b.kneeCircle, b.kneeAngle, center, angle));
 
-    setColor(rs, rockyShinAffected, 0.2f, 0.4f, 1.0f, opacity);
+    setColor(rs, rockyShinAffected || rs->draggingRockyAnkle, 0.2f, 0.4f, 1.0f, opacity);
     drawArc(jointToWorld(shin2KneeTangentLocal, b.kneeCircle, b.kneeAngle, center, angle),
             jointToWorld(shin2NearLocal, b.kneeCircle, b.kneeAngle, center, angle),
             jointToWorld(shin2AnkleTangentLocal, b.kneeCircle, b.kneeAngle, center, angle));
@@ -935,6 +944,11 @@ void drawRocky(Rocky b, RenderState* rs, int includeHandles, float opacity)
         // Semni's own knee handle (drawThigh's drawHandle(kneeWorld, ...)).
         PointF kneeWorld = rotatePoint(b.kneeCircle, center, b.angle);
         drawHandle(kneeWorld, rs->draggingRockyKnee || rs->hoverRockyKnee, KNEE_HANDLE_RADIUS, opacity);
+
+        // Ankle handle -- far end of the shin, same visible-dot treatment
+        // as Semni's own ankle handle (drawShinHandles' drawHandle(ankleWorld, ...)).
+        PointF ankleWorld = jointToWorld(b.ankleCircle, b.kneeCircle, b.kneeAngle, center, b.angle);
+        drawHandle(ankleWorld, rs->draggingRockyAnkle || rs->hoverRockyAnkle, ANKLE_HANDLE_RADIUS, opacity);
 
         // One small handle at the midpoint of each of the 4 edges --
         // marks where hovering + dragging resizes just that side (see
@@ -1058,6 +1072,8 @@ static void renderRobot(AppState* app, int includeHandles, float opacity)
     rs.draggingRockyEdge = app->draggingRockyEdge;
     rs.hoverRockyKnee = app->hoverRockyKnee;
     rs.draggingRockyKnee = app->draggingRockyKnee;
+    rs.hoverRockyAnkle = app->hoverRockyAnkle;
+    rs.draggingRockyAnkle = app->draggingRockyAnkle;
 
     rs.hoverHip = app->hoverHip;
     rs.hoverKnee = app->hoverKnee;

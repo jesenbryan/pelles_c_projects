@@ -320,6 +320,14 @@ typedef struct {
     // distance from the body changes" idea as kneeDragAnkleOffset below.
     PointF rockyKneeDragAnkleOffset;
 
+    // Rocky's ankle handle -- mirrors Semni's own hoverAnkle/draggingAnkle:
+    // hover to highlight, drag along the knee->ankle axis (constrainToAxis,
+    // same as Semni) to change the leg's length. No offset capture needed
+    // -- unlike the knee/body handles, nothing hangs off the ankle for a
+    // drag to carry along.
+    int hoverRockyAnkle;
+    int draggingRockyAnkle;
+
     // captured once, when a Rocky body drag starts: kneeCircle's and
     // ankleCircle's fixed offsets from (bodyX, bodyY) at that moment --
     // same "re-applied fresh every WM_MOUSEMOVE" pattern as

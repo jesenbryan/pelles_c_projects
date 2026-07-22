@@ -41,6 +41,24 @@ HWND platformCreateMainWindow(HINSTANCE hInst, int nShowCmd, WNDPROC wndProc, HM
     wc.hInstance = hInst;
     wc.lpszClassName = L"Semni";
 
+    // CS_OWNDC gives this window its own permanent device context instead
+    // of a pooled "common" one -- graphics.c's setupOpenGL grabs the DC
+    // ONCE at startup (a plain GetDC, never released/re-fetched) and reuses
+    // that same handle for every frame's SwapBuffers for the entire life of
+    // the app. Without CS_OWNDC, a DC handed out that way is only reliably
+    // valid/clip-synced for a single paint cycle -- anything that nudges
+    // Windows into recomputing the shared DC pool (and a live window
+    // resize is exactly that) can leave the cached handle pointing at a
+    // stale clip region that no longer excludes the child controls'
+    // current positions, so every subsequent SwapBuffers paints straight
+    // over all of them (Save/Home/the robot dropdown/etc.) until
+    // something -- e.g. hovering a control, which forces THAT control to
+    // repaint itself and resync locally -- papers over it for just that
+    // one control. CS_OWNDC makes the DC permanently tied to this window
+    // and always clip-accurate, so WS_CLIPCHILDREN below actually holds
+    // across a resize instead of only until the next incidental repaint.
+    wc.style = CS_OWNDC;
+
     // Without an explicit class cursor, Windows never resets the cursor
     // on its own when it re-enters this window's client area (the canvas)
     // -- it just leaves whatever cursor was showing before, e.g. the

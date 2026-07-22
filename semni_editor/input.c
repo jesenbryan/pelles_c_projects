@@ -67,6 +67,54 @@ static void adjustRockyShinArcs(AppState* app)
     app->robotScene.rocky.shinArc2Angle = clampToSafeAngleRange(app->robotScene.rocky.shinArc2Angle, range2, SHIN_ARC_ANGLE_MARGIN_DEG);
 }
 
+// Keeps the knee handle honest whenever the rectangle's own size changes
+// (scroll on the body handle, or dragging an edge -- see WM_MOUSEWHEEL/
+// WM_MOUSEMOVE's ROBOT_KIND_ROCKY branches): shrinking the body can
+// otherwise leave the knee circle sitting outside the new, smaller
+// rectangle, which the free-drag clamp in WM_MOUSEMOVE only enforces
+// WHILE actively dragging the knee itself, not when the body changes size
+// out from under it. Re-applies the exact same "clamp position, inset by
+// radius, fall back to centering on an axis that's now too small" logic
+// as that drag, plus a radius clamp the drag doesn't need (the knee's own
+// size can't change mid-drag, only the body's size changing here can make
+// it suddenly too big to fit).
+static void clampRockyKneeToBody(AppState* app)
+{
+    Rocky* r = &app->robotScene.rocky;
+
+    float maxRadius = r->bodyHalfWidth;
+    if (r->bodyHalfHeight < maxRadius) maxRadius = r->bodyHalfHeight;
+    if (r->kneeRadius > maxRadius) r->kneeRadius = maxRadius;
+    if (r->kneeRadius < MIN_R) r->kneeRadius = MIN_R;
+
+    float minX = r->bodyX - r->bodyHalfWidth + r->kneeRadius;
+    float maxX = r->bodyX + r->bodyHalfWidth - r->kneeRadius;
+    float minY = r->bodyY - r->bodyHalfHeight + r->kneeRadius;
+    float maxY = r->bodyY + r->bodyHalfHeight - r->kneeRadius;
+
+    if (minX > maxX) { minX = maxX = r->bodyX; }
+    if (minY > maxY) { minY = maxY = r->bodyY; }
+
+    PointF oldKnee = r->kneeCircle;
+    PointF newKnee = oldKnee;
+    if (newKnee.x < minX) newKnee.x = minX;
+    if (newKnee.x > maxX) newKnee.x = maxX;
+    if (newKnee.y < minY) newKnee.y = minY;
+    if (newKnee.y > maxY) newKnee.y = maxY;
+
+    // carry the ankle/shin along rigidly by the same delta, so pushing the
+    // knee back inside the body doesn't also silently reshape the leg --
+    // same "preserve the offset" idea as rockyKneeDragAnkleOffset
+    PointF delta = { newKnee.x - oldKnee.x, newKnee.y - oldKnee.y };
+    r->kneeCircle = newKnee;
+    r->ankleCircle.x += delta.x;
+    r->ankleCircle.y += delta.y;
+
+    // knee radius may have just shrunk above -- re-validate the shin arcs
+    // against it, same as the plain-scroll kneeRadius resize does
+    adjustRockyShinArcs(app);
+}
+
 // Hit-tests Rocky's 4 rectangle edges (left/right/top/bottom) against a
 // point already given in the rectangle's OWN local frame (i.e. already
 // run through inverseRotate around getRockyCenter -- see WM_LBUTTONDOWN/
@@ -194,6 +242,7 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             app->draggingRockyBody = 0;
             app->draggingRockyEdge = ROCKY_EDGE_NONE;
             app->draggingRockyKnee = 0;
+            app->draggingRockyAnkle = 0;
 
             // Rocky's rectangular torso has one hip-like handle (see
             // app.h's hoverRockyBody/draggingRockyBody): hover to
@@ -201,18 +250,22 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             // WM_MOUSEWHEEL) to resize. It also has 4 edge midpoints
             // (hoverRockyEdge/draggingRockyEdge, see ROCKY_EDGE_* in
             // app.h) -- hover/drag one of those to stretch just that
-            // dimension instead of moving or uniformly scaling. And it has
-            // one knee handle (hoverRockyKnee/draggingRockyKnee) where the
-            // leg attaches to the rectangle -- drag it freely anywhere
-            // inside the rectangle (clamped so the knee circle never pokes
+            // dimension instead of moving or uniformly scaling. It has one
+            // knee handle (hoverRockyKnee/draggingRockyKnee) where the leg
+            // attaches to the rectangle -- drag it freely anywhere inside
+            // the rectangle (clamped so the knee circle never pokes
             // outside the body, see WM_MOUSEMOVE), plain scroll to resize
-            // kneeRadius, Shift+scroll to bend kneeAngle. Stilo has no
-            // handles at all yet -- see the RobotKind comment on the
-            // fallthrough break below.
+            // kneeRadius, Shift+scroll to bend kneeAngle. And it has one
+            // ankle handle (hoverRockyAnkle/draggingRockyAnkle) at the far
+            // end of the shin -- drag it along the knee->ankle axis
+            // (constrainToAxis, same as Semni's own ankle handle) to
+            // change the leg's length. Stilo has no handles at all yet --
+            // see the RobotKind comment on the fallthrough break below.
             if (app->robotScene.activeKind == ROBOT_KIND_ROCKY)
             {
                 PointF rockyCenter = getRockyCenter(app->robotScene.rocky);
                 PointF kneeWorld = rotatePoint(app->robotScene.rocky.kneeCircle, rockyCenter, app->robotScene.rocky.angle);
+                PointF ankleWorld = jointToWorld(app->robotScene.rocky.ankleCircle, app->robotScene.rocky.kneeCircle, app->robotScene.rocky.kneeAngle, rockyCenter, app->robotScene.rocky.angle);
 
                 if (isNear(app->mouseGL, rockyCenter, HIP_HANDLE_RADIUS))
                 {
@@ -240,12 +293,18 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     app->rockyKneeDragAnkleOffset.x = app->robotScene.rocky.ankleCircle.x - app->robotScene.rocky.kneeCircle.x;
                     app->rockyKneeDragAnkleOffset.y = app->robotScene.rocky.ankleCircle.y - app->robotScene.rocky.kneeCircle.y;
                 }
+                else if (isNear(app->mouseGL, ankleWorld, ANKLE_HANDLE_RADIUS))
+                {
+                    // no offset capture needed -- nothing hangs off the
+                    // ankle, same as Semni's own draggingAnkle
+                    app->draggingRockyAnkle = 1;
+                }
                 else
                 {
-                    // Not on the move-handle or the knee handle -- check
-                    // the 4 edge midpoints instead, in the rectangle's own
-                    // local (unrotated) frame, same as hitTestRockyEdge
-                    // expects.
+                    // Not on the move-handle, knee handle, or ankle handle
+                    // -- check the 4 edge midpoints instead, in the
+                    // rectangle's own local (unrotated) frame, same as
+                    // hitTestRockyEdge expects.
                     PointF localMouseDown = inverseRotate(app->mouseGL, rockyCenter, app->robotScene.rocky.angle);
                     app->draggingRockyEdge = hitTestRockyEdge(app->robotScene.rocky, localMouseDown);
                 }
@@ -486,6 +545,7 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             app->draggingRockyBody = 0;
             app->draggingRockyEdge = ROCKY_EDGE_NONE;
             app->draggingRockyKnee = 0;
+            app->draggingRockyAnkle = 0;
             app->activeHandle = 0;
         }
         break;
@@ -528,16 +588,20 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 PointF localMouse = inverseRotate(app->mouseGL, rockyCenter, app->robotScene.rocky.angle);
 
                 PointF kneeWorld = rotatePoint(app->robotScene.rocky.kneeCircle, rockyCenter, app->robotScene.rocky.angle);
+                PointF ankleWorld = jointToWorld(app->robotScene.rocky.ankleCircle, app->robotScene.rocky.kneeCircle, app->robotScene.rocky.kneeAngle, rockyCenter, app->robotScene.rocky.angle);
 
                 app->hoverRockyBody = isNear(app->mouseGL, rockyCenter, HIP_HANDLE_RADIUS);
                 app->hoverRockyKnee = !app->hoverRockyBody && isNear(app->mouseGL, kneeWorld, KNEE_HANDLE_RADIUS);
-                app->hoverRockyEdge = (app->hoverRockyBody || app->hoverRockyKnee) ? ROCKY_EDGE_NONE : hitTestRockyEdge(app->robotScene.rocky, localMouse);
+                app->hoverRockyAnkle = !app->hoverRockyBody && !app->hoverRockyKnee && isNear(app->mouseGL, ankleWorld, ANKLE_HANDLE_RADIUS);
+                app->hoverRockyEdge = (app->hoverRockyBody || app->hoverRockyKnee || app->hoverRockyAnkle) ? ROCKY_EDGE_NONE : hitTestRockyEdge(app->robotScene.rocky, localMouse);
 
                 const wchar_t* rockyHoverLabel = L"";
                 if (app->hoverRockyBody)
                     rockyHoverLabel = L"Body";
                 else if (app->hoverRockyKnee)
                     rockyHoverLabel = L"Knee";
+                else if (app->hoverRockyAnkle)
+                    rockyHoverLabel = L"Ankle";
                 else if (app->hoverRockyEdge == ROCKY_EDGE_LEFT || app->hoverRockyEdge == ROCKY_EDGE_RIGHT)
                     rockyHoverLabel = L"Body Width";
                 else if (app->hoverRockyEdge == ROCKY_EDGE_TOP || app->hoverRockyEdge == ROCKY_EDGE_BOTTOM)
@@ -595,6 +659,26 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     app->robotScene.rocky.ankleCircle.x = newKnee.x + app->rockyKneeDragAnkleOffset.x;
                     app->robotScene.rocky.ankleCircle.y = newKnee.y + app->rockyKneeDragAnkleOffset.y;
                 }
+                else if (app->draggingRockyAnkle)
+                {
+                    // shin-local frame: undo kneeAngle around kneeCircle,
+                    // same as Semni's own shinLocalMouse -- constrainToAxis
+                    // then keeps the ankle sliding along the knee->ankle
+                    // axis so only the leg's length changes, not its
+                    // bend/direction (that's kneeAngle's job).
+                    PointF shinLocalMouse = inverseRotate(localMouse, app->robotScene.rocky.kneeCircle, app->robotScene.rocky.kneeAngle);
+
+                    app->robotScene.rocky.ankleCircle = constrainToAxis(
+                        app->robotScene.rocky.kneeCircle,
+                        app->robotScene.rocky.ankleCircle,
+                        shinLocalMouse,
+                        MIN_LIMB_LENGTH);
+
+                    // knee<->ankle distance just changed, so the shin arcs'
+                    // fillet solve did too -- re-validate their existing
+                    // angles against it, same as Semni's own adjustShinArcs
+                    adjustRockyShinArcs(app);
+                }
                 else if (app->draggingRockyEdge == ROCKY_EDGE_LEFT || app->draggingRockyEdge == ROCKY_EDGE_RIGHT)
                 {
                     // Dragging a side edge stretches the half-width only --
@@ -604,6 +688,11 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     if (newHalfWidth < MIN_ROCKY_BODY_HALF) newHalfWidth = MIN_ROCKY_BODY_HALF;
                     if (newHalfWidth > MAX_ROCKY_BODY_HALF) newHalfWidth = MAX_ROCKY_BODY_HALF;
                     app->robotScene.rocky.bodyHalfWidth = newHalfWidth;
+
+                    // the rectangle may have just shrunk -- keep the knee
+                    // (and the ankle/shin hanging off it) from ending up
+                    // outside the new bounds
+                    clampRockyKneeToBody(app);
                 }
                 else if (app->draggingRockyEdge == ROCKY_EDGE_TOP || app->draggingRockyEdge == ROCKY_EDGE_BOTTOM)
                 {
@@ -611,6 +700,9 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     if (newHalfHeight < MIN_ROCKY_BODY_HALF) newHalfHeight = MIN_ROCKY_BODY_HALF;
                     if (newHalfHeight > MAX_ROCKY_BODY_HALF) newHalfHeight = MAX_ROCKY_BODY_HALF;
                     app->robotScene.rocky.bodyHalfHeight = newHalfHeight;
+
+                    // same reasoning as the width edges above
+                    clampRockyKneeToBody(app);
                 }
                 break;
             }
@@ -1164,6 +1256,7 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             {
                 PointF rockyCenter = getRockyCenter(app->robotScene.rocky);
                 PointF kneeWorld = rotatePoint(app->robotScene.rocky.kneeCircle, rockyCenter, app->robotScene.rocky.angle);
+                PointF ankleWorld = jointToWorld(app->robotScene.rocky.ankleCircle, app->robotScene.rocky.kneeCircle, app->robotScene.rocky.kneeAngle, rockyCenter, app->robotScene.rocky.angle);
 
                 // wheel messages pack the modifier keys into the low word
                 // of wParam, same as WM_MOUSEMOVE -- see Semni's own
@@ -1193,6 +1286,11 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                         app->robotScene.rocky.bodyHalfHeight = MIN_ROCKY_BODY_HALF;
                     if (app->robotScene.rocky.bodyHalfHeight > MAX_ROCKY_BODY_HALF)
                         app->robotScene.rocky.bodyHalfHeight = MAX_ROCKY_BODY_HALF;
+
+                    // shrinking the body can leave the knee (and the
+                    // ankle/shin hanging off it) outside the new bounds --
+                    // pull it back in if so
+                    clampRockyKneeToBody(app);
                 }
                 else if (isNear(mouse, kneeWorld, KNEE_HANDLE_RADIUS) && shiftHeld)
                 {
@@ -1226,6 +1324,27 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                         app->robotScene.rocky.kneeRadius = MAX_R;
 
                     // knee radius feeds the shin arcs' fillet solve --
+                    // re-validate their existing angles against the new size
+                    adjustRockyShinArcs(app);
+                }
+                else if (isNear(mouse, ankleWorld, ANKLE_HANDLE_RADIUS))
+                {
+                    // plain scroll on the ankle handle resizes it -- no
+                    // Shift-gated rotate branch needed, same reasoning as
+                    // Semni's own ankle handle: it's the last joint in the
+                    // chain, so there's nothing further down to bend
+                    float radiusStep = 0.01f;
+                    if (wheelDelta > 0)
+                        app->robotScene.rocky.ankleRadius += radiusStep;
+                    else
+                        app->robotScene.rocky.ankleRadius -= radiusStep;
+
+                    if (app->robotScene.rocky.ankleRadius < MIN_R)
+                        app->robotScene.rocky.ankleRadius = MIN_R;
+                    if (app->robotScene.rocky.ankleRadius > MAX_R)
+                        app->robotScene.rocky.ankleRadius = MAX_R;
+
+                    // ankle radius feeds the shin arcs' fillet solve too --
                     // re-validate their existing angles against the new size
                     adjustRockyShinArcs(app);
                 }
@@ -1658,6 +1777,52 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             SetWindowPos(app->ui.hHoverLabel, NULL,
                  hoverPanelX + hoverPad, hoverPanelY + hoverPad, hoverLabelW, hoverLabelH,
                  SWP_NOZORDER);
+
+            // Any resize (a live border drag, minimize/restore, or
+            // toggling fullscreen/maximize) can leave one of these child
+            // controls' own clip region stale for a frame or two, since
+            // the OpenGL viewport behind them repaints the whole client
+            // rect continuously in the render loop and that repaint can
+            // race the SetWindowPos calls above -- the robot picker combo
+            // box in particular has been seen to vanish under the GL
+            // repaint until a later hover forces Windows to repaint it on
+            // its own. Force that repaint right now instead of waiting on
+            // it.
+            //
+            // Deliberately targets each child individually rather than
+            // RedrawWindow(hwnd, ..., RDW_ALLCHILDREN) on the whole window:
+            // that form also marks hwnd's OWN client area invalid, and
+            // RDW_UPDATENOW would then dispatch hwnd's WM_PAINT (which
+            // calls renderCombinedFrame's covering GL SwapBuffers)
+            // synchronously in the very same batch -- so it could end up
+            // repainting the children and then immediately re-covering
+            // them again before this call even returns, silently undoing
+            // the fix. Only invalidating the children (never hwnd itself)
+            // means this can only ever un-cover them, not re-cover them.
+            HWND rockyPanelChildren[] = {
+                app->ui.hControlPanel,
+                app->ui.hPanelTitle,
+                app->ui.hRobotSelector,
+                app->ui.hStandingPositionButton,
+                app->ui.hHomePositionButton,
+                app->ui.hSaveButton,
+                app->ui.hMirrorButton,
+                app->ui.hScaleLabel,
+                app->ui.hScaleSlider,
+                app->ui.hViewSegmentsButton,
+                app->ui.hDebugLogButton,
+                app->ui.hHoverPanel,
+                app->ui.hHoverLabel,
+            };
+            int childCount = sizeof(rockyPanelChildren) / sizeof(rockyPanelChildren[0]);
+            for (int i = 0; i < childCount; i++)
+            {
+                if (rockyPanelChildren[i])
+                {
+                    InvalidateRect(rockyPanelChildren[i], NULL, TRUE);
+                    UpdateWindow(rockyPanelChildren[i]);
+                }
+            }
         }
         break;
 
@@ -1916,6 +2081,8 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                         app->hoverRockyEdge = ROCKY_EDGE_NONE;
                         app->draggingRockyKnee = 0;
                         app->hoverRockyKnee = 0;
+                        app->draggingRockyAnkle = 0;
+                        app->hoverRockyAnkle = 0;
                         app->activeHandle = 0;
                         app->hoveredCircleSegment = -1;
                         app->hoveredBodyCircle = -1;

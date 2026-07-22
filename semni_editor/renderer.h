@@ -33,6 +33,11 @@ typedef struct {
     int hoverRockyKnee;
     int draggingRockyKnee;
 
+    // Rocky's ankle handle -- mirrors app->hoverRockyAnkle/draggingRockyAnkle,
+    // same role as Semni's own hoverAnkle/draggingAnkle below.
+    int hoverRockyAnkle;
+    int draggingRockyAnkle;
+
     // hover-only state for the joint circle handles (hip/knee/ankle/
     // head/butt), so they can highlight from a hover, not just a drag
     int hoverHip;
