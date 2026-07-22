@@ -95,6 +95,15 @@ void renderRobotScene(AppState* app, float dimAmount);
 
 void drawSemni(Semni b, RenderState* rs, int includeHandles, float opacity);
 
+// Rocky/Stilo (see app.h) -- switcher + default poses only for now, so
+// unlike drawSemni these don't draw any draggable handles or a View
+// Segments overlay yet regardless of includeHandles/rs->showSegments
+// (that's a planned follow-up, see input.c's WM_LBUTTONDOWN/WM_MOUSEMOVE/
+// WM_MOUSEWHEEL comments). includeHandles is still accepted so renderRobot
+// can call all three the same way.
+void drawRocky(Rocky b, RenderState* rs, int includeHandles, float opacity);
+void drawStilo(Stilo b, RenderState* rs, int includeHandles, float opacity);
+
 // The 6 fillet circles View Segments reveals: seam1/2 (head-butt),
 // thigh1/2 (hip-knee), shin1/2 (knee-ankle), in that fixed order --
 // indices into computeSemniCircleSegments' output and into

@@ -15,3 +15,9 @@ int saveCanvasAsBMP(const char* filename, HWND hwnd, AppState* app);
 // Includes all geometric parameters (circle positions/radii, arc angles, etc)
 // in a human-readable mathematical format.
 int saveRobotAsEquations(const char* filename, AppState* app);
+
+// Same idea as saveRobotAsEquations, for Rocky's/Stilo's own fields --
+// see input.c's ID_SAVE_BUTTON handling, which picks the filename and
+// which of these three to call based on app->robotScene.activeKind.
+int saveRockyAsEquations(const char* filename, AppState* app);
+int saveStiloAsEquations(const char* filename, AppState* app);

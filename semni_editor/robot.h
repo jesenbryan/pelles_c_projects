@@ -39,3 +39,32 @@ void translateRobot(Semni* b, float dx, float dy);
 // drag when the mouse is actually over the robot, not anywhere on the
 // canvas.
 BOOL isPointInsideRobotBody(Semni b, float wx, float wy);
+
+// ---- Rocky ----
+
+// Rocky's rotation pivot is just its own rectangle center -- no head/butt
+// pair to average the way Semni's getCenter does.
+PointF getRockyCenter(Rocky r);
+
+// Mirrors Rocky's leg bend direction (kneeAngle + its shin arcs) -- same
+// idea as mirrorHipLeg's shin-mirroring half, but there's no hip/thigh
+// stage above it and no torso to reflect (a rectangle has no natural
+// left/right split the way two circles do), so this only flips the one
+// joint Rocky actually has.
+void mirrorRockyLeg(Rocky* r);
+
+// Same idea as printRobotAsInit, for Rocky's own fields.
+void printRockyAsInit(Rocky r);
+
+// ---- Stilo ----
+
+// Same torso as Semni, so the same head/butt-midpoint pivot.
+PointF getStiloCenter(Stilo s);
+
+// Mirrors Stilo's leg (hip through ankle, plus its two hip-to-ankle
+// arcs) across the torso's own center line -- same construction as
+// mirrorHipLeg, just with no knee/shin stage to also mirror.
+void mirrorStiloLeg(Stilo* s);
+
+// Same idea as printRobotAsInit, for Stilo's own fields.
+void printStiloAsInit(Stilo s);

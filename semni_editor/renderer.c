@@ -828,6 +828,161 @@ void drawSemni(Semni b, RenderState* rs, int includeHandles, float opacity)
     }
 }
 
+// ---- Rocky ----
+//
+// Rectangular torso (a plain rotated quad outline) + a leg that's
+// identical in construction to Semni's own knee-to-ankle "shin" (see
+// drawShin), just hanging directly off the rectangle -- kneeCircle only
+// rotates with the whole-body angle (rigidly attached to the torso, same
+// as Semni's own hip/innerCircle), and kneeAngle alone swings ankleCircle
+// around it (one jointToWorld nesting instead of drawShin's two, since
+// there's no hip stage above it).
+static void drawRockyBodyRect(Rocky b, RenderState* rs, float opacity)
+{
+    PointF center = getRockyCenter(b);
+    float angle = b.angle;
+
+    PointF c0 = rotatePoint((PointF){ b.bodyX - b.bodyHalfWidth, b.bodyY - b.bodyHalfHeight }, center, angle);
+    PointF c1 = rotatePoint((PointF){ b.bodyX + b.bodyHalfWidth, b.bodyY - b.bodyHalfHeight }, center, angle);
+    PointF c2 = rotatePoint((PointF){ b.bodyX + b.bodyHalfWidth, b.bodyY + b.bodyHalfHeight }, center, angle);
+    PointF c3 = rotatePoint((PointF){ b.bodyX - b.bodyHalfWidth, b.bodyY + b.bodyHalfHeight }, center, angle);
+
+    setColor(rs, 0, 0.2f, 0.4f, 1.0f, opacity);
+    glBegin(GL_LINE_LOOP);
+    glVertex2f(c0.x, c0.y);
+    glVertex2f(c1.x, c1.y);
+    glVertex2f(c2.x, c2.y);
+    glVertex2f(c3.x, c3.y);
+    glEnd();
+}
+
+static void drawRockyLeg(Rocky b, RenderState* rs, float opacity)
+{
+    PointF center = getRockyCenter(b);
+    float angle = b.angle;
+
+    PointF kneeWorld = rotatePoint(b.kneeCircle, center, angle);
+    PointF ankleWorld = jointToWorld(b.ankleCircle, b.kneeCircle, b.kneeAngle, center, angle);
+
+    setColor(rs, 0, 0.2f, 0.4f, 1.0f, opacity);
+    drawCircle(kneeWorld, b.kneeRadius);
+
+    setColor(rs, 0, 0.2f, 0.4f, 1.0f, opacity);
+    drawCircle(ankleWorld, b.ankleRadius);
+
+    PointF axisMidLocal = { (b.kneeCircle.x + b.ankleCircle.x) * 0.5f, (b.kneeCircle.y + b.ankleCircle.y) * 0.5f };
+
+    Fillet shin1Fillet = filletFromAttachAngle(b.kneeCircle, b.kneeRadius, b.ankleCircle, b.ankleRadius, b.shinArc1Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC_R);
+    PointF shin1KneeTangentLocal = circleEdge(b.kneeCircle, b.kneeRadius, b.shinArc1Angle);
+    PointF shin1AnkleTangentLocal = internalTangentPoint(shin1Fillet.center, shin1Fillet.radius, b.ankleCircle, b.ankleRadius);
+    PointF shin1NearLocal = circleTowardPoint(shin1Fillet.center, shin1Fillet.radius, axisMidLocal);
+
+    Fillet shin2Fillet = filletFromAttachAngleConcave(b.kneeCircle, b.kneeRadius, b.ankleCircle, b.ankleRadius, b.shinArc2Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC2_CONCAVE_R);
+    PointF shin2KneeTangentLocal = circleEdge(b.kneeCircle, b.kneeRadius, b.shinArc2Angle);
+    PointF shin2AnkleTangentLocal = circleTowardPoint(shin2Fillet.center, shin2Fillet.radius, b.ankleCircle);
+    PointF shin2NearLocal = circleTowardPoint(shin2Fillet.center, shin2Fillet.radius, axisMidLocal);
+
+    setColor(rs, 0, 0.2f, 0.4f, 1.0f, opacity);
+    drawArc(jointToWorld(shin1KneeTangentLocal, b.kneeCircle, b.kneeAngle, center, angle),
+            jointToWorld(shin1NearLocal, b.kneeCircle, b.kneeAngle, center, angle),
+            jointToWorld(shin1AnkleTangentLocal, b.kneeCircle, b.kneeAngle, center, angle));
+
+    setColor(rs, 0, 0.2f, 0.4f, 1.0f, opacity);
+    drawArc(jointToWorld(shin2KneeTangentLocal, b.kneeCircle, b.kneeAngle, center, angle),
+            jointToWorld(shin2NearLocal, b.kneeCircle, b.kneeAngle, center, angle),
+            jointToWorld(shin2AnkleTangentLocal, b.kneeCircle, b.kneeAngle, center, angle));
+}
+
+void drawRocky(Rocky b, RenderState* rs, int includeHandles, float opacity)
+{
+    (void)includeHandles; // no draggable handles for Rocky yet -- see renderer.h's comment
+
+    drawRockyBodyRect(b, rs, opacity);
+    drawRockyLeg(b, rs, opacity);
+}
+
+// ---- Stilo ----
+//
+// Same torso as Semni (head/butt circles + two seam arcs, identical
+// construction to drawSemniBody), but the leg goes straight from the hip
+// (innerCircle) to the foot (ankleCircle) via one pair of tangent-fillet
+// arcs instead of drawThigh+drawShin's two -- same math as drawThigh,
+// just targeting ankleCircle/ankleRadius instead of kneeCircle/kneeRadius,
+// and a single jointToWorld (hipAngle then bodyAngle) instead of the
+// nested knee-then-hip-then-body chain Semni's shin needs.
+void drawStilo(Stilo b, RenderState* rs, int includeHandles, float opacity)
+{
+    (void)includeHandles; // no draggable handles for Stilo yet -- see renderer.h's comment
+
+    PointF center = getStiloCenter(b);
+    float angle = b.angle;
+
+    PointF headCenter = rotatePoint((PointF){ b.headX, b.y }, center, angle);
+    PointF buttCenter = rotatePoint((PointF){ b.buttX, b.y }, center, angle);
+    PointF inner = rotatePoint(b.innerCircle, center, angle);
+
+    setColor(rs, 0, 0.2f, 0.4f, 1.0f, opacity);
+    drawCircle(headCenter, b.headRadius);
+
+    setColor(rs, 0, 0.2f, 0.4f, 1.0f, opacity);
+    drawCircle(buttCenter, b.buttRadius);
+
+    setColor(rs, 0, 0.2f, 0.4f, 1.0f, opacity);
+    drawCircle(inner, b.innerRadius);
+
+    PointF headLocal = { b.headX, b.y };
+    PointF buttLocal = { b.buttX, b.y };
+    PointF bodyMidLocal = { (headLocal.x + buttLocal.x) * 0.5f, (headLocal.y + buttLocal.y) * 0.5f };
+
+    Fillet seamArc1Fillet = filletFromAttachAngle(headLocal, b.headRadius, buttLocal, b.buttRadius, b.seamArc1Angle, MIN_ARC_R, MAX_ARC_R);
+    PointF seamArc1HeadTangentLocal = circleEdge(headLocal, b.headRadius, b.seamArc1Angle);
+    PointF seamArc1ButtTangentLocal = internalTangentPoint(seamArc1Fillet.center, seamArc1Fillet.radius, buttLocal, b.buttRadius);
+    PointF seamArc1NearLocal = circleTowardPoint(seamArc1Fillet.center, seamArc1Fillet.radius, bodyMidLocal);
+
+    Fillet seamArc2Fillet = filletFromAttachAngle(headLocal, b.headRadius, buttLocal, b.buttRadius, b.seamArc2Angle, MIN_ARC_R, MAX_ARC_R);
+    PointF seamArc2HeadTangentLocal = circleEdge(headLocal, b.headRadius, b.seamArc2Angle);
+    PointF seamArc2ButtTangentLocal = internalTangentPoint(seamArc2Fillet.center, seamArc2Fillet.radius, buttLocal, b.buttRadius);
+    PointF seamArc2NearLocal = circleTowardPoint(seamArc2Fillet.center, seamArc2Fillet.radius, bodyMidLocal);
+
+    setColor(rs, 0, 0.2f, 0.4f, 1.0f, opacity);
+    drawArc(rotatePoint(seamArc1HeadTangentLocal, center, angle),
+            rotatePoint(seamArc1NearLocal, center, angle),
+            rotatePoint(seamArc1ButtTangentLocal, center, angle));
+
+    setColor(rs, 0, 0.2f, 0.4f, 1.0f, opacity);
+    drawArc(rotatePoint(seamArc2HeadTangentLocal, center, angle),
+            rotatePoint(seamArc2NearLocal, center, angle),
+            rotatePoint(seamArc2ButtTangentLocal, center, angle));
+
+    // leg: hip straight to ankle, no knee stage
+    PointF ankleWorld = jointToWorld(b.ankleCircle, b.innerCircle, b.hipAngle, center, angle);
+
+    setColor(rs, 0, 0.2f, 0.4f, 1.0f, opacity);
+    drawCircle(ankleWorld, b.ankleRadius);
+
+    PointF legAxisMidLocal = { (b.innerCircle.x + b.ankleCircle.x) * 0.5f, (b.innerCircle.y + b.ankleCircle.y) * 0.5f };
+
+    Fillet leg1Fillet = filletFromAttachAngle(b.innerCircle, b.innerRadius, b.ankleCircle, b.ankleRadius, b.thighArc1Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC_R);
+    PointF leg1InnerTangentLocal = circleEdge(b.innerCircle, b.innerRadius, b.thighArc1Angle);
+    PointF leg1AnkleTangentLocal = internalTangentPoint(leg1Fillet.center, leg1Fillet.radius, b.ankleCircle, b.ankleRadius);
+    PointF leg1NearLocal = circleTowardPoint(leg1Fillet.center, leg1Fillet.radius, legAxisMidLocal);
+
+    Fillet leg2Fillet = filletFromAttachAngleConcave(b.innerCircle, b.innerRadius, b.ankleCircle, b.ankleRadius, b.thighArc2Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC2_CONCAVE_R);
+    PointF leg2InnerTangentLocal = circleEdge(b.innerCircle, b.innerRadius, b.thighArc2Angle);
+    PointF leg2AnkleTangentLocal = circleTowardPoint(leg2Fillet.center, leg2Fillet.radius, b.ankleCircle);
+    PointF leg2NearLocal = circleTowardPoint(leg2Fillet.center, leg2Fillet.radius, legAxisMidLocal);
+
+    setColor(rs, 0, 0.2f, 0.4f, 1.0f, opacity);
+    drawArc(jointToWorld(leg1InnerTangentLocal, b.innerCircle, b.hipAngle, center, angle),
+            jointToWorld(leg1NearLocal, b.innerCircle, b.hipAngle, center, angle),
+            jointToWorld(leg1AnkleTangentLocal, b.innerCircle, b.hipAngle, center, angle));
+
+    setColor(rs, 0, 0.2f, 0.4f, 1.0f, opacity);
+    drawArc(jointToWorld(leg2InnerTangentLocal, b.innerCircle, b.hipAngle, center, angle),
+            jointToWorld(leg2NearLocal, b.innerCircle, b.hipAngle, center, angle),
+            jointToWorld(leg2AnkleTangentLocal, b.innerCircle, b.hipAngle, center, angle));
+}
+
 static void renderRobot(AppState* app, int includeHandles, float opacity)
 {
     RenderState rs;
@@ -862,7 +1017,29 @@ static void renderRobot(AppState* app, int includeHandles, float opacity)
     // toggle the preview immediately, with no mouse movement required
     rs.shiftHeld = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
 
-    drawSemni(app->robotScene.robot, &rs, includeHandles, opacity);
+    // Which of the three robots (see app.h's RobotKind) actually gets
+    // drawn -- picked via the hRobotSelector dropdown in the control
+    // panel (input.c). Rocky/Stilo don't have their own handles/View
+    // Segments overlay yet (see drawRocky/drawStilo's own comments), so
+    // rs's hover/drag fields above are simply unused when either of those
+    // is active -- harmless, since input.c only ever sets them while
+    // ROBOT_KIND_SEMNI is the active kind (see its own WM_LBUTTONDOWN/
+    // WM_MOUSEMOVE guards).
+    switch (app->robotScene.activeKind)
+    {
+        case ROBOT_KIND_ROCKY:
+            drawRocky(app->robotScene.rocky, &rs, includeHandles, opacity);
+            break;
+
+        case ROBOT_KIND_STILO:
+            drawStilo(app->robotScene.stilo, &rs, includeHandles, opacity);
+            break;
+
+        case ROBOT_KIND_SEMNI:
+        default:
+            drawSemni(app->robotScene.robot, &rs, includeHandles, opacity);
+            break;
+    }
 }
 
 void renderApp(AppState* app, HDC hdc)

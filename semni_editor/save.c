@@ -157,3 +157,91 @@ int saveRobotAsEquations(const char* filename, AppState* app)
 
     return 1;
 }
+
+int saveRockyAsEquations(const char* filename, AppState* app)
+{
+    FILE* f = fopen(filename, "w");
+    if (!f)
+        return 0;
+
+    Rocky* r = &app->robotScene.rocky;
+
+    // BODY - Rectangle
+    fprintf(f, "BODY_X=%.6f\n", r->bodyX);
+    fprintf(f, "BODY_Y=%.6f\n", r->bodyY);
+    fprintf(f, "BODY_HALF_WIDTH=%.6f\n", r->bodyHalfWidth);
+    fprintf(f, "BODY_HALF_HEIGHT=%.6f\n", r->bodyHalfHeight);
+    fprintf(f, "BODY_ANGLE=%.6f\n", r->angle);
+
+    // LEG - Knee Circle
+    fprintf(f, "KNEE_X=%.6f\n", r->kneeCircle.x);
+    fprintf(f, "KNEE_Y=%.6f\n", r->kneeCircle.y);
+    fprintf(f, "KNEE_RADIUS=%.6f\n", r->kneeRadius);
+    fprintf(f, "KNEE_ANGLE=%.6f\n", r->kneeAngle);
+
+    // LEG - Ankle Circle
+    fprintf(f, "ANKLE_X=%.6f\n", r->ankleCircle.x);
+    fprintf(f, "ANKLE_Y=%.6f\n", r->ankleCircle.y);
+    fprintf(f, "ANKLE_RADIUS=%.6f\n", r->ankleRadius);
+
+    // LEG - Shin Arcs
+    fprintf(f, "SHIN_ARC1_ANGLE=%.6f\n", r->shinArc1Angle);
+    fprintf(f, "SHIN_ARC2_ANGLE=%.6f\n", r->shinArc2Angle);
+
+    fclose(f);
+
+    char path[MAX_PATH];
+    GetCurrentDirectoryA(MAX_PATH, path);
+    printf("Saved Rocky equations as TXT in: %s\\%s\n", path, filename);
+
+    return 1;
+}
+
+int saveStiloAsEquations(const char* filename, AppState* app)
+{
+    FILE* f = fopen(filename, "w");
+    if (!f)
+        return 0;
+
+    Stilo* s = &app->robotScene.stilo;
+
+    // BODY - Head Circle
+    fprintf(f, "HEAD_X=%.6f\n", s->headX);
+    fprintf(f, "HEAD_Y=%.6f\n", s->y);
+    fprintf(f, "HEAD_RADIUS=%.6f\n", s->headRadius);
+
+    // BODY - Butt Circle
+    fprintf(f, "BUTT_X=%.6f\n", s->buttX);
+    fprintf(f, "BUTT_Y=%.6f\n", s->y);
+    fprintf(f, "BUTT_RADIUS=%.6f\n", s->buttRadius);
+
+    // BODY - Seam Arcs
+    fprintf(f, "SEAM_ARC1_ANGLE=%.6f\n", s->seamArc1Angle);
+    fprintf(f, "SEAM_ARC2_ANGLE=%.6f\n", s->seamArc2Angle);
+
+    // HIP Joint
+    fprintf(f, "HIP_X=%.6f\n", s->innerCircle.x);
+    fprintf(f, "HIP_Y=%.6f\n", s->innerCircle.y);
+    fprintf(f, "HIP_RADIUS=%.6f\n", s->innerRadius);
+    fprintf(f, "HIP_ANGLE=%.6f\n", s->hipAngle);
+
+    // LEG - Ankle Circle (no knee stage -- see app.h's Stilo comment)
+    fprintf(f, "ANKLE_X=%.6f\n", s->ankleCircle.x);
+    fprintf(f, "ANKLE_Y=%.6f\n", s->ankleCircle.y);
+    fprintf(f, "ANKLE_RADIUS=%.6f\n", s->ankleRadius);
+
+    // LEG - hip-to-ankle Arcs
+    fprintf(f, "LEG_ARC1_ANGLE=%.6f\n", s->thighArc1Angle);
+    fprintf(f, "LEG_ARC2_ANGLE=%.6f\n", s->thighArc2Angle);
+
+    // BODY - Whole
+    fprintf(f, "BODY_ANGLE=%.6f\n", s->angle);
+
+    fclose(f);
+
+    char path[MAX_PATH];
+    GetCurrentDirectoryA(MAX_PATH, path);
+    printf("Saved Stilo equations as TXT in: %s\\%s\n", path, filename);
+
+    return 1;
+}

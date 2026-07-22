@@ -28,3 +28,8 @@ IDR_MNU_MAIN MENUEX
 
 IDR_ICO_MAIN ICON "main.ico"
 
+// Enables themed (visual styles) rendering for stock controls -- see
+// app.manifest for details. 1 = CREATEPROCESS_MANIFEST_RESOURCE_ID,
+// 24 = RT_MANIFEST.
+1 24 "app.manifest"
+

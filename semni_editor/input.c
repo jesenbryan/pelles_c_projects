@@ -60,6 +60,55 @@ static void adjustShinArcs(AppState* app)
 static BOOL semniPanning = FALSE;
 static int  semniPanLastX = 0, semniPanLastY = 0;
 
+// ---------------- SEMNI CONTROL PANEL LOOK & FEEL ----------------
+// The Semni buttons used to be plain WS_CHILD controls floating directly
+// over the OpenGL viewport with the default tiny system font and no
+// backdrop, which read as unfinished next to the ArcSpline panel's own
+// solid-backed floating panel (ui.c's SemniUIPanel). This gives the
+// robot editor the same treatment: a solid backdrop behind the cluster
+// and a consistent "Segoe UI" font (already the app's chosen typeface --
+// see canvas.c's GL text font) instead of the stock GUI font.
+static HFONT g_semniUIFont = NULL;
+static HFONT g_semniUITitleFont = NULL;
+static BOOL  g_semniPanelClassRegistered = FALSE;
+
+static void ensureSemniUIFonts(void)
+{
+    if (g_semniUIFont) return;
+
+    g_semniUIFont = CreateFont(
+        -15, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+
+    g_semniUITitleFont = CreateFont(
+        -15, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
+        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+}
+
+// Registers the flat, solid-backed "backdrop" window class used for both
+// hControlPanel (behind the button cluster) and hHoverPanel (behind the
+// bottom-left hover label). COLOR_BTNFACE matches the ArcSpline panel's
+// own background (ui.c's createUIWindow) so both editor modes share the
+// same panel color. WS_EX_STATICEDGE (applied at CreateWindowEx time,
+// not here) gives it a thin flat frame instead of the dated sunken-3D
+// look of WS_EX_CLIENTEDGE.
+static void ensureSemniPanelClassRegistered(void)
+{
+    if (g_semniPanelClassRegistered) return;
+
+    WNDCLASS wc = {0};
+    wc.lpfnWndProc = DefWindowProc;
+    wc.hInstance = GetModuleHandle(NULL);
+    wc.lpszClassName = L"SemniControlPanel";
+    wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
+    wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+    RegisterClass(&wc);
+
+    g_semniPanelClassRegistered = TRUE;
+}
+
 LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState* app)
 {
     switch (msg)
@@ -95,6 +144,14 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             app->draggingAnkle = 0;
             app->draggingShin1 = 0;
             app->draggingShin2 = 0;
+
+            // Per-joint hand-dragging only exists for Semni right now --
+            // Rocky/Stilo (see app.h's RobotKind) are switcher + default-
+            // pose only for this pass, so a click while either is active
+            // simply doesn't start a drag (the flags above are already
+            // cleared, which is all that's needed).
+            if (app->robotScene.activeKind != ROBOT_KIND_SEMNI)
+                break;
 
             PointF center = getCenter(app->robotScene.robot);
 
@@ -342,6 +399,19 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             }
 
             screenToGL(hwnd, mx, my, &app->mouseGL.x, &app->mouseGL.y);
+
+            // Per-joint hover/drag feedback only exists for Semni right
+            // now -- see WM_LBUTTONDOWN's matching guard. Blank the hover
+            // label and segment-hover indices instead of leaving whatever
+            // Semni last set them to, so switching to Rocky/Stilo doesn't
+            // leave stale "Thigh Arc 1"-style text on screen.
+            if (app->robotScene.activeKind != ROBOT_KIND_SEMNI)
+            {
+                SetWindowText(app->ui.hHoverLabel, L"");
+                app->hoveredCircleSegment = -1;
+                app->hoveredBodyCircle = -1;
+                break;
+            }
 
             PointF mouse = app->mouseGL;
 
@@ -867,6 +937,18 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
 
             PointF mouse = { gx, gy };
 
+            // Per-joint scroll-to-rotate/resize only exists for Semni
+            // right now -- see WM_LBUTTONDOWN's matching guard. Rocky/
+            // Stilo just always treat the wheel as a view zoom (the
+            // existing "not over any handle" fallback below), since they
+            // have no joint handles yet to scroll over in the first place.
+            if (app->robotScene.activeKind != ROBOT_KIND_SEMNI)
+            {
+                float factor = (wheelDelta > 0) ? ZOOM_STEP : (1.0f / ZOOM_STEP);
+                graphicsZoom(factor);
+                break;
+            }
+
             PointF center = getCenter(app->robotScene.robot);
             PointF innerWorld = rotatePoint(app->robotScene.robot.innerCircle, center, app->robotScene.robot.angle);
             PointF kneeWorld = jointToWorld(app->robotScene.robot.kneeCircle, app->robotScene.robot.innerCircle, app->robotScene.robot.hipAngle, center, app->robotScene.robot.angle);
@@ -1028,6 +1110,16 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             {
                 int pos = (int)SendMessage(app->ui.hScaleSlider, TBM_GETPOS, 0, 0);
                 graphicsSetRobotScale(pos / 100.0f);
+
+                // Live value in the label instead of a static "Scale" --
+                // matches the ArcSpline panel's "Thickness: N px" label
+                // (ui.c). wsprintf has no float conversion, so the
+                // pos (25-100) is split into whole/hundredths by hand
+                // (e.g. pos=75 -> "0.75", pos=100 -> "1.00").
+                wchar_t scaleBuf[32];
+                wsprintf(scaleBuf, L"Scale: %d.%02d", pos / 100, pos % 100);
+                SetWindowText(app->ui.hScaleLabel, scaleBuf);
+
                 InvalidateRect(hwnd, NULL, FALSE);
             }
         }
@@ -1051,36 +1143,92 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 break;
             }
 
-            if (wParam == VK_LEFT)
-                app->robotScene.robot.angle += 2.0f;
-
-            if (wParam == VK_RIGHT)
-                app->robotScene.robot.angle -= 2.0f;
-
-            if (wParam == VK_UP)
+            // Whole-body rotate (Left/Right) and move (Up/Down) act on
+            // whichever robot is currently active (see app.h's RobotKind)
+            // -- Rocky/Stilo don't have per-joint dragging yet (see
+            // WM_LBUTTONDOWN/WM_MOUSEMOVE/WM_MOUSEWHEEL's own guards), so
+            // this is their only hand-posing available this pass.
+            switch (app->robotScene.activeKind)
             {
-                // Check if Ctrl is held for finer movement
-                int ctrlHeld = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
-                float step = ctrlHeld ? 0.01f : 0.05f;
+                case ROBOT_KIND_ROCKY:
+                {
+                    if (wParam == VK_LEFT)
+                        app->robotScene.rocky.angle += 2.0f;
 
-                // Move entire robot including body and legs
-                app->robotScene.robot.y += step;
-                app->robotScene.robot.innerCircle.y += step;
-                app->robotScene.robot.kneeCircle.y += step;
-                app->robotScene.robot.ankleCircle.y += step;
-            }
+                    if (wParam == VK_RIGHT)
+                        app->robotScene.rocky.angle -= 2.0f;
 
-            if (wParam == VK_DOWN)
-            {
-                // Check if Ctrl is held for finer movement
-                int ctrlHeld = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
-                float step = ctrlHeld ? 0.01f : 0.05f;
+                    if (wParam == VK_UP || wParam == VK_DOWN)
+                    {
+                        int ctrlHeld = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
+                        float step = ctrlHeld ? 0.01f : 0.05f;
+                        if (wParam == VK_DOWN) step = -step;
 
-                // Move entire robot including body and legs
-                app->robotScene.robot.y -= step;
-                app->robotScene.robot.innerCircle.y -= step;
-                app->robotScene.robot.kneeCircle.y -= step;
-                app->robotScene.robot.ankleCircle.y -= step;
+                        // Move the whole robot (rectangle + leg) together
+                        app->robotScene.rocky.bodyY += step;
+                        app->robotScene.rocky.kneeCircle.y += step;
+                        app->robotScene.rocky.ankleCircle.y += step;
+                    }
+                    break;
+                }
+
+                case ROBOT_KIND_STILO:
+                {
+                    if (wParam == VK_LEFT)
+                        app->robotScene.stilo.angle += 2.0f;
+
+                    if (wParam == VK_RIGHT)
+                        app->robotScene.stilo.angle -= 2.0f;
+
+                    if (wParam == VK_UP || wParam == VK_DOWN)
+                    {
+                        int ctrlHeld = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
+                        float step = ctrlHeld ? 0.01f : 0.05f;
+                        if (wParam == VK_DOWN) step = -step;
+
+                        app->robotScene.stilo.y += step;
+                        app->robotScene.stilo.innerCircle.y += step;
+                        app->robotScene.stilo.ankleCircle.y += step;
+                    }
+                    break;
+                }
+
+                case ROBOT_KIND_SEMNI:
+                default:
+                {
+                    if (wParam == VK_LEFT)
+                        app->robotScene.robot.angle += 2.0f;
+
+                    if (wParam == VK_RIGHT)
+                        app->robotScene.robot.angle -= 2.0f;
+
+                    if (wParam == VK_UP)
+                    {
+                        // Check if Ctrl is held for finer movement
+                        int ctrlHeld = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
+                        float step = ctrlHeld ? 0.01f : 0.05f;
+
+                        // Move entire robot including body and legs
+                        app->robotScene.robot.y += step;
+                        app->robotScene.robot.innerCircle.y += step;
+                        app->robotScene.robot.kneeCircle.y += step;
+                        app->robotScene.robot.ankleCircle.y += step;
+                    }
+
+                    if (wParam == VK_DOWN)
+                    {
+                        // Check if Ctrl is held for finer movement
+                        int ctrlHeld = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
+                        float step = ctrlHeld ? 0.01f : 0.05f;
+
+                        // Move entire robot including body and legs
+                        app->robotScene.robot.y -= step;
+                        app->robotScene.robot.innerCircle.y -= step;
+                        app->robotScene.robot.kneeCircle.y -= step;
+                        app->robotScene.robot.ankleCircle.y -= step;
+                    }
+                    break;
+                }
             }
         }
         break;
@@ -1095,87 +1243,120 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             RECT rect;
             GetClientRect(hwnd, &rect);
 
-            int btnHeight = 30;
-            int btnSpacing = 10;
-            int margin = 10;
+            // ---- top-right control panel ----
+            // Everything below is laid out relative to one panel rect
+            // (hControlPanel) instead of each control computing its own
+            // right-aligned offset independently -- that's what used to
+            // leave Standing/Home/Save/Mirror at four different widths
+            // with no shared edge. Two equal-width columns (colW) now
+            // line up across every row, and the panel's solid backdrop
+            // (see WM_CREATE) reads as one grouped control, not four
+            // buttons floating loose over the viewport.
+            int outerMargin = 12;
+            int pad = 14;
+            int rowGap = 8;
+            int colGap = 8;
+            int btnH = 30;
+            int titleH = 20;
+            int sliderH = 24;
+            int comboRowH = 24;   // closed-box footprint in the layout; the control itself is taller (see below) so its dropdown list has room to show all 3 entries
 
-            int standingWidth = 120;
-            int homeWidth = 110;
-            int saveWidth = 80;
-            int mirrorWidth = 100;
+            int contentW = 240;
+            int colW = (contentW - colGap) / 2;
 
-            // Top row: Standing Position and Home Position, right-aligned
-            // to the client area so the whole cluster sits in the top
-            // right corner instead of the top left.
-            int yTop = 10;
-            int xHome = rect.right - margin - homeWidth;
-            int xStanding = xHome - btnSpacing - standingWidth;
+            int panelW = contentW + pad * 2;
 
-            // Bottom row: Save and Mirror Leg, right-aligned to match.
-            int yBottom = yTop + btnHeight + btnSpacing;
-            int xMirror = rect.right - margin - mirrorWidth;
-            int xSave = xMirror - btnSpacing - saveWidth;
+            int relYTitle    = pad;
+            int relYSelector = relYTitle    + titleH    + rowGap;  // robot picker (Semni/Rocky/Stilo)
+            int relYRow1     = relYSelector + comboRowH + rowGap;  // Standing | Home
+            int relYRow2     = relYRow1     + btnH      + rowGap;  // Save | Mirror Leg
+            int relYScale    = relYRow2     + btnH       + rowGap; // Scale label + slider
+            int relYSeg      = relYScale    + sliderH    + rowGap; // View Segments
+            int relYDebug    = relYSeg      + btnH       + rowGap; // Debug Log
+            int panelH       = relYDebug    + btnH       + pad;
 
-            // Third row: robot size label + slider, right-aligned same as
-            // the two rows above.
-            int sliderWidth = 140;
-            int sliderHeight = 24;
-            int scaleLabelWidth = 50;
-            int yScale = yBottom + btnHeight + btnSpacing;
-            int xSlider = rect.right - margin - sliderWidth;
-            int xScaleLabel = xSlider - btnSpacing - scaleLabelWidth;
+            int panelX = rect.right - outerMargin - panelW;
+            int panelY = outerMargin;
 
-            // Fourth row: View Segments toggle, right-aligned, spanning
-            // the same width as the slider row above it.
-            int viewSegWidth = 190;
-            int yViewSeg = yScale + sliderHeight + btnSpacing;
-            int xViewSeg = rect.right - margin - viewSegWidth;
+            // HWND_BOTTOM (not SWP_NOZORDER) pins this at the bottom of
+            // the Z-order on every resize -- belt-and-suspenders on top of
+            // creation order (see WM_CREATE) so the backdrop can never end
+            // up above the real controls and swallow their clicks.
+            SetWindowPos(app->ui.hControlPanel, HWND_BOTTOM,
+                 panelX, panelY, panelW, panelH,
+                 SWP_NOACTIVATE);
 
-            // Fifth row: Debug Log button, same width/alignment as View
-            // Segments above it.
-            int debugLogWidth = 190;
-            int yDebugLog = yViewSeg + btnHeight + btnSpacing;
-            int xDebugLog = rect.right - margin - debugLogWidth;
+            SetWindowPos(app->ui.hPanelTitle, NULL,
+                 panelX + pad, panelY + relYTitle, contentW, titleH,
+                 SWP_NOZORDER);
+
+            int col1X = panelX + pad;
+            int col2X = col1X + colW + colGap;
+
+            // Height here (120) is the combo box's OWN window height, not
+            // the row slot -- for a CBS_DROPDOWNLIST, Windows sizes the
+            // closed box from the font metrics alone and uses the rest of
+            // this height for how tall the dropped-down list can get, so
+            // this needs to be taller than comboRowH (the layout slot
+            // above) for all 3 entries to be visible when it's opened.
+            SetWindowPos(app->ui.hRobotSelector, NULL,
+                 col1X, panelY + relYSelector, contentW, 120,
+                 SWP_NOZORDER);
 
             SetWindowPos(app->ui.hStandingPositionButton, NULL,
-                 xStanding, yTop, 0, 0,
-                 SWP_NOZORDER | SWP_NOSIZE);
+                 col1X, panelY + relYRow1, colW, btnH,
+                 SWP_NOZORDER);
 
             SetWindowPos(app->ui.hHomePositionButton, NULL,
-                 xHome, yTop, 0, 0,
-                 SWP_NOZORDER | SWP_NOSIZE);
+                 col2X, panelY + relYRow1, colW, btnH,
+                 SWP_NOZORDER);
 
             SetWindowPos(app->ui.hSaveButton, NULL,
-                 xSave, yBottom, 0, 0,
-                 SWP_NOZORDER | SWP_NOSIZE);
+                 col1X, panelY + relYRow2, colW, btnH,
+                 SWP_NOZORDER);
 
             SetWindowPos(app->ui.hMirrorButton, NULL,
-                 xMirror, yBottom, 0, 0,
-                 SWP_NOZORDER | SWP_NOSIZE);
+                 col2X, panelY + relYRow2, colW, btnH,
+                 SWP_NOZORDER);
+
+            // Scale label + slider share the full content width, same as
+            // the two-button rows above them.
+            int scaleLabelWidth = 70;
+            int sliderWidth = contentW - scaleLabelWidth - colGap;
 
             SetWindowPos(app->ui.hScaleLabel, NULL,
-                 xScaleLabel, yScale + (sliderHeight - 20) / 2, 0, 0,
-                 SWP_NOZORDER | SWP_NOSIZE);
+                 col1X, panelY + relYScale + (sliderH - 20) / 2, scaleLabelWidth, 20,
+                 SWP_NOZORDER);
 
             SetWindowPos(app->ui.hScaleSlider, NULL,
-                 xSlider, yScale, 0, 0,
-                 SWP_NOZORDER | SWP_NOSIZE);
+                 col1X + scaleLabelWidth + colGap, panelY + relYScale, sliderWidth, sliderH,
+                 SWP_NOZORDER);
 
             SetWindowPos(app->ui.hViewSegmentsButton, NULL,
-                 xViewSeg, yViewSeg, 0, 0,
-                 SWP_NOZORDER | SWP_NOSIZE);
+                 col1X, panelY + relYSeg, contentW, btnH,
+                 SWP_NOZORDER);
 
             SetWindowPos(app->ui.hDebugLogButton, NULL,
-                 xDebugLog, yDebugLog, 0, 0,
-                 SWP_NOZORDER | SWP_NOSIZE);
+                 col1X, panelY + relYDebug, contentW, btnH,
+                 SWP_NOZORDER);
 
-            // bottom-left hover status label
-            int hoverLabelHeight = 20;
-            int hoverLabelY = rect.bottom - hoverLabelHeight - 10;
+            // ---- bottom-left hover status strip ----
+            int hoverPad = 8;
+            int hoverLabelW = 280;
+            int hoverLabelH = 20;
+            int hoverPanelW = hoverLabelW + hoverPad * 2;
+            int hoverPanelH = hoverLabelH + hoverPad * 2;
+            int hoverPanelX = outerMargin;
+            int hoverPanelY = rect.bottom - outerMargin - hoverPanelH;
+
+            // Same HWND_BOTTOM pinning as hControlPanel above.
+            SetWindowPos(app->ui.hHoverPanel, HWND_BOTTOM,
+                 hoverPanelX, hoverPanelY, hoverPanelW, hoverPanelH,
+                 SWP_NOACTIVATE);
 
             SetWindowPos(app->ui.hHoverLabel, NULL,
-                 10, hoverLabelY, 0, 0,
-                 SWP_NOZORDER | SWP_NOSIZE);
+                 hoverPanelX + hoverPad, hoverPanelY + hoverPad, hoverLabelW, hoverLabelH,
+                 SWP_NOZORDER);
         }
         break;
 
@@ -1189,71 +1370,133 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
              app->hoveredCircleSegment = -1;
              app->hoveredBodyCircle = -1;
 
+             ensureSemniUIFonts();
+             ensureSemniPanelClassRegistered();
+
+             // Backdrop behind the whole top-right button cluster, created
+             // first so every real control below (created after it) draws
+             // on top of it -- see ensureSemniPanelClassRegistered's
+             // comment. Real position/size is computed in WM_SIZE, which
+             // fires once right after WM_CREATE.
+             app->ui.hControlPanel = CreateWindowEx(
+                WS_EX_STATICEDGE,
+                L"SemniControlPanel",
+                L"",
+                WS_VISIBLE | WS_CHILD,
+                0, 0, 10, 10,
+                hwnd,
+                NULL,
+                NULL,
+                NULL
+            );
+
+             app->ui.hPanelTitle = CreateWindow(
+                L"STATIC",
+                L"Robot Controls",
+                WS_VISIBLE | WS_CHILD | SS_LEFT,
+                0, 0, 10, 10,
+                hwnd,
+                NULL,
+                NULL,
+                NULL
+            );
+             SendMessage(app->ui.hPanelTitle, WM_SETFONT, (WPARAM)g_semniUITitleFont, TRUE);
+
+             // Robot selector: picks which of the three robots (Semni/
+             // Rocky/Stilo, see app.h's RobotKind) every control below
+             // this acts on. CBS_DROPDOWNLIST (not a plain CBS_DROPDOWN)
+             // so it's pick-one-from-a-list only, no free text entry.
+             // Index order here MUST match RobotKind's own 0/1/2 values --
+             // WM_COMMAND's CBN_SELCHANGE handler casts CB_GETCURSEL's
+             // result straight to RobotKind.
+             app->ui.hRobotSelector = CreateWindow(
+                L"COMBOBOX",
+                L"",
+                WS_VISIBLE | WS_CHILD | CBS_DROPDOWNLIST | WS_VSCROLL,
+                0, 0, 10, 10,
+                hwnd,
+                (HMENU)ID_ROBOT_SELECTOR,
+                NULL,
+                NULL
+            );
+             SendMessage(app->ui.hRobotSelector, WM_SETFONT, (WPARAM)g_semniUIFont, TRUE);
+             SendMessage(app->ui.hRobotSelector, CB_ADDSTRING, 0, (LPARAM)L"Semni");
+             SendMessage(app->ui.hRobotSelector, CB_ADDSTRING, 0, (LPARAM)L"Rocky");
+             SendMessage(app->ui.hRobotSelector, CB_ADDSTRING, 0, (LPARAM)L"Stilo");
+             SendMessage(app->ui.hRobotSelector, CB_SETCURSEL, (WPARAM)app->robotScene.activeKind, 0);
+
              app->ui.hStandingPositionButton = CreateWindow(
                 L"BUTTON",
                 L"Standing",
                 WS_VISIBLE | WS_CHILD,
-                10, 10, 120, 30,
+                0, 0, 10, 10,
                 hwnd,
                 (HMENU)ID_STANDING_POSITION_BUTTON,
                 NULL,
                 NULL
             );
+             SendMessage(app->ui.hStandingPositionButton, WM_SETFONT, (WPARAM)g_semniUIFont, TRUE);
 
              app->ui.hHomePositionButton = CreateWindow(
                 L"BUTTON",
                 L"Home",
                 WS_VISIBLE | WS_CHILD,
-                140, 10, 110, 30,
+                0, 0, 10, 10,
                 hwnd,
                 (HMENU)ID_HOME_POSITION_BUTTON,
                 NULL,
                 NULL
             );
+             SendMessage(app->ui.hHomePositionButton, WM_SETFONT, (WPARAM)g_semniUIFont, TRUE);
 
              app->ui.hSaveButton = CreateWindow(
                 L"BUTTON",
                 L"Save",
                 WS_VISIBLE | WS_CHILD,
-                10, 50, 80, 30,
+                0, 0, 10, 10,
                 hwnd,
                 (HMENU)ID_SAVE_BUTTON,
                 NULL,
                 NULL
             );
+             SendMessage(app->ui.hSaveButton, WM_SETFONT, (WPARAM)g_semniUIFont, TRUE);
 
              app->ui.hMirrorButton = CreateWindow(
                 L"BUTTON",
                 L"Mirror Leg",
                 WS_VISIBLE | WS_CHILD,
-                100, 50, 100, 30,
+                0, 0, 10, 10,
                 hwnd,
                 (HMENU)ID_MIRROR_LEG_BUTTON,
                 NULL,
                 NULL
             );
+             SendMessage(app->ui.hMirrorButton, WM_SETFONT, (WPARAM)g_semniUIFont, TRUE);
 
              // Robot size slider: 0.25 - 1.0 (see ROBOT_SCALE_MIN/MAX in
              // config.h), mapped to an integer trackbar range of 25-100
              // (WM_HSCROLL below divides the position back down by 100).
              // Starts at 50 (scale 0.5), matching graphics.c's
-             // g_robotScale default.
+             // g_robotScale default. Label shows the live value (see
+             // WM_HSCROLL below), matching the ArcSpline panel's
+             // "Thickness: N px" label (ui.c).
              app->ui.hScaleLabel = CreateWindow(
                 L"STATIC",
-                L"Scale",
+                L"Scale: 0.50",
                 WS_VISIBLE | WS_CHILD | SS_LEFT,
-                10, 90, 50, 20,
+                0, 0, 10, 10,
                 hwnd,
                 NULL,
                 NULL,
                 NULL
             );
+             SendMessage(app->ui.hScaleLabel, WM_SETFONT, (WPARAM)g_semniUIFont, TRUE);
 
              app->ui.hScaleSlider = CreateWindow(
                 TRACKBAR_CLASS,
                 L"",
                 WS_VISIBLE | WS_CHILD | TBS_HORZ | TBS_NOTICKS,
-                70, 90, 140, 24,
+                0, 0, 10, 10,
                 hwnd,
                 (HMENU)ID_SCALE_SLIDER,
                 NULL,
@@ -1275,12 +1518,13 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 L"BUTTON",
                 L"View Segments",
                 WS_VISIBLE | WS_CHILD | BS_AUTOCHECKBOX | BS_PUSHLIKE,
-                10, 130, 190, 30,
+                0, 0, 10, 10,
                 hwnd,
                 (HMENU)ID_VIEW_SEGMENTS_BUTTON,
                 NULL,
                 NULL
             );
+             SendMessage(app->ui.hViewSegmentsButton, WM_SETFONT, (WPARAM)g_semniUIFont, TRUE);
 
              // Debug Log: dumps the current robot pose as app_init.c-style
              // assignments to the console (printRobotAsInit, robot.c) on
@@ -1291,9 +1535,26 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 L"BUTTON",
                 L"Debug Log",
                 WS_VISIBLE | WS_CHILD,
-                10, 170, 190, 30,
+                0, 0, 10, 10,
                 hwnd,
                 (HMENU)ID_DEBUG_LOG_BUTTON,
+                NULL,
+                NULL
+            );
+             SendMessage(app->ui.hDebugLogButton, WM_SETFONT, (WPARAM)g_semniUIFont, TRUE);
+
+             // Small backdrop behind the bottom-left hover label so the
+             // status text stays legible no matter what color the 3D
+             // scene behind it happens to be -- created before the label
+             // itself so the label draws on top of it.
+             app->ui.hHoverPanel = CreateWindowEx(
+                WS_EX_STATICEDGE,
+                L"SemniControlPanel",
+                L"",
+                WS_VISIBLE | WS_CHILD,
+                0, 0, 10, 10,
+                hwnd,
+                NULL,
                 NULL,
                 NULL
             );
@@ -1303,12 +1564,13 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 L"STATIC",
                 L"",
                 WS_VISIBLE | WS_CHILD | SS_LEFT,
-                10, 560, 260, 20,
+                0, 0, 10, 10,
                 hwnd,
                 NULL,
                 NULL,
                 NULL
             );
+             SendMessage(app->ui.hHoverLabel, WM_SETFONT, (WPARAM)g_semniUIFont, TRUE);
         }
         break;
 
@@ -1326,25 +1588,120 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
         case WM_COMMAND:
             switch (LOWORD(wParam))
             {
+                case ID_ROBOT_SELECTOR:
+                    if (HIWORD(wParam) == CBN_SELCHANGE)
+                    {
+                        int sel = (int)SendMessage(app->ui.hRobotSelector, CB_GETCURSEL, 0, 0);
+                        if (sel >= 0 && sel < ROBOT_KIND_COUNT)
+                            app->robotScene.activeKind = (RobotKind)sel;
+
+                        // Clear any drag/hover state left over from
+                        // whichever robot was active before -- only
+                        // meaningful for Semni right now (see
+                        // WM_LBUTTONDOWN/WM_MOUSEMOVE's own activeKind
+                        // guards), but harmless to always reset.
+                        app->draggingSeamArc1 = 0;
+                        app->draggingSeamArc2 = 0;
+                        app->draggingInner = 0;
+                        app->draggingKnee = 0;
+                        app->draggingThigh1 = 0;
+                        app->draggingThigh2 = 0;
+                        app->draggingAnkle = 0;
+                        app->draggingShin1 = 0;
+                        app->draggingShin2 = 0;
+                        app->activeHandle = 0;
+                        app->hoveredCircleSegment = -1;
+                        app->hoveredBodyCircle = -1;
+                        SetWindowText(app->ui.hHoverLabel, L"");
+
+                        SetFocus(app->hwndMain);
+                        InvalidateRect(hwnd, NULL, TRUE);
+                    }
+                    break;
+
                 case ID_SAVE_BUTTON:
-                    // Save both the robot image and its mathematical equations
-                    saveCanvasAsBMP("semni.bmp", app->hwndMain, app);
-                    saveRobotAsEquations("semni.txt", app);
+                    // Save both the robot image and its mathematical
+                    // equations, under a filename that matches whichever
+                    // robot is currently active so editing one never
+                    // overwrites another's saved pose.
+                    switch (app->robotScene.activeKind)
+                    {
+                        case ROBOT_KIND_ROCKY:
+                            saveCanvasAsBMP("rocky.bmp", app->hwndMain, app);
+                            saveRockyAsEquations("rocky.txt", app);
+                            break;
+
+                        case ROBOT_KIND_STILO:
+                            saveCanvasAsBMP("stilo.bmp", app->hwndMain, app);
+                            saveStiloAsEquations("stilo.txt", app);
+                            break;
+
+                        case ROBOT_KIND_SEMNI:
+                        default:
+                            saveCanvasAsBMP("semni.bmp", app->hwndMain, app);
+                            saveRobotAsEquations("semni.txt", app);
+                            break;
+                    }
                     SetFocus(app->hwndMain);  // return focus to main window for keyboard input
                     break;
 
                 case ID_MIRROR_LEG_BUTTON:
-                    mirrorHipLeg(&app->robotScene.robot);
+                    switch (app->robotScene.activeKind)
+                    {
+                        case ROBOT_KIND_ROCKY:
+                            mirrorRockyLeg(&app->robotScene.rocky);
+                            break;
+
+                        case ROBOT_KIND_STILO:
+                            mirrorStiloLeg(&app->robotScene.stilo);
+                            break;
+
+                        case ROBOT_KIND_SEMNI:
+                        default:
+                            mirrorHipLeg(&app->robotScene.robot);
+                            break;
+                    }
+                    InvalidateRect(hwnd, NULL, FALSE);
                     SetFocus(app->hwndMain);  // return focus for keyboard input
                     break;
 
                 case ID_STANDING_POSITION_BUTTON:
-				    initStandingPosition(app);
+				    switch (app->robotScene.activeKind)
+				    {
+				        case ROBOT_KIND_ROCKY:
+				            initRockyStandingPosition(app);
+				            break;
+
+				        case ROBOT_KIND_STILO:
+				            initStiloStandingPosition(app);
+				            break;
+
+				        case ROBOT_KIND_SEMNI:
+				        default:
+				            initStandingPosition(app);
+				            break;
+				    }
+				    InvalidateRect(hwnd, NULL, FALSE);
 				    SetFocus(app->hwndMain);
 				    break;
 
 				case ID_HOME_POSITION_BUTTON:
-				    initHomePosition(app);
+				    switch (app->robotScene.activeKind)
+				    {
+				        case ROBOT_KIND_ROCKY:
+				            initRockyHomePosition(app);
+				            break;
+
+				        case ROBOT_KIND_STILO:
+				            initStiloHomePosition(app);
+				            break;
+
+				        case ROBOT_KIND_SEMNI:
+				        default:
+				            initHomePosition(app);
+				            break;
+				    }
+				    InvalidateRect(hwnd, NULL, FALSE);
 				    SetFocus(app->hwndMain);
 				    break;
 
@@ -1353,7 +1710,12 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     // BS_AUTOCHECKBOX already flipped its own check state
                     // before this notification fires, so read it back
                     // rather than tracking a separate bool -- same pattern
-                    // as the ArcSpline canvas's hViewSegBtn (ui.c).
+                    // as the ArcSpline canvas's hViewSegBtn (ui.c). Only
+                    // has a visible effect while Semni is the active robot
+                    // -- Rocky/Stilo don't have a View Segments overlay
+                    // yet (see drawRocky/drawStilo's own comments), so the
+                    // toggle is harmlessly inert for them right now rather
+                    // than disabled outright.
                     BOOL nowChecked = (SendMessage(app->ui.hViewSegmentsButton, BM_GETCHECK, 0, 0) == BST_CHECKED);
                     app->showCircleSegments = nowChecked;
                     SetFocus(app->hwndMain);
@@ -1364,7 +1726,21 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     // dump the current robot pose as app_init.c-style
                     // assignments, so it can be copied straight in as the
                     // new starting pose once it's been shaped by hand
-                    printRobotAsInit(app->robotScene.robot);
+                    switch (app->robotScene.activeKind)
+                    {
+                        case ROBOT_KIND_ROCKY:
+                            printRockyAsInit(app->robotScene.rocky);
+                            break;
+
+                        case ROBOT_KIND_STILO:
+                            printStiloAsInit(app->robotScene.stilo);
+                            break;
+
+                        case ROBOT_KIND_SEMNI:
+                        default:
+                            printRobotAsInit(app->robotScene.robot);
+                            break;
+                    }
                     SetFocus(app->hwndMain);
                     break;
             }

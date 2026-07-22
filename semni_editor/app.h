@@ -12,6 +12,11 @@
 #define ID_VIEW_SEGMENTS_BUTTON 1006
 #define ID_DEBUG_LOG_BUTTON 1007
 
+// dropdown at the top of the control panel that picks which of the three
+// robots (Semni/Rocky/Stilo) the Standing/Home/Save/Mirror/Debug Log
+// buttons below it act on -- see input.c's WM_CREATE/WM_COMMAND.
+#define ID_ROBOT_SELECTOR 1008
+
 // ---- robot model (the "Semni") ----
 
 typedef struct {
@@ -105,13 +110,99 @@ typedef struct {
     float kneeAngle;
 } Semni;
 
+// ---- robot model ("Rocky") ----
+//
+// A simpler two-part robot: a rectangular torso, plus a single leg that's
+// otherwise IDENTICAL in construction to Semni's own knee-to-ankle "shin"
+// (kneeCircle -> two tangent-fillet arcs -> ankleCircle, see app.h's Semni
+// comment and renderer.c's drawShin) -- it just hangs directly off the
+// rectangle instead of off a hip/thigh stage. There's no equivalent of
+// Semni's hipAngle here: kneeCircle is rigidly attached to the torso (it
+// only turns with the whole-body angle below, the same way Semni's own
+// innerCircle/hip is rigidly attached to ITS torso), and kneeAngle alone
+// swings the leg, exactly like Semni's kneeAngle swings its shin around
+// the knee.
+typedef struct {
+    // rectangular torso: a local (pre-rotation) center + half-extents,
+    // same "local, rotated at render time by angle" convention as Semni's
+    // headX/buttX/y.
+    float bodyX, bodyY;
+    float bodyHalfWidth, bodyHalfHeight;
+
+    PointF kneeCircle;
+    float kneeRadius;
+
+    PointF ankleCircle;
+    float ankleRadius;
+
+    float shinArc1Angle;
+    float shinArc2Angle;
+
+    float angle;      // whole-body rotation, around (bodyX, bodyY)
+    float kneeAngle;  // swings the leg (ankleCircle) around kneeCircle
+} Rocky;
+
+// ---- robot model ("Stilo") ----
+//
+// Same torso as Semni (head/butt circles + two seam arcs between them,
+// identical fields/construction -- see drawSemniBody), but the leg has no
+// knee stage: it goes straight from the hip (innerCircle) to the foot
+// (ankleCircle) via ONE pair of tangent-fillet arcs instead of two, so
+// thighArc1Angle/thighArc2Angle here connect innerCircle directly to
+// ankleCircle (same convex/concave split as Semni's own thigh arcs, just
+// spanning the whole leg instead of stopping at a knee).
+typedef struct {
+    float headX, buttX;
+    float y;
+
+    float headRadius;
+    float buttRadius;
+
+    float seamArc1Angle;
+    float seamArc2Angle;
+
+    PointF innerCircle;
+    float innerRadius;
+
+    PointF ankleCircle;
+    float ankleRadius;
+
+    float thighArc1Angle;   // hip-to-ankle arc 1 (convex)
+    float thighArc2Angle;   // hip-to-ankle arc 2 (concave)
+
+    float angle;      // whole-body rotation
+    float hipAngle;   // rotates the leg (ankleCircle) around innerCircle
+} Stilo;
+
+// Which of the three robot models the Robot editor (input.c) is currently
+// showing/editing -- picked via the hRobotSelector dropdown in the
+// control panel. Semni keeps its existing name ("robot") in RobotScene
+// below for backward compatibility with the ~300 existing references to
+// robotScene.robot across canvas.c (Simulation mode), renderer.c, robot.c,
+// save.c, and app_init.c -- rocky/stilo are purely additive fields.
+typedef enum {
+    ROBOT_KIND_SEMNI = 0,
+    ROBOT_KIND_ROCKY = 1,
+    ROBOT_KIND_STILO = 2,
+    ROBOT_KIND_COUNT = 3
+} RobotKind;
+
 typedef struct {
     Semni robot;
+    Rocky rocky;
+    Stilo stilo;
+    RobotKind activeKind;
 } RobotScene;
 
 // ---- UI ----
 
 typedef struct {
+    // dropdown at the very top of the control panel that picks the active
+    // robot (Semni/Rocky/Stilo, see RobotScene.activeKind above) -- every
+    // other control in this struct acts on whichever one this currently
+    // selects.
+    HWND hRobotSelector;
+
     HWND hSaveButton;
     HWND hMirrorButton;
     HWND hStandingPositionButton;
@@ -142,6 +233,17 @@ typedef struct {
     // handle the mouse is currently hovering (e.g. "Thigh Arc 1"), blank
     // when nothing is hovered. Updated every WM_MOUSEMOVE.
     HWND hHoverLabel;
+
+    // Solid-backed backdrop panels so the controls above read as a real
+    // toolbar/status strip instead of floating raw over the OpenGL-
+    // rendered robot. hControlPanel + hPanelTitle sit behind/above the
+    // top-right button cluster; hHoverPanel sits behind hHoverLabel.
+    // All three are created before the controls they back so the
+    // controls' own z-order (later CreateWindow = higher/on top) draws
+    // them on top of the panel automatically -- see input.c's WM_CREATE.
+    HWND hControlPanel;
+    HWND hPanelTitle;
+    HWND hHoverPanel;
 } UIState;
 
 // ---- application state ----

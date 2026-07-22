@@ -144,3 +144,102 @@ void printRobotAsInit(Semni b)
 
     printf("----\n");
 }
+
+// ---- Rocky ----
+
+PointF getRockyCenter(Rocky r)
+{
+    PointF c;
+    c.x = r.bodyX;
+    c.y = r.bodyY;
+    return c;
+}
+
+void mirrorRockyLeg(Rocky* r)
+{
+    r->kneeAngle = -r->kneeAngle;
+
+    r->shinArc1Angle = mirrorArcAngle(r->shinArc1Angle);
+    r->shinArc2Angle = mirrorArcAngle(r->shinArc2Angle);
+}
+
+void printRockyAsInit(Rocky r)
+{
+    printf("app->robotScene.rocky.bodyX = %.6ff;\n", r.bodyX);
+    printf("app->robotScene.rocky.bodyY = %.6ff;\n\n", r.bodyY);
+
+    printf("app->robotScene.rocky.bodyHalfWidth = %.6ff;\n", r.bodyHalfWidth);
+    printf("app->robotScene.rocky.bodyHalfHeight = %.6ff;\n\n", r.bodyHalfHeight);
+
+    printf("app->robotScene.rocky.angle = %.6ff;\n", r.angle);
+    printf("app->robotScene.rocky.kneeAngle = %.6ff;\n\n", r.kneeAngle);
+
+    printf("app->robotScene.rocky.kneeCircle.x = %.6ff;\n", r.kneeCircle.x);
+    printf("app->robotScene.rocky.kneeCircle.y = %.6ff;\n\n", r.kneeCircle.y);
+
+    printf("app->robotScene.rocky.kneeRadius = %.6ff;\n\n", r.kneeRadius);
+
+    printf("app->robotScene.rocky.ankleCircle.x = %.6ff;\n", r.ankleCircle.x);
+    printf("app->robotScene.rocky.ankleCircle.y = %.6ff;\n\n", r.ankleCircle.y);
+
+    printf("app->robotScene.rocky.ankleRadius = %.6ff;\n\n", r.ankleRadius);
+
+    printf("app->robotScene.rocky.shinArc1Angle = %.6ff;\n", r.shinArc1Angle);
+    printf("app->robotScene.rocky.shinArc2Angle = %.6ff;\n", r.shinArc2Angle);
+
+    printf("----\n");
+}
+
+// ---- Stilo ----
+
+PointF getStiloCenter(Stilo s)
+{
+    PointF c;
+    c.x = (s.buttX + s.headX) * 0.5f;
+    c.y = s.y;
+    return c;
+}
+
+void mirrorStiloLeg(Stilo* s)
+{
+    float centerX = (s->buttX + s->headX) * 0.5f;
+
+    s->innerCircle.x = 2.0f * centerX - s->innerCircle.x;
+    s->ankleCircle.x = 2.0f * centerX - s->ankleCircle.x;
+
+    s->hipAngle = -s->hipAngle;
+
+    s->thighArc1Angle = mirrorArcAngle(s->thighArc1Angle);
+    s->thighArc2Angle = mirrorArcAngle(s->thighArc2Angle);
+}
+
+void printStiloAsInit(Stilo s)
+{
+    printf("app->robotScene.stilo.buttX = %.6ff;\n", s.buttX);
+    printf("app->robotScene.stilo.headX = %.6ff;\n", s.headX);
+    printf("app->robotScene.stilo.y = %.6ff;\n\n", s.y);
+
+    printf("app->robotScene.stilo.buttRadius = %.6ff;\n", s.buttRadius);
+    printf("app->robotScene.stilo.headRadius = %.6ff;\n\n", s.headRadius);
+
+    printf("app->robotScene.stilo.seamArc1Angle = %.6ff;\n", s.seamArc1Angle);
+    printf("app->robotScene.stilo.seamArc2Angle = %.6ff;\n\n", s.seamArc2Angle);
+
+    printf("app->robotScene.stilo.innerCircle.x = %.6ff;\n", s.innerCircle.x);
+    printf("app->robotScene.stilo.innerCircle.y = %.6ff;\n\n", s.innerCircle.y);
+
+    printf("app->robotScene.stilo.innerRadius = %.6ff;\n\n", s.innerRadius);
+
+    printf("app->robotScene.stilo.angle = %.6ff;\n", s.angle);
+    printf("app->robotScene.stilo.hipAngle = %.6ff;\n\n", s.hipAngle);
+
+    printf("app->robotScene.stilo.ankleCircle.x = %.6ff;\n", s.ankleCircle.x);
+    printf("app->robotScene.stilo.ankleCircle.y = %.6ff;\n\n", s.ankleCircle.y);
+
+    printf("app->robotScene.stilo.ankleRadius = %.6ff;\n\n", s.ankleRadius);
+
+    printf("app->robotScene.stilo.thighArc1Angle = %.6ff;\n", s.thighArc1Angle);
+    printf("app->robotScene.stilo.thighArc2Angle = %.6ff;\n", s.thighArc2Angle);
+
+    printf("----\n");
+}

@@ -1,0 +1,11 @@
+0 -3.75 (massen mittelpunkt x y)11 (gewicht)
+0 0 (gelenk x y) joint location, where they share a commmon point
+(Kreissegmente Startpunkt xy Endpunkt xy Mittelpunkt xy) (5 Kreissegmente)
+0.7486095 -0.0416665 0.3741655 -3.775 0.9478865 -1.93833325
+0.3741655 -3.775 -0.3741655 -3.775 0 -4.125
+-0.3741655 -3.775 -0.6236095 -0.0416665 -0.04988875 -1.87833325
+-0.6236095 -0.0416665 0 0.625 -0.5 0.375
+0 0.625 0.7486095 -0.0416665 0.31052375 0.542402
+
+Implizite Kreisgleichung
+A(x^2+y^2)+Bx+Cy+D

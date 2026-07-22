@@ -54,6 +54,12 @@ void applyEditorModeVisibility(EditorModeState* modeState)
     // Semni's own child controls (children of the shared window) --
     // created once in handleInput's WM_CREATE and just shown/hidden here,
     // never re-created.
+    if (app.ui.hControlPanel)
+        ShowWindow(app.ui.hControlPanel, semniActive ? SW_SHOW : SW_HIDE);
+    if (app.ui.hPanelTitle)
+        ShowWindow(app.ui.hPanelTitle, semniActive ? SW_SHOW : SW_HIDE);
+    if (app.ui.hRobotSelector)
+        ShowWindow(app.ui.hRobotSelector, semniActive ? SW_SHOW : SW_HIDE);
     if (app.ui.hStandingPositionButton)
         ShowWindow(app.ui.hStandingPositionButton, semniActive ? SW_SHOW : SW_HIDE);
     if (app.ui.hHomePositionButton)
@@ -70,6 +76,8 @@ void applyEditorModeVisibility(EditorModeState* modeState)
         ShowWindow(app.ui.hViewSegmentsButton, semniActive ? SW_SHOW : SW_HIDE);
     if (app.ui.hDebugLogButton)
         ShowWindow(app.ui.hDebugLogButton, semniActive ? SW_SHOW : SW_HIDE);
+    if (app.ui.hHoverPanel)
+        ShowWindow(app.ui.hHoverPanel, semniActive ? SW_SHOW : SW_HIDE);
     if (app.ui.hHoverLabel)
         ShowWindow(app.ui.hHoverLabel, semniActive ? SW_SHOW : SW_HIDE);
 
