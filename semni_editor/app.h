@@ -303,12 +303,14 @@ typedef struct {
     // Rocky's knee handle -- the joint where the leg (kneeCircle->
     // ankleCircle, see the Rocky struct comment) attaches to the
     // rectangle, same role Semni's own kneeCircle plays relative to its
-    // hip. Mirrors Semni's hoverKnee/draggingKnee treatment: hover to
-    // highlight, drag to change how far the knee sits from the body
-    // center (constrainToAxis, same as Semni's hip->knee drag), plain
-    // scroll to resize kneeRadius, Shift+scroll to bend kneeAngle (swings
-    // ankleCircle around the knee) -- see input.c's WM_LBUTTONDOWN/
-    // WM_MOUSEMOVE/WM_MOUSEWHEEL ROBOT_KIND_ROCKY branches.
+    // hip. Mirrors Semni's hoverKnee/draggingKnee treatment for the
+    // hover/scroll/Shift+scroll behaviors, but the drag itself is freer
+    // than Semni's own axis-constrained hip->knee drag: it can be dropped
+    // anywhere inside the rectangle, clamped so the knee circle's own
+    // circumference never pokes outside the body. Plain scroll resizes
+    // kneeRadius, Shift+scroll bends kneeAngle (swings ankleCircle around
+    // the knee) -- see input.c's WM_LBUTTONDOWN/WM_MOUSEMOVE/
+    // WM_MOUSEWHEEL ROBOT_KIND_ROCKY branches.
     int hoverRockyKnee;
     int draggingRockyKnee;
 

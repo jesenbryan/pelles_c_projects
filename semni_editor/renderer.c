@@ -876,8 +876,8 @@ static void drawRockyLeg(Rocky b, RenderState* rs, float opacity)
     // same condition drawThigh uses for Semni's own knee circle, minus the
     // hip-rotate-hint/hoveringWhole terms that don't apply here (Rocky has
     // no hip stage and never appears in Simulation mode). Dragging the
-    // knee (see input.c's draggingRockyKnee) changes its own distance from
-    // the body center -- like Semni, that's left unhighlighted here since
+    // knee (see input.c's draggingRockyKnee) repositions it freely inside
+    // the rectangle -- like Semni, that's left unhighlighted here since
     // there's no separate "thigh" segment to redirect the highlight to.
     setColor(rs, rs->hoverRockyKnee && !rs->shiftHeld && !rs->draggingRockyKnee, 0.2f, 0.4f, 1.0f, opacity);
     drawCircle(kneeWorld, b.kneeRadius);

@@ -203,11 +203,12 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             // app.h) -- hover/drag one of those to stretch just that
             // dimension instead of moving or uniformly scaling. And it has
             // one knee handle (hoverRockyKnee/draggingRockyKnee) where the
-            // leg attaches to the rectangle -- same treatment as Semni's
-            // own knee handle: drag to change how far it sits from the
-            // body center, plain scroll to resize kneeRadius, Shift+scroll
-            // to bend kneeAngle. Stilo has no handles at all yet -- see
-            // the RobotKind comment on the fallthrough break below.
+            // leg attaches to the rectangle -- drag it freely anywhere
+            // inside the rectangle (clamped so the knee circle never pokes
+            // outside the body, see WM_MOUSEMOVE), plain scroll to resize
+            // kneeRadius, Shift+scroll to bend kneeAngle. Stilo has no
+            // handles at all yet -- see the RobotKind comment on the
+            // fallthrough break below.
             if (app->robotScene.activeKind == ROBOT_KIND_ROCKY)
             {
                 PointF rockyCenter = getRockyCenter(app->robotScene.rocky);
@@ -232,10 +233,10 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     app->draggingRockyKnee = 1;
 
                     // capture the shin's fixed offset from the knee right
-                    // now, so dragging the knee (which only changes its
-                    // own distance from the body center) carries the
-                    // ankle/shin along as one rigid piece -- same pattern
-                    // as Semni's own kneeDragAnkleOffset
+                    // now, so dragging the knee around inside the
+                    // rectangle carries the ankle/shin along as one rigid
+                    // piece -- same pattern as Semni's own
+                    // kneeDragAnkleOffset
                     app->rockyKneeDragAnkleOffset.x = app->robotScene.rocky.ankleCircle.x - app->robotScene.rocky.kneeCircle.x;
                     app->rockyKneeDragAnkleOffset.y = app->robotScene.rocky.ankleCircle.y - app->robotScene.rocky.kneeCircle.y;
                 }
@@ -556,23 +557,40 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 }
                 else if (app->draggingRockyKnee)
                 {
-                    // constrained to slide along the body-center->knee
-                    // axis, same "only the length changes, bending is a
-                    // separate (Shift+scroll) gesture" idea as Semni's own
-                    // hip->knee drag
-                    PointF bodyPivot = { app->robotScene.rocky.bodyX, app->robotScene.rocky.bodyY };
+                    // free to move anywhere in the rectangle (not
+                    // constrained to an axis the way Semni's hip->knee
+                    // drag is), clamped so the knee circle's own
+                    // circumference never pokes outside the body -- inset
+                    // each bound by kneeRadius, so the clamped position is
+                    // where the CENTER is allowed to go, not just where it
+                    // touches the edge.
+                    float minX = app->robotScene.rocky.bodyX - app->robotScene.rocky.bodyHalfWidth + app->robotScene.rocky.kneeRadius;
+                    float maxX = app->robotScene.rocky.bodyX + app->robotScene.rocky.bodyHalfWidth - app->robotScene.rocky.kneeRadius;
+                    float minY = app->robotScene.rocky.bodyY - app->robotScene.rocky.bodyHalfHeight + app->robotScene.rocky.kneeRadius;
+                    float maxY = app->robotScene.rocky.bodyY + app->robotScene.rocky.bodyHalfHeight - app->robotScene.rocky.kneeRadius;
 
-                    PointF newKnee = constrainToAxis(
-                        bodyPivot,
-                        app->robotScene.rocky.kneeCircle,
-                        localMouse,
-                        MIN_LIMB_LENGTH);
+                    // if the knee circle is too big to fit inset from both
+                    // sides (bodyHalfWidth/Height smaller than kneeRadius),
+                    // the range above inverts -- fall back to pinning it to
+                    // the body's own center on that axis instead of
+                    // letting min/max cross over
+                    if (minX > maxX) { minX = maxX = app->robotScene.rocky.bodyX; }
+                    if (minY > maxY) { minY = maxY = app->robotScene.rocky.bodyY; }
 
+                    float newKneeX = localMouse.x;
+                    if (newKneeX < minX) newKneeX = minX;
+                    if (newKneeX > maxX) newKneeX = maxX;
+
+                    float newKneeY = localMouse.y;
+                    if (newKneeY < minY) newKneeY = minY;
+                    if (newKneeY > maxY) newKneeY = maxY;
+
+                    PointF newKnee = { newKneeX, newKneeY };
                     app->robotScene.rocky.kneeCircle = newKnee;
 
                     // re-anchor the shin to the offset captured when the
                     // drag started, so its length/shape can't drift over a
-                    // long drag -- only the knee's own distance from the
+                    // long drag -- only the knee's own position within the
                     // body is changing here
                     app->robotScene.rocky.ankleCircle.x = newKnee.x + app->rockyKneeDragAnkleOffset.x;
                     app->robotScene.rocky.ankleCircle.y = newKnee.y + app->rockyKneeDragAnkleOffset.y;
