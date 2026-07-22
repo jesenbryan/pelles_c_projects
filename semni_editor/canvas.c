@@ -228,6 +228,11 @@ static float simTimeScale = 1.0f;
 // since that corner's offset from the origin never changes on resize.
 static HWND hSlowMotionBtn = NULL;
 
+// Same idea as hSlowMotionBtn just above, for the "Walk" toggle (Shift+W --
+// see gaitActive/advanceGait). Positioned directly below Slow Motion's
+// button (see WM_CREATE), shown/hidden alongside it.
+static HWND hWalkBtn = NULL;
+
 HDC canvasGetHDC(void)
 {
     return hDC;
@@ -865,6 +870,186 @@ static void advanceAutoGravity(HWND hWnd)
         autoGravityVelocity = 0.0f; // landed -- next fall starts from rest
 }
 
+// ---- Scripted gait ("Walk" toggle, Shift+W -- see config.h's
+// SIMULATION_GAIT_* comment block for the overall rationale) ----
+
+#define AUTO_GAIT_TIMER_ID 1003
+static BOOL gaitActive = FALSE;
+
+// "WALK ON"/"WALK OFF" toast (Shift+W -- see ToggleGait below) -- same
+// stateless-fade pattern as gravityToastOn/gravityToastStartTick further
+// down this file, kept as its own separate pair (not reusing the gravity
+// toast's variables) so auto-gravity and Walk can each show/fade their own
+// toast independently without one stomping the other if both get toggled
+// close together. Drawn one line above the gravity toast (canvasRenderFrame)
+// so both can be visible at once without overlapping. Declared up here,
+// ahead of gravityToastOn/gravityToastStartTick's own declaration, because
+// ToggleGait -- defined right below -- already needs to write these.
+static BOOL gaitToastOn = FALSE;
+static DWORD gaitToastStartTick = 0;
+
+// The robot's exact pose the instant Walk was toggled on -- every gait
+// tick restores this in full, then reapplies that tick's interpolated
+// deltas on top (see advanceGait), rather than nudging the live pose
+// incrementally tick after tick. Recomputing from this fixed source of
+// truth every time means the cycle can never drift or accumulate
+// floating-point error over a long walk, the same reasoning
+// updateDrawingPoint's shift-line preview truncate-and-rebuild uses.
+static Semni gaitBaseline;
+
+// Continuously increasing (never wrapped/reset) -- one full unit is one
+// complete crouch-push-swing-land cycle. advanceGait derives two different
+// things from it: fmodf(gaitPhaseUnwrapped, 1.0f) for looking up where in
+// the cycle the joints/hop-bob currently are (that part DOES need to
+// repeat every cycle), and gaitPhaseUnwrapped directly (unwrapped) for how
+// far forward the robot has walked (that part must NOT reset every cycle,
+// or it would hop in place instead of advancing) -- see advanceGait's own
+// comment for the derivation.
+static float gaitPhaseUnwrapped = 0.0f;
+
+// Real-time (GetTickCount) timestamp of the last advanceGait call -- same
+// "measure actual elapsed time, don't assume a fixed tick length" reason
+// autoGravityLastTickTime exists (see advanceAutoGravity's comment).
+static DWORD gaitLastTickTime = 0;
+
+// One keyframe in the gait cycle -- see config.h's SIMULATION_GAIT_*
+// comment block for the overall design. Every field except `phase` is a
+// DELTA from gaitBaseline, not an absolute value, so the cycle always
+// swings around whatever pose the robot actually had when Walk was
+// switched on instead of assuming a fixed geometry.
+typedef struct {
+    float phase;            // 0..1, strictly ascending; first entry MUST be 0.0, last MUST be 1.0
+    float hipAngleDeltaDeg;
+    float kneeAngleDeltaDeg;
+    float bodyAngleDeltaDeg;
+    float hopY;              // world units, relative to gaitBaseline.y
+} GaitKeyframe;
+
+// A single-leg hop/pivot cycle: crouch (load up), push off (extend and
+// rise), swing the leg forward through the air (peak height), land back at
+// neutral to close the loop. First-pass numbers (SIMULATION_GAIT_* in
+// config.h) -- not visually tuned yet, see that block's comment. If a
+// swing reads as going the wrong way once this is actually visible, the
+// fix is almost certainly flipping one of these signs, not the structure.
+static const GaitKeyframe gaitCycle[] = {
+    // phase   hipDelta                          kneeDelta                          bodyDelta                          hopY
+    { 0.00f,   0.0f,                              0.0f,                              0.0f,                              0.0f },
+    { 0.20f,  -SIMULATION_GAIT_HIP_SWING_DEG*0.3f, SIMULATION_GAIT_KNEE_BEND_DEG,    -SIMULATION_GAIT_BODY_LEAN_DEG*0.5f, -SIMULATION_GAIT_HOP_HEIGHT*0.25f }, // crouch/load
+    { 0.45f,   SIMULATION_GAIT_HIP_SWING_DEG*0.5f,-SIMULATION_GAIT_KNEE_BEND_DEG*0.7f, SIMULATION_GAIT_BODY_LEAN_DEG,      SIMULATION_GAIT_HOP_HEIGHT*0.6f  }, // push off
+    { 0.70f,  -SIMULATION_GAIT_HIP_SWING_DEG,     SIMULATION_GAIT_KNEE_BEND_DEG*0.8f,  SIMULATION_GAIT_BODY_LEAN_DEG*0.3f, SIMULATION_GAIT_HOP_HEIGHT       }, // swing forward, peak height
+    { 1.00f,   0.0f,                              0.0f,                              0.0f,                              0.0f },  // land -- same as phase 0.00, closes the loop
+};
+#define GAIT_KEYFRAME_COUNT (sizeof(gaitCycle) / sizeof(gaitCycle[0]))
+
+// Linearly interpolates the gait cycle at the given phase (0..1, already
+// wrapped -- see advanceGait). Walks the table for the bracketing pair of
+// keyframes rather than assuming a fixed count/spacing, so gaitCycle's
+// entries above can be freely added to/re-timed later without touching
+// this function.
+static void sampleGaitCycle(float phase, float* hipDeg, float* kneeDeg, float* bodyDeg, float* hopY)
+{
+    for (unsigned int i = 0; i + 1 < GAIT_KEYFRAME_COUNT; i++)
+    {
+        const GaitKeyframe* a = &gaitCycle[i];
+        const GaitKeyframe* b = &gaitCycle[i + 1];
+
+        if (phase >= a->phase && phase <= b->phase)
+        {
+            float span = b->phase - a->phase;
+            float t = (span > 1e-6f) ? (phase - a->phase) / span : 0.0f;
+
+            *hipDeg  = a->hipAngleDeltaDeg  + (b->hipAngleDeltaDeg  - a->hipAngleDeltaDeg)  * t;
+            *kneeDeg = a->kneeAngleDeltaDeg + (b->kneeAngleDeltaDeg - a->kneeAngleDeltaDeg) * t;
+            *bodyDeg = a->bodyAngleDeltaDeg + (b->bodyAngleDeltaDeg - a->bodyAngleDeltaDeg) * t;
+            *hopY    = a->hopY              + (b->hopY              - a->hopY)              * t;
+            return;
+        }
+    }
+
+    // Shouldn't happen (phase is always in [0,1] and the table spans
+    // [0,1]) -- fall back to the neutral pose rather than leaving these
+    // uninitialized if it ever does.
+    *hipDeg = 0.0f; *kneeDeg = 0.0f; *bodyDeg = 0.0f; *hopY = 0.0f;
+}
+
+// Advances the gait cycle by however much real time has actually passed
+// since the last call -- same real-time-delta approach advanceAutoGravity
+// uses, and for the same reason (WM_TIMER's low priority, see that
+// function's comment); called from the same two places (WM_TIMER's
+// AUTO_GAIT_TIMER_ID case and directly from WM_MOUSEMOVE) so mouse
+// movement can't stall the walk either.
+static void advanceGait(HWND hWnd)
+{
+    if (!gaitActive || appMode != APP_MODE_SIMULATION) return;
+
+    // Same reasoning as advanceAutoGravity's own drag-pause: let the user's
+    // drag win outright rather than fighting it or catching up afterward.
+    if (app.draggingRobotSim) return;
+
+    DWORD now = GetTickCount();
+    DWORD elapsed = now - gaitLastTickTime;
+    if (elapsed == 0) return;
+
+    if (elapsed > SIMULATION_AUTO_GRAVITY_MAX_DT_MS)
+        elapsed = SIMULATION_AUTO_GRAVITY_MAX_DT_MS; // same stall-guard auto-gravity uses
+
+    gaitLastTickTime = now;
+
+    float simElapsed = (float)elapsed * simTimeScale; // Slow Motion, same as advanceAutoGravity
+
+    gaitPhaseUnwrapped += simElapsed / SIMULATION_GAIT_CYCLE_MS;
+
+    float phase = fmodf(gaitPhaseUnwrapped, 1.0f);
+    float hipDeg, kneeDeg, bodyDeg, hopY;
+    sampleGaitCycle(phase, &hipDeg, &kneeDeg, &bodyDeg, &hopY);
+
+    // Forward progress is the UNWRAPPED phase times the per-cycle step
+    // length -- e.g. after 2.5 cycles, gaitPhaseUnwrapped is 2.5, so the
+    // robot has moved 2.5 step-lengths forward, continuously and without
+    // any special-casing at each loop boundary (unlike hipDeg/kneeDeg/
+    // bodyDeg/hopY above, which DO reset every cycle via fmodf's wrap).
+    float forwardX = gaitPhaseUnwrapped * SIMULATION_GAIT_STEP_LENGTH;
+
+    app.robotScene.robot = gaitBaseline;
+    app.robotScene.robot.hipAngle  += hipDeg;
+    app.robotScene.robot.kneeAngle += kneeDeg;
+    app.robotScene.robot.angle     += bodyDeg;
+    translateRobot(&app.robotScene.robot, forwardX, hopY);
+
+    InvalidateRect(hWnd, NULL, FALSE);
+}
+
+// Toggles the gait cycle on/off -- shared by Shift+W (WM_KEYDOWN) and a
+// direct click on the "Walk" button (WM_COMMAND's ID_WALK_TOGGLE), so the
+// two input paths can never drift apart. Captures gaitBaseline (the pose
+// the cycle swings around) fresh every time it's switched ON, so
+// re-toggling Walk after posing the robot differently restarts the cycle
+// around the NEW pose rather than snapping back to whatever it was the
+// first time Walk was turned on this session.
+static void ToggleGait(HWND hWnd)
+{
+    gaitActive = !gaitActive;
+
+    if (gaitActive)
+    {
+        gaitBaseline = app.robotScene.robot;
+        gaitPhaseUnwrapped = 0.0f;
+        gaitLastTickTime = GetTickCount();
+        SetTimer(hWnd, AUTO_GAIT_TIMER_ID, SIMULATION_AUTO_GRAVITY_INTERVAL_MS, NULL);
+    }
+    else
+    {
+        KillTimer(hWnd, AUTO_GAIT_TIMER_ID);
+    }
+
+    if (hWalkBtn)
+        SendMessage(hWalkBtn, BM_SETCHECK, gaitActive ? BST_CHECKED : BST_UNCHECKED, 0);
+
+    gaitToastOn = gaitActive;
+    gaitToastStartTick = GetTickCount();
+    InvalidateRect(hWnd, NULL, FALSE);
+}
+
 // Bottom-left "AUTO GRAVITY ON"/"AUTO GRAVITY OFF" toast (canvasRenderFrame
 // draws it, WM_KEYDOWN's Shift+G branch below sets these). Stateless fade:
 // gravityToastStartTick is just a GetTickCount() snapshot from the moment
@@ -1387,6 +1572,41 @@ void canvasRenderFrame(float dimAmount)
         }
     }
 
+    // Shift+W's "WALK ON"/"WALK OFF" toast -- same stateless-fade pattern
+    // as the gravity toast just above, one line higher (y=36 vs y=20) so
+    // both can show at once without overlapping if auto-gravity and Walk
+    // are toggled close together.
+    if (gaitToastStartTick != 0)
+    {
+        DWORD elapsed = GetTickCount() - gaitToastStartTick;
+        float toastAlpha = 0.0f;
+
+        if (elapsed < SIMULATION_GRAVITY_TOAST_HOLD_MS)
+        {
+            toastAlpha = 1.0f;
+        }
+        else if (elapsed < (DWORD)(SIMULATION_GRAVITY_TOAST_HOLD_MS + SIMULATION_GRAVITY_TOAST_FADE_MS))
+        {
+            float fadeElapsed = (float)(elapsed - SIMULATION_GRAVITY_TOAST_HOLD_MS);
+            toastAlpha = 1.0f - (fadeElapsed / (float)SIMULATION_GRAVITY_TOAST_FADE_MS);
+        }
+
+        if (toastAlpha > 0.0f)
+        {
+            const char* toastStr = gaitToastOn ? "WALK ON" : "WALK OFF";
+            float tr = gaitToastOn ? 0.15f : 0.4f;
+            float tg = gaitToastOn ? 0.55f : 0.4f;
+            float tb = gaitToastOn ? 0.15f : 0.4f;
+
+            glColor4f(tr, tg, tb, toastAlpha);
+            glRasterPos2i(10, 36);
+            glPushAttrib(GL_LIST_BIT);
+            glListBase(fontBase - 32);
+            glCallLists((GLsizei)strlen(toastStr), GL_UNSIGNED_BYTE, toastStr);
+            glPopAttrib();
+        }
+    }
+
     glDisable(GL_BLEND);
 
     glMatrixMode(GL_PROJECTION); glPopMatrix();
@@ -1645,6 +1865,13 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
                             WS_CHILD | BS_AUTOCHECKBOX | BS_PUSHLIKE,
                             10, 10, 120, 28, hWnd, (HMENU)ID_SLOW_MOTION,
                             GetModuleHandle(NULL), NULL);
+
+        // "Walk" toggle (Shift+W) -- directly below Slow Motion (28px tall
+        // + 6px gap), same hidden-until-Simulation treatment.
+        hWalkBtn = CreateWindowEx(0, L"BUTTON", L"Walk",
+                            WS_CHILD | BS_AUTOCHECKBOX | BS_PUSHLIKE,
+                            10, 44, 120, 28, hWnd, (HMENU)ID_WALK_TOGGLE,
+                            GetModuleHandle(NULL), NULL);
         return 0;
     }
     case WM_TIMER:
@@ -1672,6 +1899,23 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             return 0;
         }
 
+        // Shift+W's "Walk" -- same fallback-driver/defensive-shutoff
+        // structure as AUTO_GRAVITY_TIMER_ID just above, own timer ID so
+        // gravity and the gait cycle can each be toggled independently.
+        if (wParam == AUTO_GAIT_TIMER_ID)
+        {
+            if (appMode == APP_MODE_SIMULATION)
+            {
+                advanceGait(hWnd);
+            }
+            else
+            {
+                gaitActive = FALSE;
+                KillTimer(hWnd, AUTO_GAIT_TIMER_ID);
+            }
+            return 0;
+        }
+
         // Keeps the gravity toast's fade animating even after auto-gravity's
         // own timer has stopped ticking (e.g. the "AUTO GRAVITY OFF" toast,
         // or "ON" if the robot lands and applyGravityStep's per-tick
@@ -1686,6 +1930,17 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             DWORD elapsed = GetTickCount() - gravityToastStartTick;
             if (elapsed >= (DWORD)(SIMULATION_GRAVITY_TOAST_HOLD_MS + SIMULATION_GRAVITY_TOAST_FADE_MS))
                 gravityToastStartTick = 0;
+
+            InvalidateRect(hWnd, NULL, FALSE);
+        }
+
+        // Same fade-keeping piggyback as the gravity toast just above, for
+        // the "WALK ON"/"WALK OFF" toast.
+        if (wParam == UI_HOTZONE_TIMER_ID && gaitToastStartTick != 0)
+        {
+            DWORD elapsed = GetTickCount() - gaitToastStartTick;
+            if (elapsed >= (DWORD)(SIMULATION_GRAVITY_TOAST_HOLD_MS + SIMULATION_GRAVITY_TOAST_FADE_MS))
+                gaitToastStartTick = 0;
 
             InvalidateRect(hWnd, NULL, FALSE);
         }
@@ -2030,6 +2285,25 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             return 0;
         }
 
+        // Shift+W: toggles the scripted gait cycle ("Walk") on/off --
+        // same structure as Shift+G's auto-gravity toggle just above
+        // (own timer, own auto-repeat guard, own toast), independent of
+        // it -- gravity and Walk can each be on or off regardless of the
+        // other. Captures gaitBaseline (the pose the cycle swings around)
+        // fresh every time it's switched ON, so re-toggling Walk after
+        // posing the robot differently restarts the cycle around the NEW
+        // pose rather than snapping back to whatever it was the first
+        // time Walk was turned on this session.
+        if (wParam == 'W' && appMode == APP_MODE_SIMULATION && (GetAsyncKeyState(VK_SHIFT) & 0x8000))
+        {
+            BOOL isAutoRepeat = (lParam & 0x40000000) != 0;
+
+            if (!isAutoRepeat)
+                ToggleGait(hWnd);
+
+            return 0;
+        }
+
         // Plain Left/Right (no Shift): rotates the WHOLE robot
         // (Semni.angle), not any one joint -- joints are a Shift+scroll-
         // over-the-hovered-circle action instead (WM_MOUSEWHEEL above),
@@ -2205,6 +2479,10 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	    // going instead of blocking it -- no-ops instantly if auto gravity
 	    // isn't currently on.
 	    advanceAutoGravity(hWnd);
+
+	    // Same reasoning, for the gait cycle -- no-ops instantly if Walk
+	    // isn't currently on.
+	    advanceGait(hWnd);
 
 	    if (app.draggingRobotSim)
 	    {
@@ -2433,6 +2711,22 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	        // keeps working immediately, with no extra click needed.
 	        SetFocus(hWnd);
 	    }
+	    else if (LOWORD(wParam) == ID_WALK_TOGGLE)
+	    {
+	        // ToggleGait maintains its own authoritative gaitActive bool
+	        // (needed since Shift+W, WM_KEYDOWN, drives this same toggle
+	        // without ever touching the button) and re-syncs hWalkBtn's
+	        // checkbox to match every time -- BS_AUTOCHECKBOX already
+	        // flipped it once on this real click, but ToggleGait's own
+	        // BM_SETCHECK just re-affirms the same state, so this is safe
+	        // to call unconditionally rather than reading BM_GETCHECK back.
+	        ToggleGait(hWnd);
+
+	        // Same reasoning as ID_SLOW_MOTION's SetFocus just above --
+	        // hand keyboard focus back so G/Shift+G/Shift+W/arrow keys etc.
+	        // keep working immediately after the click.
+	        SetFocus(hWnd);
+	    }
 	    else if (LOWORD(wParam) == ID_LAYER_ROBOT || LOWORD(wParam) == ID_LAYER_ENVIRONMENT || LOWORD(wParam) == ID_MODE_SIMULATION)
 	    {
 	        // "Mode" is the second top-level popup (index 1, after "File");
@@ -2573,6 +2867,31 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	            }
 	        }
 
+	        // Same show/hide-on-mode-switch treatment for "Walk" -- also
+	        // stops the gait cycle and kills its timer on the way out (same
+	        // reasoning as autoGravityActive's own reset just below: doesn't
+	        // make sense to keep animating once Simulation isn't active,
+	        // and leaving it "on" would restart mid-cycle, at whatever pose
+	        // gaitBaseline still holds from before, the next time Simulation
+	        // is entered -- confusing rather than a useful persisted state).
+	        if (hWalkBtn)
+	        {
+	            if (appMode == APP_MODE_SIMULATION)
+	            {
+	                ShowWindow(hWalkBtn, SW_SHOW);
+	            }
+	            else
+	            {
+	                ShowWindow(hWalkBtn, SW_HIDE);
+	                SendMessage(hWalkBtn, BM_SETCHECK, BST_UNCHECKED, 0);
+	                if (gaitActive)
+	                {
+	                    gaitActive = FALSE;
+	                    KillTimer(hWnd, AUTO_GAIT_TIMER_ID);
+	                }
+	            }
+	        }
+
 	        // The Environment-only panel (hWndUI) can't rely on WM_TIMER to
 	        // fade itself out here -- see HideUIPanelImmediately's comment --
 	        // so force it closed immediately whenever the mode we just
@@ -2598,6 +2917,10 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	        // while actually in Simulation.
 	        if (appMode != APP_MODE_SIMULATION)
 	            gravityToastStartTick = 0;
+
+	        // Same reasoning, for Shift+W's "WALK ON/OFF" toast.
+	        if (appMode != APP_MODE_SIMULATION)
+	            gaitToastStartTick = 0;
 
 	        if (hWndGL) InvalidateRect(hWndGL, NULL, FALSE);
 	    }

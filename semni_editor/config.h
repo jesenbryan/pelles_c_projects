@@ -331,3 +331,51 @@
 // rotation (hip/knee) is the Shift-gated action instead -- see
 // SIMULATION_JOINT_ROTATE_STEP_DEG and WM_MOUSEWHEEL's Shift check.
 #define SIMULATION_WHOLE_BODY_ROTATE_STEP_DEG 2.0f
+
+// ---- Scripted gait ("Walk" toggle, Shift+W -- see canvas.c's gaitActive/
+// advanceGait/gaitCycle) ----
+//
+// Semni has one leg, not two (no second innerCircle/kneeCircle/ankleCircle
+// to alternate onto) -- so this isn't a classic alternating bipedal walk,
+// it's a single-leg hop/pivot cycle: crouch, push off, swing the leg
+// forward through the air, land, repeat. canvas.c's gaitCycle table drives
+// hipAngle/kneeAngle/whole-body angle as DELTAS from whatever pose the
+// robot was in the moment Walk was toggled on (gaitBaseline), plus a
+// vertical "hop" bob and continuous forward world-X translation -- so
+// whatever pose you've already dialed in (Design > Robot, or Simulation's
+// own Shift+scroll/arrow-key posing) becomes the neutral stance the gait
+// cycles around, rather than assuming any one fixed geometry.
+//
+// This is a first-pass, purely SCRIPTED cycle -- it does not look at the
+// drawn environment at all (no foot-placement/terrain-following yet, see
+// the "what's next" discussion this came out of), so the numbers below are
+// a reasonable starting guess, not a tuned result: expect to adjust them
+// (including possibly FLIPPING a sign, if a swing reads as going the wrong
+// direction once you can actually see it) after watching it run once.
+
+// How long one full crouch -> push -> swing -> land cycle takes, in real
+// milliseconds, before Slow Motion's simTimeScale scales it down the same
+// way it scales auto-gravity's fall speed.
+#define SIMULATION_GAIT_CYCLE_MS 1200.0f
+
+// Forward world-X distance covered per FULL cycle (continuous, not a
+// discrete jump at the loop boundary -- see advanceGait's phaseUnwrapped).
+#define SIMULATION_GAIT_STEP_LENGTH 0.18f
+
+// Peak vertical "hop" bob, world units, relative to gaitBaseline's Y --
+// purely oscillatory (returns to 0 every cycle), separate from the
+// continuously-accumulating forward step length above.
+#define SIMULATION_GAIT_HOP_HEIGHT 0.06f
+
+// How far the hip swings the leg forward/back from the baseline pose over
+// the course of a cycle, in degrees.
+#define SIMULATION_GAIT_HIP_SWING_DEG 24.0f
+
+// How far the knee bends (relative to baseline) during the crouch and the
+// forward swing (bent to clear the ground), in degrees.
+#define SIMULATION_GAIT_KNEE_BEND_DEG 30.0f
+
+// Small whole-body forward lean during the push/swing portion of the
+// cycle, in degrees -- purely cosmetic (sells the "leaning into the hop"
+// look), independent of hipAngle/kneeAngle.
+#define SIMULATION_GAIT_BODY_LEAN_DEG 6.0f
