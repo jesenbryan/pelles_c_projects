@@ -54,6 +54,40 @@ static void adjustShinArcs(AppState* app)
     app->robotScene.robot.shinArc2Angle = clampToSafeAngleRange(app->robotScene.robot.shinArc2Angle, range2, SHIN_ARC_ANGLE_MARGIN_DEG);
 }
 
+// Hit-tests Rocky's 4 rectangle edges (left/right/top/bottom) against a
+// point already given in the rectangle's OWN local frame (i.e. already
+// run through inverseRotate around getRockyCenter -- see WM_LBUTTONDOWN/
+// WM_MOUSEMOVE below), so this never has to know about rotation itself.
+// A point counts as "on" an edge if it's within ROCKY_EDGE_HIT_TOLERANCE
+// of that edge's line AND within a small slack margin of the edge's own
+// span (so a corner doesn't ambiguously hit both edges that meet there --
+// it just picks whichever is checked first, left/right before top/
+// bottom). Returns ROCKY_EDGE_NONE if the point isn't near any edge.
+static int hitTestRockyEdge(Rocky r, PointF localPoint)
+{
+    float left   = r.bodyX - r.bodyHalfWidth;
+    float right  = r.bodyX + r.bodyHalfWidth;
+    float bottom = r.bodyY - r.bodyHalfHeight;
+    float top    = r.bodyY + r.bodyHalfHeight;
+
+    float slackX = r.bodyHalfWidth * 0.15f + ROCKY_EDGE_HIT_TOLERANCE;
+    float slackY = r.bodyHalfHeight * 0.15f + ROCKY_EDGE_HIT_TOLERANCE;
+
+    BOOL withinY = (localPoint.y > bottom - slackY) && (localPoint.y < top + slackY);
+    BOOL withinX = (localPoint.x > left - slackX) && (localPoint.x < right + slackX);
+
+    if (withinY && fabsf(localPoint.x - left) < ROCKY_EDGE_HIT_TOLERANCE)
+        return ROCKY_EDGE_LEFT;
+    if (withinY && fabsf(localPoint.x - right) < ROCKY_EDGE_HIT_TOLERANCE)
+        return ROCKY_EDGE_RIGHT;
+    if (withinX && fabsf(localPoint.y - bottom) < ROCKY_EDGE_HIT_TOLERANCE)
+        return ROCKY_EDGE_BOTTOM;
+    if (withinX && fabsf(localPoint.y - top) < ROCKY_EDGE_HIT_TOLERANCE)
+        return ROCKY_EDGE_TOP;
+
+    return ROCKY_EDGE_NONE;
+}
+
 // NEW: middle-mouse drag-pan state, mirroring canvas.c's ArcSpline
 // panning/panLastX/panLastY -- gives the Semni robot editor the same
 // pan gesture instead of only supporting zoom.
@@ -145,13 +179,18 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             app->draggingShin1 = 0;
             app->draggingShin2 = 0;
             app->draggingRockyBody = 0;
+            app->draggingRockyEdge = ROCKY_EDGE_NONE;
 
             // Rocky's rectangular torso has one hip-like handle (see
             // app.h's hoverRockyBody/draggingRockyBody): hover to
             // highlight, drag to move the whole robot, plain scroll (see
-            // WM_MOUSEWHEEL) to resize. Nothing else on Rocky is
-            // draggable yet, and Stilo has no handles at all yet -- see
-            // the RobotKind comment on the fallthrough break below.
+            // WM_MOUSEWHEEL) to resize. It also has 4 edge midpoints
+            // (hoverRockyEdge/draggingRockyEdge, see ROCKY_EDGE_* in
+            // app.h) -- hover/drag one of those to stretch just that
+            // dimension instead of moving or uniformly scaling. Nothing
+            // else on Rocky is draggable yet, and Stilo has no handles at
+            // all yet -- see the RobotKind comment on the fallthrough
+            // break below.
             if (app->robotScene.activeKind == ROBOT_KIND_ROCKY)
             {
                 PointF rockyCenter = getRockyCenter(app->robotScene.rocky);
@@ -169,6 +208,14 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
 
                     app->rockyDragAnkleOffset.x = app->robotScene.rocky.ankleCircle.x - app->robotScene.rocky.bodyX;
                     app->rockyDragAnkleOffset.y = app->robotScene.rocky.ankleCircle.y - app->robotScene.rocky.bodyY;
+                }
+                else
+                {
+                    // Not on the move-handle -- check the 4 edge
+                    // midpoints instead, in the rectangle's own local
+                    // (unrotated) frame, same as hitTestRockyEdge expects.
+                    PointF localMouseDown = inverseRotate(app->mouseGL, rockyCenter, app->robotScene.rocky.angle);
+                    app->draggingRockyEdge = hitTestRockyEdge(app->robotScene.rocky, localMouseDown);
                 }
                 break;
             }
@@ -405,6 +452,7 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             app->draggingShin1 = 0;
             app->draggingShin2 = 0;
             app->draggingRockyBody = 0;
+            app->draggingRockyEdge = ROCKY_EDGE_NONE;
             app->activeHandle = 0;
         }
         break;
@@ -441,13 +489,25 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             {
                 PointF rockyCenter = getRockyCenter(app->robotScene.rocky);
 
+                // Same local frame hitTestRockyEdge expects -- computed
+                // once here so it can feed both the hover check below and
+                // the resize-drag branch further down.
+                PointF localMouse = inverseRotate(app->mouseGL, rockyCenter, app->robotScene.rocky.angle);
+
                 app->hoverRockyBody = isNear(app->mouseGL, rockyCenter, HIP_HANDLE_RADIUS);
-                SetWindowText(app->ui.hHoverLabel, app->hoverRockyBody ? L"Body" : L"");
+                app->hoverRockyEdge = app->hoverRockyBody ? ROCKY_EDGE_NONE : hitTestRockyEdge(app->robotScene.rocky, localMouse);
+
+                const wchar_t* rockyHoverLabel = L"";
+                if (app->hoverRockyBody)
+                    rockyHoverLabel = L"Body";
+                else if (app->hoverRockyEdge == ROCKY_EDGE_LEFT || app->hoverRockyEdge == ROCKY_EDGE_RIGHT)
+                    rockyHoverLabel = L"Body Width";
+                else if (app->hoverRockyEdge == ROCKY_EDGE_TOP || app->hoverRockyEdge == ROCKY_EDGE_BOTTOM)
+                    rockyHoverLabel = L"Body Height";
+                SetWindowText(app->ui.hHoverLabel, rockyHoverLabel);
 
                 if (app->draggingRockyBody)
                 {
-                    PointF localMouse = inverseRotate(app->mouseGL, rockyCenter, app->robotScene.rocky.angle);
-
                     app->robotScene.rocky.kneeCircle.x = localMouse.x + app->rockyDragKneeOffset.x;
                     app->robotScene.rocky.kneeCircle.y = localMouse.y + app->rockyDragKneeOffset.y;
 
@@ -456,6 +516,23 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
 
                     app->robotScene.rocky.bodyX = localMouse.x;
                     app->robotScene.rocky.bodyY = localMouse.y;
+                }
+                else if (app->draggingRockyEdge == ROCKY_EDGE_LEFT || app->draggingRockyEdge == ROCKY_EDGE_RIGHT)
+                {
+                    // Dragging a side edge stretches the half-width only --
+                    // the opposite edge (and the whole rectangle's center/
+                    // leg) stays put, same as dragging a window border.
+                    float newHalfWidth = fabsf(localMouse.x - app->robotScene.rocky.bodyX);
+                    if (newHalfWidth < MIN_ROCKY_BODY_HALF) newHalfWidth = MIN_ROCKY_BODY_HALF;
+                    if (newHalfWidth > MAX_ROCKY_BODY_HALF) newHalfWidth = MAX_ROCKY_BODY_HALF;
+                    app->robotScene.rocky.bodyHalfWidth = newHalfWidth;
+                }
+                else if (app->draggingRockyEdge == ROCKY_EDGE_TOP || app->draggingRockyEdge == ROCKY_EDGE_BOTTOM)
+                {
+                    float newHalfHeight = fabsf(localMouse.y - app->robotScene.rocky.bodyY);
+                    if (newHalfHeight < MIN_ROCKY_BODY_HALF) newHalfHeight = MIN_ROCKY_BODY_HALF;
+                    if (newHalfHeight > MAX_ROCKY_BODY_HALF) newHalfHeight = MAX_ROCKY_BODY_HALF;
+                    app->robotScene.rocky.bodyHalfHeight = newHalfHeight;
                 }
                 break;
             }
@@ -1716,6 +1793,8 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                         app->draggingShin2 = 0;
                         app->draggingRockyBody = 0;
                         app->hoverRockyBody = 0;
+                        app->draggingRockyEdge = ROCKY_EDGE_NONE;
+                        app->hoverRockyEdge = ROCKY_EDGE_NONE;
                         app->activeHandle = 0;
                         app->hoveredCircleSegment = -1;
                         app->hoveredBodyCircle = -1;

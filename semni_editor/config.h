@@ -11,6 +11,11 @@
 #define MIN_ROCKY_BODY_HALF 0.10f
 #define MAX_ROCKY_BODY_HALF 0.70f
 
+// How close the mouse needs to be (in local, pre-rotation world units) to
+// one of Rocky's rectangle edges to count as hovering/grabbing it for a
+// resize drag -- see input.c's hitTestRockyEdge.
+#define ROCKY_EDGE_HIT_TOLERANCE 0.03f
+
 // all draggable handles are drawn semi-transparent so they read as
 // lightweight overlays instead of solid shapes sitting on top of the robot
 #define HANDLE_ALPHA 0.45f

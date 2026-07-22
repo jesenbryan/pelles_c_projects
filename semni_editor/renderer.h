@@ -22,6 +22,12 @@ typedef struct {
     int hoverRockyBody;
     int draggingRockyBody;
 
+    // Which edge of Rocky's rectangle (see app.h's ROCKY_EDGE_* constants)
+    // is hovered/being dragged for a resize -- mirrors app->hoverRockyEdge/
+    // draggingRockyEdge.
+    int hoverRockyEdge;
+    int draggingRockyEdge;
+
     // hover-only state for the joint circle handles (hip/knee/ankle/
     // head/butt), so they can highlight from a hover, not just a drag
     int hoverHip;

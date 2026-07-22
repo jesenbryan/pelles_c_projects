@@ -848,10 +848,14 @@ static void drawRockyBodyRect(Rocky b, RenderState* rs, float opacity)
     PointF c3 = rotatePoint((PointF){ b.bodyX - b.bodyHalfWidth, b.bodyY + b.bodyHalfHeight }, center, angle);
 
     // highlights the same way Semni's hip circle does in drawSemniBody --
-    // dragging (actively resizing/moving) or a plain hover both light it
-    // up, since (unlike hoverHip) there's no Shift-gated rotate on this
-    // handle to disambiguate from.
-    setColor(rs, rs->draggingRockyBody || rs->hoverRockyBody, 0.2f, 0.4f, 1.0f, opacity);
+    // dragging (actively resizing/moving, whether via the body handle or
+    // one of the 4 edges) or a plain hover both light it up, since
+    // (unlike hoverHip) there's no Shift-gated rotate on this handle to
+    // disambiguate from.
+    BOOL rockyBodyActive = rs->draggingRockyBody || rs->hoverRockyBody
+                         || rs->draggingRockyEdge != ROCKY_EDGE_NONE
+                         || rs->hoverRockyEdge != ROCKY_EDGE_NONE;
+    setColor(rs, rockyBodyActive, 0.2f, 0.4f, 1.0f, opacity);
     glBegin(GL_LINE_LOOP);
     glVertex2f(c0.x, c0.y);
     glVertex2f(c1.x, c1.y);
@@ -913,6 +917,23 @@ void drawRocky(Rocky b, RenderState* rs, int includeHandles, float opacity)
     {
         PointF center = getRockyCenter(b);
         drawHandle(center, rs->draggingRockyBody || rs->hoverRockyBody, HIP_HANDLE_RADIUS, opacity);
+
+        // One small handle at the midpoint of each of the 4 edges --
+        // marks where hovering + dragging resizes just that side (see
+        // input.c's hitTestRockyEdge), same idea as the body handle
+        // above but sized down a notch (KNEE_HANDLE_RADIUS) so the two
+        // read as different, less prominent handles.
+        float angle = b.angle;
+
+        PointF leftMid   = rotatePoint((PointF){ b.bodyX - b.bodyHalfWidth, b.bodyY }, center, angle);
+        PointF rightMid  = rotatePoint((PointF){ b.bodyX + b.bodyHalfWidth, b.bodyY }, center, angle);
+        PointF bottomMid = rotatePoint((PointF){ b.bodyX, b.bodyY - b.bodyHalfHeight }, center, angle);
+        PointF topMid    = rotatePoint((PointF){ b.bodyX, b.bodyY + b.bodyHalfHeight }, center, angle);
+
+        drawHandle(leftMid,   rs->draggingRockyEdge == ROCKY_EDGE_LEFT   || rs->hoverRockyEdge == ROCKY_EDGE_LEFT,   KNEE_HANDLE_RADIUS, opacity);
+        drawHandle(rightMid,  rs->draggingRockyEdge == ROCKY_EDGE_RIGHT  || rs->hoverRockyEdge == ROCKY_EDGE_RIGHT,  KNEE_HANDLE_RADIUS, opacity);
+        drawHandle(bottomMid, rs->draggingRockyEdge == ROCKY_EDGE_BOTTOM || rs->hoverRockyEdge == ROCKY_EDGE_BOTTOM, KNEE_HANDLE_RADIUS, opacity);
+        drawHandle(topMid,    rs->draggingRockyEdge == ROCKY_EDGE_TOP    || rs->hoverRockyEdge == ROCKY_EDGE_TOP,    KNEE_HANDLE_RADIUS, opacity);
     }
 }
 
@@ -1015,6 +1036,8 @@ static void renderRobot(AppState* app, int includeHandles, float opacity)
 
     rs.hoverRockyBody = app->hoverRockyBody;
     rs.draggingRockyBody = app->draggingRockyBody;
+    rs.hoverRockyEdge = app->hoverRockyEdge;
+    rs.draggingRockyEdge = app->draggingRockyEdge;
 
     rs.hoverHip = app->hoverHip;
     rs.hoverKnee = app->hoverKnee;

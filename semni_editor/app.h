@@ -17,6 +17,19 @@
 // buttons below it act on -- see input.c's WM_CREATE/WM_COMMAND.
 #define ID_ROBOT_SELECTOR 1008
 
+// Which side of Rocky's rectangle the mouse is near/dragging (see
+// input.c's hitTestRockyEdge and app->hoverRockyEdge/draggingRockyEdge
+// below) -- 0 means "not near any edge". Dragging LEFT/RIGHT changes
+// bodyHalfWidth, dragging TOP/BOTTOM changes bodyHalfHeight, same
+// fixed-center symmetric resize as the body handle's own scroll-to-resize
+// (see WM_MOUSEWHEEL), just driven by absolute mouse position instead of
+// wheel notches.
+#define ROCKY_EDGE_NONE   0
+#define ROCKY_EDGE_LEFT   1
+#define ROCKY_EDGE_RIGHT  2
+#define ROCKY_EDGE_TOP    3
+#define ROCKY_EDGE_BOTTOM 4
+
 // ---- robot model (the "Semni") ----
 
 typedef struct {
@@ -277,6 +290,15 @@ typedef struct {
     // edited, even though only one of the two is ever active at once.
     int hoverRockyBody;
     int draggingRockyBody;
+
+    // Which edge of Rocky's rectangle (see the ROCKY_EDGE_* constants
+    // above) the mouse is near, or is currently being dragged -- a
+    // second, independent handle from hoverRockyBody/draggingRockyBody
+    // above (only one of the two is ever active at a time, same
+    // mutual-exclusion WM_LBUTTONDOWN already gives the body handle vs.
+    // everything else).
+    int hoverRockyEdge;
+    int draggingRockyEdge;
 
     // captured once, when a Rocky body drag starts: kneeCircle's and
     // ankleCircle's fixed offsets from (bodyX, bodyY) at that moment --
