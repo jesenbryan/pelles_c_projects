@@ -155,29 +155,8 @@ PointF getRockyCenter(Rocky r)
     return c;
 }
 
-// Same reasoning as mirrorHipLeg above, just with kneeCircle standing in
-// for Semni's innerCircle (Rocky's own root joint, rigidly attached to
-// the body and rotated only by the whole-body angle -- see drawRockyLeg)
-// and footCircle as its one child joint (swung by kneeAngle, same nested
-// relationship kneeCircle has to innerCircle for Semni). Both are stored
-// as raw local coordinates in that same shared body-frame (see
-// drawRockyLeg's rotatePoint(b.kneeCircle, ...) / jointToWorld(b.footCircle,
-// b.kneeCircle, ...)), so they mirror the same way: reflect both about the
-// body's own center line (bodyX, same reference getRockyCenter uses) and
-// negate the one rotation angle downstream of that reflected root.
-//
-// Previously this only negated kneeAngle and left kneeCircle/footCircle
-// untouched -- correct for a knee sitting exactly on the body's center
-// line (bodyX), but the knee handle can be dragged anywhere inside the
-// rectangle (see input.c's draggingRockyKnee), so an off-center knee just
-// sat in place and only the bend direction flipped, instead of the whole
-// leg actually swapping sides. Reflecting kneeCircle.x/footCircle.x here
-// too makes the mirror respect wherever the leg currently is.
 void mirrorRockyLeg(Rocky* r)
 {
-    r->kneeCircle.x  = 2.0f * r->bodyX - r->kneeCircle.x;
-    r->footCircle.x = 2.0f * r->bodyX - r->footCircle.x;
-
     r->kneeAngle = -r->kneeAngle;
 
     r->shinArc1Angle = mirrorArcAngle(r->shinArc1Angle);
