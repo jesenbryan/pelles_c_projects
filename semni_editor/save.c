@@ -2,6 +2,7 @@
 #include <GL/gl.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <wchar.h>
 #include <math.h>
 
@@ -243,5 +244,126 @@ int saveStiloAsEquations(const char* filename, AppState* app)
     GetCurrentDirectoryA(MAX_PATH, path);
     printf("Saved Stilo equations as TXT in: %s\\%s\n", path, filename);
 
+    return 1;
+}
+
+// ---- pose file loaders (read back what save*AsEquations wrote) ----
+
+int loadRobotPoseFromFile(const char* filename, Semni* out)
+{
+    FILE* f = fopen(filename, "r");
+    if (!f)
+        return 0;
+
+    char line[128];
+    char key[64];
+    float value;
+
+    while (fgets(line, sizeof(line), f))
+    {
+        if (sscanf(line, "%63[^=]=%f", key, &value) != 2)
+            continue;
+
+        if      (strcmp(key, "HEAD_X") == 0) out->headX = value;
+        else if (strcmp(key, "HEAD_Y") == 0) out->y = value;
+        else if (strcmp(key, "HEAD_RADIUS") == 0) out->headRadius = value;
+        else if (strcmp(key, "BUTT_X") == 0) out->buttX = value;
+        else if (strcmp(key, "BUTT_Y") == 0) out->y = value; // same field as HEAD_Y -- both restate Semni's one shared body Y
+        else if (strcmp(key, "BUTT_RADIUS") == 0) out->buttRadius = value;
+        else if (strcmp(key, "SEAM_ARC1_ANGLE") == 0) out->seamArc1Angle = value;
+        else if (strcmp(key, "SEAM_ARC2_ANGLE") == 0) out->seamArc2Angle = value;
+        else if (strcmp(key, "HIP_X") == 0) out->innerCircle.x = value;
+        else if (strcmp(key, "HIP_Y") == 0) out->innerCircle.y = value;
+        else if (strcmp(key, "HIP_RADIUS") == 0) out->innerRadius = value;
+        else if (strcmp(key, "HIP_ANGLE") == 0) out->hipAngle = value;
+        else if (strcmp(key, "KNEE_X") == 0) out->kneeCircle.x = value;
+        else if (strcmp(key, "KNEE_Y") == 0) out->kneeCircle.y = value;
+        else if (strcmp(key, "KNEE_RADIUS") == 0) out->kneeRadius = value;
+        else if (strcmp(key, "KNEE_ANGLE") == 0) out->kneeAngle = value;
+        else if (strcmp(key, "THIGH_ARC1_ANGLE") == 0) out->thighArc1Angle = value;
+        else if (strcmp(key, "THIGH_ARC2_ANGLE") == 0) out->thighArc2Angle = value;
+        else if (strcmp(key, "ANKLE_X") == 0) out->ankleCircle.x = value;
+        else if (strcmp(key, "ANKLE_Y") == 0) out->ankleCircle.y = value;
+        else if (strcmp(key, "ANKLE_RADIUS") == 0) out->ankleRadius = value;
+        else if (strcmp(key, "SHIN_ARC1_ANGLE") == 0) out->shinArc1Angle = value;
+        else if (strcmp(key, "SHIN_ARC2_ANGLE") == 0) out->shinArc2Angle = value;
+        else if (strcmp(key, "BODY_ANGLE") == 0) out->angle = value;
+    }
+
+    fclose(f);
+    return 1;
+}
+
+int loadRockyPoseFromFile(const char* filename, Rocky* out)
+{
+    FILE* f = fopen(filename, "r");
+    if (!f)
+        return 0;
+
+    char line[128];
+    char key[64];
+    float value;
+
+    while (fgets(line, sizeof(line), f))
+    {
+        if (sscanf(line, "%63[^=]=%f", key, &value) != 2)
+            continue;
+
+        if      (strcmp(key, "BODY_X") == 0) out->bodyX = value;
+        else if (strcmp(key, "BODY_Y") == 0) out->bodyY = value;
+        else if (strcmp(key, "BODY_HALF_WIDTH") == 0) out->bodyHalfWidth = value;
+        else if (strcmp(key, "BODY_HALF_HEIGHT") == 0) out->bodyHalfHeight = value;
+        else if (strcmp(key, "BODY_ANGLE") == 0) out->angle = value;
+        else if (strcmp(key, "KNEE_X") == 0) out->kneeCircle.x = value;
+        else if (strcmp(key, "KNEE_Y") == 0) out->kneeCircle.y = value;
+        else if (strcmp(key, "KNEE_RADIUS") == 0) out->kneeRadius = value;
+        else if (strcmp(key, "KNEE_ANGLE") == 0) out->kneeAngle = value;
+        else if (strcmp(key, "ANKLE_X") == 0) out->ankleCircle.x = value;
+        else if (strcmp(key, "ANKLE_Y") == 0) out->ankleCircle.y = value;
+        else if (strcmp(key, "ANKLE_RADIUS") == 0) out->ankleRadius = value;
+        else if (strcmp(key, "SHIN_ARC1_ANGLE") == 0) out->shinArc1Angle = value;
+        else if (strcmp(key, "SHIN_ARC2_ANGLE") == 0) out->shinArc2Angle = value;
+    }
+
+    fclose(f);
+    return 1;
+}
+
+int loadStiloPoseFromFile(const char* filename, Stilo* out)
+{
+    FILE* f = fopen(filename, "r");
+    if (!f)
+        return 0;
+
+    char line[128];
+    char key[64];
+    float value;
+
+    while (fgets(line, sizeof(line), f))
+    {
+        if (sscanf(line, "%63[^=]=%f", key, &value) != 2)
+            continue;
+
+        if      (strcmp(key, "HEAD_X") == 0) out->headX = value;
+        else if (strcmp(key, "HEAD_Y") == 0) out->y = value;
+        else if (strcmp(key, "HEAD_RADIUS") == 0) out->headRadius = value;
+        else if (strcmp(key, "BUTT_X") == 0) out->buttX = value;
+        else if (strcmp(key, "BUTT_Y") == 0) out->y = value; // same field as HEAD_Y -- both restate Stilo's one shared body Y
+        else if (strcmp(key, "BUTT_RADIUS") == 0) out->buttRadius = value;
+        else if (strcmp(key, "SEAM_ARC1_ANGLE") == 0) out->seamArc1Angle = value;
+        else if (strcmp(key, "SEAM_ARC2_ANGLE") == 0) out->seamArc2Angle = value;
+        else if (strcmp(key, "HIP_X") == 0) out->innerCircle.x = value;
+        else if (strcmp(key, "HIP_Y") == 0) out->innerCircle.y = value;
+        else if (strcmp(key, "HIP_RADIUS") == 0) out->innerRadius = value;
+        else if (strcmp(key, "HIP_ANGLE") == 0) out->hipAngle = value;
+        else if (strcmp(key, "ANKLE_X") == 0) out->ankleCircle.x = value;
+        else if (strcmp(key, "ANKLE_Y") == 0) out->ankleCircle.y = value;
+        else if (strcmp(key, "ANKLE_RADIUS") == 0) out->ankleRadius = value;
+        else if (strcmp(key, "LEG_ARC1_ANGLE") == 0) out->thighArc1Angle = value;
+        else if (strcmp(key, "LEG_ARC2_ANGLE") == 0) out->thighArc2Angle = value;
+        else if (strcmp(key, "BODY_ANGLE") == 0) out->angle = value;
+    }
+
+    fclose(f);
     return 1;
 }

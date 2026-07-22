@@ -70,30 +70,22 @@ static void adjustRockyShinArcs(AppState* app)
 // Keeps the knee handle honest whenever the rectangle's own size changes
 // (scroll on the body handle, or dragging an edge -- see WM_MOUSEWHEEL/
 // WM_MOUSEMOVE's ROBOT_KIND_ROCKY branches): shrinking the body can
-// otherwise leave the knee circle sitting outside the new, smaller
+// otherwise leave the knee handle sitting outside the new, smaller
 // rectangle, which the free-drag clamp in WM_MOUSEMOVE only enforces
 // WHILE actively dragging the knee itself, not when the body changes size
-// out from under it. Re-applies the exact same "clamp position, inset by
-// radius, fall back to centering on an axis that's now too small" logic
-// as that drag, plus a radius clamp the drag doesn't need (the knee's own
-// size can't change mid-drag, only the body's size changing here can make
-// it suddenly too big to fit).
+// out from under it. Only the handle's PIVOT POINT has to stay inside the
+// rectangle -- the knee CIRCLE it draws (whatever kneeRadius happens to
+// be) is free to poke outside the body's edges, so this clamps position
+// only, straight to the rectangle's bounds, with no radius inset and no
+// radius clamp.
 static void clampRockyKneeToBody(AppState* app)
 {
     Rocky* r = &app->robotScene.rocky;
 
-    float maxRadius = r->bodyHalfWidth;
-    if (r->bodyHalfHeight < maxRadius) maxRadius = r->bodyHalfHeight;
-    if (r->kneeRadius > maxRadius) r->kneeRadius = maxRadius;
-    if (r->kneeRadius < MIN_R) r->kneeRadius = MIN_R;
-
-    float minX = r->bodyX - r->bodyHalfWidth + r->kneeRadius;
-    float maxX = r->bodyX + r->bodyHalfWidth - r->kneeRadius;
-    float minY = r->bodyY - r->bodyHalfHeight + r->kneeRadius;
-    float maxY = r->bodyY + r->bodyHalfHeight - r->kneeRadius;
-
-    if (minX > maxX) { minX = maxX = r->bodyX; }
-    if (minY > maxY) { minY = maxY = r->bodyY; }
+    float minX = r->bodyX - r->bodyHalfWidth;
+    float maxX = r->bodyX + r->bodyHalfWidth;
+    float minY = r->bodyY - r->bodyHalfHeight;
+    float maxY = r->bodyY + r->bodyHalfHeight;
 
     PointF oldKnee = r->kneeCircle;
     PointF newKnee = oldKnee;
@@ -109,10 +101,6 @@ static void clampRockyKneeToBody(AppState* app)
     r->kneeCircle = newKnee;
     r->ankleCircle.x += delta.x;
     r->ankleCircle.y += delta.y;
-
-    // knee radius may have just shrunk above -- re-validate the shin arcs
-    // against it, same as the plain-scroll kneeRadius resize does
-    adjustRockyShinArcs(app);
 }
 
 // Hit-tests Rocky's 4 rectangle edges (left/right/top/bottom) against a
@@ -621,25 +609,18 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 }
                 else if (app->draggingRockyKnee)
                 {
-                    // free to move anywhere in the rectangle (not
+                    // Free to move anywhere in the rectangle (not
                     // constrained to an axis the way Semni's hip->knee
-                    // drag is), clamped so the knee circle's own
-                    // circumference never pokes outside the body -- inset
-                    // each bound by kneeRadius, so the clamped position is
-                    // where the CENTER is allowed to go, not just where it
-                    // touches the edge.
-                    float minX = app->robotScene.rocky.bodyX - app->robotScene.rocky.bodyHalfWidth + app->robotScene.rocky.kneeRadius;
-                    float maxX = app->robotScene.rocky.bodyX + app->robotScene.rocky.bodyHalfWidth - app->robotScene.rocky.kneeRadius;
-                    float minY = app->robotScene.rocky.bodyY - app->robotScene.rocky.bodyHalfHeight + app->robotScene.rocky.kneeRadius;
-                    float maxY = app->robotScene.rocky.bodyY + app->robotScene.rocky.bodyHalfHeight - app->robotScene.rocky.kneeRadius;
-
-                    // if the knee circle is too big to fit inset from both
-                    // sides (bodyHalfWidth/Height smaller than kneeRadius),
-                    // the range above inverts -- fall back to pinning it to
-                    // the body's own center on that axis instead of
-                    // letting min/max cross over
-                    if (minX > maxX) { minX = maxX = app->robotScene.rocky.bodyX; }
-                    if (minY > maxY) { minY = maxY = app->robotScene.rocky.bodyY; }
+                    // drag is), clamped so the handle's PIVOT POINT never
+                    // leaves the body -- straight to the rectangle's own
+                    // bounds, no radius inset. The knee CIRCLE itself
+                    // (drawn at whatever kneeRadius happens to be) is free
+                    // to stick out past the edges; only the draggable dot
+                    // has to stay inside.
+                    float minX = app->robotScene.rocky.bodyX - app->robotScene.rocky.bodyHalfWidth;
+                    float maxX = app->robotScene.rocky.bodyX + app->robotScene.rocky.bodyHalfWidth;
+                    float minY = app->robotScene.rocky.bodyY - app->robotScene.rocky.bodyHalfHeight;
+                    float maxY = app->robotScene.rocky.bodyY + app->robotScene.rocky.bodyHalfHeight;
 
                     float newKneeX = localMouse.x;
                     if (newKneeX < minX) newKneeX = minX;
@@ -1688,8 +1669,9 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
 
             int relYTitle    = pad;
             int relYSelector = relYTitle    + titleH    + rowGap;  // robot picker (Semni/Rocky/Stilo)
-            int relYRow1     = relYSelector + comboRowH + rowGap;  // Standing | Home
-            int relYRow2     = relYRow1     + btnH      + rowGap;  // Save | Mirror Leg
+            int relYRow1     = relYSelector + comboRowH + rowGap;  // Home | Standing
+            int relYRow1b    = relYRow1     + btnH      + rowGap;  // Set Home | Set Standing
+            int relYRow2     = relYRow1b    + btnH      + rowGap;  // Save | Mirror Leg
             int relYScale    = relYRow2     + btnH       + rowGap; // Scale label + slider
             int relYSeg      = relYScale    + sliderH    + rowGap; // View Segments
             int relYDebug    = relYSeg      + btnH       + rowGap; // Debug Log
@@ -1723,12 +1705,24 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                  col1X, panelY + relYSelector, contentW, 120,
                  SWP_NOZORDER);
 
-            SetWindowPos(app->ui.hStandingPositionButton, NULL,
+            // Swapped from their original Standing-left/Home-right order.
+            SetWindowPos(app->ui.hHomePositionButton, NULL,
                  col1X, panelY + relYRow1, colW, btnH,
                  SWP_NOZORDER);
 
-            SetWindowPos(app->ui.hHomePositionButton, NULL,
+            SetWindowPos(app->ui.hStandingPositionButton, NULL,
                  col2X, panelY + relYRow1, colW, btnH,
+                 SWP_NOZORDER);
+
+            // Set Home / Set Standing sit directly under the button whose
+            // target pose they capture, so the column each is in matches
+            // up with Home/Standing above.
+            SetWindowPos(app->ui.hSetHomeButton, NULL,
+                 col1X, panelY + relYRow1b, colW, btnH,
+                 SWP_NOZORDER);
+
+            SetWindowPos(app->ui.hSetStandingButton, NULL,
+                 col2X, panelY + relYRow1b, colW, btnH,
                  SWP_NOZORDER);
 
             SetWindowPos(app->ui.hSaveButton, NULL,
@@ -1805,6 +1799,8 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 app->ui.hRobotSelector,
                 app->ui.hStandingPositionButton,
                 app->ui.hHomePositionButton,
+                app->ui.hSetStandingButton,
+                app->ui.hSetHomeButton,
                 app->ui.hSaveButton,
                 app->ui.hMirrorButton,
                 app->ui.hScaleLabel,
@@ -1914,6 +1910,35 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 NULL
             );
              SendMessage(app->ui.hHomePositionButton, WM_SETFONT, (WPARAM)g_semniUIFont, TRUE);
+
+             // Captures the CURRENT pose as the new Standing/Home target
+             // (see app.h's hSetStandingButton/hSetHomeButton comment and
+             // input.c's ID_SET_STANDING_BUTTON/ID_SET_HOME_BUTTON below) --
+             // a row of their own, directly under the Standing/Home
+             // buttons they modify.
+             app->ui.hSetStandingButton = CreateWindow(
+                L"BUTTON",
+                L"Set Standing",
+                WS_VISIBLE | WS_CHILD,
+                0, 0, 10, 10,
+                hwnd,
+                (HMENU)ID_SET_STANDING_BUTTON,
+                NULL,
+                NULL
+            );
+             SendMessage(app->ui.hSetStandingButton, WM_SETFONT, (WPARAM)g_semniUIFont, TRUE);
+
+             app->ui.hSetHomeButton = CreateWindow(
+                L"BUTTON",
+                L"Set Home",
+                WS_VISIBLE | WS_CHILD,
+                0, 0, 10, 10,
+                hwnd,
+                (HMENU)ID_SET_HOME_BUTTON,
+                NULL,
+                NULL
+            );
+             SendMessage(app->ui.hSetHomeButton, WM_SETFONT, (WPARAM)g_semniUIFont, TRUE);
 
              app->ui.hSaveButton = CreateWindow(
                 L"BUTTON",
@@ -2140,19 +2165,29 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     break;
 
                 case ID_STANDING_POSITION_BUTTON:
+				    // Prefer a user-saved custom pose (see ID_SET_STANDING_
+				    // BUTTON below) if one exists on disk for whichever
+				    // robot is active -- only falls back to the hardcoded
+				    // app_init.c default when no such file has ever been
+				    // saved (loadXPoseFromFile returns 0 and leaves the
+				    // robot untouched in that case, so the init* call below
+				    // is what actually applies the default pose).
 				    switch (app->robotScene.activeKind)
 				    {
 				        case ROBOT_KIND_ROCKY:
-				            initRockyStandingPosition(app);
+				            if (!loadRockyPoseFromFile("rocky_standing.txt", &app->robotScene.rocky))
+				                initRockyStandingPosition(app);
 				            break;
 
 				        case ROBOT_KIND_STILO:
-				            initStiloStandingPosition(app);
+				            if (!loadStiloPoseFromFile("stilo_standing.txt", &app->robotScene.stilo))
+				                initStiloStandingPosition(app);
 				            break;
 
 				        case ROBOT_KIND_SEMNI:
 				        default:
-				            initStandingPosition(app);
+				            if (!loadRobotPoseFromFile("semni_standing.txt", &app->robotScene.robot))
+				                initStandingPosition(app);
 				            break;
 				    }
 				    InvalidateRect(hwnd, NULL, FALSE);
@@ -2160,22 +2195,71 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
 				    break;
 
 				case ID_HOME_POSITION_BUTTON:
+				    // Same "custom file first, hardcoded default as
+				    // fallback" pattern as Standing above.
 				    switch (app->robotScene.activeKind)
 				    {
 				        case ROBOT_KIND_ROCKY:
-				            initRockyHomePosition(app);
+				            if (!loadRockyPoseFromFile("rocky_home.txt", &app->robotScene.rocky))
+				                initRockyHomePosition(app);
 				            break;
 
 				        case ROBOT_KIND_STILO:
-				            initStiloHomePosition(app);
+				            if (!loadStiloPoseFromFile("stilo_home.txt", &app->robotScene.stilo))
+				                initStiloHomePosition(app);
 				            break;
 
 				        case ROBOT_KIND_SEMNI:
 				        default:
-				            initHomePosition(app);
+				            if (!loadRobotPoseFromFile("semni_home.txt", &app->robotScene.robot))
+				                initHomePosition(app);
 				            break;
 				    }
 				    InvalidateRect(hwnd, NULL, FALSE);
+				    SetFocus(app->hwndMain);
+				    break;
+
+				case ID_SET_STANDING_BUTTON:
+				    // Captures the CURRENT pose (not the default -- whatever
+				    // is on screen right now) as the new Standing target for
+				    // whichever robot is active, persisted to its own file
+				    // so ID_STANDING_POSITION_BUTTON above picks it up from
+				    // now on, including after restarting the app.
+				    switch (app->robotScene.activeKind)
+				    {
+				        case ROBOT_KIND_ROCKY:
+				            saveRockyAsEquations("rocky_standing.txt", app);
+				            break;
+
+				        case ROBOT_KIND_STILO:
+				            saveStiloAsEquations("stilo_standing.txt", app);
+				            break;
+
+				        case ROBOT_KIND_SEMNI:
+				        default:
+				            saveRobotAsEquations("semni_standing.txt", app);
+				            break;
+				    }
+				    SetFocus(app->hwndMain);
+				    break;
+
+				case ID_SET_HOME_BUTTON:
+				    // Same idea as Set Standing above, for Home.
+				    switch (app->robotScene.activeKind)
+				    {
+				        case ROBOT_KIND_ROCKY:
+				            saveRockyAsEquations("rocky_home.txt", app);
+				            break;
+
+				        case ROBOT_KIND_STILO:
+				            saveStiloAsEquations("stilo_home.txt", app);
+				            break;
+
+				        case ROBOT_KIND_SEMNI:
+				        default:
+				            saveRobotAsEquations("semni_home.txt", app);
+				            break;
+				    }
 				    SetFocus(app->hwndMain);
 				    break;
 

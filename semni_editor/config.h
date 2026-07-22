@@ -8,7 +8,13 @@
 // joint-CIRCLE radius range) since this bounds a rectangle's half-extents
 // instead, and Rocky's default half-height (see initRockyStandingPosition,
 // app_init.c) is already bigger than MAX_R.
-#define MIN_ROCKY_BODY_HALF 0.10f
+//
+// Lowered from an earlier 0.10f floor -- that made the rectangle unable to
+// go much thinner/shorter than roughly half its default size. Still kept
+// strictly positive (and comfortably above 0) so the rectangle can never
+// collapse to a sliver or flip inside-out, just a much lower floor than
+// before.
+#define MIN_ROCKY_BODY_HALF 0.02f
 #define MAX_ROCKY_BODY_HALF 0.70f
 
 // How close the mouse needs to be (in local, pre-rotation world units) to

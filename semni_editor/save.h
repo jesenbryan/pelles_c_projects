@@ -21,3 +21,19 @@ int saveRobotAsEquations(const char* filename, AppState* app);
 // which of these three to call based on app->robotScene.activeKind.
 int saveRockyAsEquations(const char* filename, AppState* app);
 int saveStiloAsEquations(const char* filename, AppState* app);
+
+// Reads back the KEY=value equations format the three save*AsEquations
+// functions above write, into "out" -- same field/key mapping, so a file
+// saved by one of them round-trips exactly through the matching loader
+// here. Used to load a user-set custom Standing/Home pose (see input.c's
+// ID_SET_STANDING_BUTTON/ID_SET_HOME_BUTTON, which save to these same
+// files, and ID_STANDING_POSITION_BUTTON/ID_HOME_POSITION_BUTTON, which
+// load them back). Returns 0 if the file doesn't exist (or can't be
+// opened) WITHOUT touching "out" at all, so the caller can just fall back
+// to its own hardcoded default in that case -- 1 on success. Unrecognized
+// keys (e.g. from a hand-edited or stale file) are silently skipped rather
+// than treated as an error, same forgiving spirit as the rest of this
+// file's plain-text format.
+int loadRobotPoseFromFile(const char* filename, Semni* out);
+int loadRockyPoseFromFile(const char* filename, Rocky* out);
+int loadStiloPoseFromFile(const char* filename, Stilo* out);

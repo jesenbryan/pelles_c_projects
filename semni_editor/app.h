@@ -11,6 +11,8 @@
 #define ID_SCALE_SLIDER 1005
 #define ID_VIEW_SEGMENTS_BUTTON 1006
 #define ID_DEBUG_LOG_BUTTON 1007
+#define ID_SET_STANDING_BUTTON 1009
+#define ID_SET_HOME_BUTTON 1010
 
 // dropdown at the top of the control panel that picks which of the three
 // robots (Semni/Rocky/Stilo) the Standing/Home/Save/Mirror/Debug Log
@@ -220,6 +222,16 @@ typedef struct {
     HWND hMirrorButton;
     HWND hStandingPositionButton;
     HWND hHomePositionButton;
+
+    // Captures the CURRENT pose as the new Standing/Home target for
+    // whichever robot is active, persisted to disk (see save.h's
+    // loadRobotPoseFromFile/loadRockyPoseFromFile/loadStiloPoseFromFile
+    // and input.c's ID_SET_STANDING_BUTTON/ID_SET_HOME_BUTTON handling) --
+    // Standing/Home above then load that custom file instead of the
+    // hardcoded app_init.c default, falling back to the default if no
+    // custom pose was ever saved.
+    HWND hSetStandingButton;
+    HWND hSetHomeButton;
 
     // top-right robot "size" slider (0.25 - 1.0, see ROBOT_SCALE_MIN/MAX
     // in config.h) + its static label, a row below the buttons above.
