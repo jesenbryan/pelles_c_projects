@@ -26,12 +26,12 @@
 // lightweight overlays instead of solid shapes sitting on top of the robot
 #define HANDLE_ALPHA 0.45f
 
-// handle sizes taper down the leg (hip > knee > ankle) and along each limb
+// handle sizes taper down the leg (hip > knee > foot) and along each limb
 // (thigh bulge handles > shin bulge handles), echoing the limb getting
 // thinner toward the foot.
 #define HIP_HANDLE_RADIUS   0.020f
 #define KNEE_HANDLE_RADIUS  0.016f
-#define ANKLE_HANDLE_RADIUS 0.012f
+#define FOOT_HANDLE_RADIUS 0.012f
 
 // handle for the top/bottom seam fillet arcs -- sits at each arc's
 // outward peak point; dragging it changes that arc's fillet radius
@@ -111,7 +111,7 @@
 // constant (up for more room, down for less).
 //
 // Named Semni-specific (rather than the old shared MAX_THIGH_ARC_R) because
-// Stilo's own hip-to-ankle leg (drawStilo, renderer.c) reuses this exact
+// Stilo's own hip-to-foot leg (drawStilo, renderer.c) reuses this exact
 // same fillet construction and field naming for its own thighArc1Angle/
 // thighArc2Angle, but has no interactive drag handle for it at all (see
 // app.h's Stilo comment) -- its angle is a fixed pose default, never user-
@@ -140,7 +140,7 @@
 // every reachable angle's natural radius safely inside [MIN_THIGH_ARC_R,
 // MAX_SEMNI_THIGH_ARC_R] with no clamp ever firing, so tangency can't break.
 
-// Stilo's own hip-to-ankle leg arc cap (drawStilo's leg1Fillet, renderer.c)
+// Stilo's own hip-to-foot leg arc cap (drawStilo's leg1Fillet, renderer.c)
 // -- kept at the ORIGINAL, un-lowered value MAX_SEMNI_THIGH_ARC_R used to
 // share with it, since Stilo's leg has no drag handle to reduce the range
 // of in the first place (see the comment above). Reuses MIN_THIGH_ARC_R
@@ -198,31 +198,55 @@
 // which way the leg is currently posed/rotated.
 #define THIGH_ARC_DRAG_SENSITIVITY_DEG_PER_UNIT 200.0f
 
-// the shin (kneeCircle -> ankleCircle) arcs use the exact same tangent-
+// the shin (kneeCircle -> footCircle) arcs use the exact same tangent-
 // restricted-fillet construction as the thigh arcs above, just one joint
 // further down the chain -- same MIN/MAX_ARC_R + margin + sensitivity
 // pattern, kept as separate constants so the shin's feel can be tuned
 // independently. MAX_SHIN_ARC_R is picked with the same ratio to the
-// knee-ankle distance (~0.30 for the default pose) that MAX_ARC_R has to
+// knee-foot distance (~0.30 for the default pose) that MAX_ARC_R has to
 // the head-butt distance, same reasoning as MAX_THIGH_ARC_R.
+//
+// MAX_SHIN_ARC_R and SHIN_ARC_SIDE_MARGIN_DEG below are also read by
+// Rocky (adjustRockyShinArcs / drawRockyLeg's shin1Fillet), unlike
+// MAX_THIGH_ARC_R which had to be split into MAX_SEMNI_THIGH_ARC_R /
+// MAX_STILO_LEG_ARC_R -- no split needed here because Rocky's own
+// knee/foot layout is deliberately near-identical to Semni's (same
+// 0.08/0.05 radii, ~0.30 vs ~0.2986 knee-foot distance), so tightening
+// these for Semni's interactive shin arc 1 drag leaves Rocky's shared
+// default shinArc1Angle (169.821564 deg, ~79.8 deg off its own centerDeg)
+// comfortably inside its own safe range too -- verified numerically for
+// both robots before lowering the cap. Rocky has no shin-arc-1 drag
+// handle at all, so SHIN_ARC_SIDE_MARGIN_DEG (interactive-drag-only,
+// same as THIGH_ARC_SIDE_MARGIN_DEG's exclusivity to thigh arc 1) never
+// touches Rocky's behavior regardless.
+//
+// Range reduced the same safe way as thigh arc 1 (see the MIN-radius-
+// floor warning above -- never touch MIN_SHIN_ARC_R for this): lowering
+// MAX_SHIN_ARC_R alone barely shrinks the practical range since the
+// fillet's natural radius grows fast near the singularity, so it's
+// paired with a substantial SHIN_ARC_SIDE_MARGIN_DEG increase (a pure
+// angle-window restriction) to actually cut the draggable span -- from
+// ~86.8 deg down to ~49.6 deg (~57%, same ratio as thigh arc 1's cut),
+// leaving ~4.7 deg of clearance around the default pose's own angle so
+// it never gets nudged by adjustShinArcs's clampToSafeAngleRange.
 #define MIN_SHIN_ARC_R 0.05f
-#define MAX_SHIN_ARC_R 1.5f
+#define MAX_SHIN_ARC_R 1.0f
 #define SHIN_ARC_ANGLE_MARGIN_DEG 2.0f
-#define SHIN_ARC_SIDE_MARGIN_DEG 1.0f
+#define SHIN_ARC_SIDE_MARGIN_DEG 35.0f
 #define SHIN_ARC_DRAG_SENSITIVITY_DEG_PER_UNIT 200.0f
 
 // same role as MAX_THIGH_ARC2_CONCAVE_R above, for shin arc 2 -- it's
 // also built with filletFromAttachAngleConcave instead of the usual
-// filletFromAttachAngle, bulging inward toward the knee-ankle axis
+// filletFromAttachAngle, bulging inward toward the knee-foot axis
 // instead of outward. Verified numerically: 0.5 gives a ~69 degree safe
 // half-width around its own center, comfortably clear of the singularity
-// for this knee/ankle layout. Reuses MIN_SHIN_ARC_R/
+// for this knee/foot layout. Reuses MIN_SHIN_ARC_R/
 // SHIN_ARC_ANGLE_MARGIN_DEG/SHIN_ARC_DRAG_SENSITIVITY_DEG_PER_UNIT for
 // everything else -- no separate SIDE_MARGIN needed, same reasoning as
 // thigh arc 2 (its concave range doesn't overlap shin arc 1's convex one).
 #define MAX_SHIN_ARC2_CONCAVE_R 0.5f
 
-// minimum thigh/shin length, so dragging the knee or ankle circle along
+// minimum thigh/shin length, so dragging the knee or foot circle along
 // its constrained axis can't collapse the limb to zero or flip it
 // through the pivot
 #define MIN_LIMB_LENGTH 0.1f
@@ -415,7 +439,7 @@
 // ---- Scripted gait ("Walk" toggle, Shift+W -- see canvas.c's gaitActive/
 // advanceGait/gaitCycle) ----
 //
-// Semni has one leg, not two (no second innerCircle/kneeCircle/ankleCircle
+// Semni has one leg, not two (no second innerCircle/kneeCircle/footCircle
 // to alternate onto) -- so this isn't a classic alternating bipedal walk,
 // it's a single-leg hop/pivot cycle: crouch, push off, swing the leg
 // forward through the air, land, repeat. canvas.c's gaitCycle table drives

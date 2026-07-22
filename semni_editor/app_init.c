@@ -20,9 +20,9 @@ void initHomePosition(AppState* app)
 	app->robotScene.robot.kneeRadius = 0.080000f;
 	app->robotScene.robot.thighArc1Angle = 161.913239f;
 	app->robotScene.robot.thighArc2Angle = -19.956024f;
-	app->robotScene.robot.ankleCircle.x = 0.000000f;
-	app->robotScene.robot.ankleCircle.y = -1.590574f;
-	app->robotScene.robot.ankleRadius = 0.050000f;
+	app->robotScene.robot.footCircle.x = 0.000000f;
+	app->robotScene.robot.footCircle.y = -1.590574f;
+	app->robotScene.robot.footRadius = 0.050000f;
 	app->robotScene.robot.shinArc1Angle = 169.821564f;
 	app->robotScene.robot.shinArc2Angle = -22.810974f;
 }
@@ -47,9 +47,9 @@ void initStandingPosition(AppState* app)
 	app->robotScene.robot.kneeRadius = 0.080000f;
 	app->robotScene.robot.thighArc1Angle = 161.913239f;
 	app->robotScene.robot.thighArc2Angle = -19.956024f;
-	app->robotScene.robot.ankleCircle.x = 0.000000f;
-	app->robotScene.robot.ankleCircle.y = -1.240574f;
-	app->robotScene.robot.ankleRadius = 0.050000f;
+	app->robotScene.robot.footCircle.x = 0.000000f;
+	app->robotScene.robot.footCircle.y = -1.240574f;
+	app->robotScene.robot.footRadius = 0.050000f;
 	app->robotScene.robot.shinArc1Angle = 169.821564f;
 	app->robotScene.robot.shinArc2Angle = -22.810974f;
 }
@@ -73,12 +73,12 @@ void initRockyStandingPosition(AppState* app)
 	app->robotScene.rocky.kneeCircle.y = -0.300000f;
 	app->robotScene.rocky.kneeRadius = 0.080000f;
 	app->robotScene.rocky.kneeAngle = 0.000000f;
-	app->robotScene.rocky.ankleCircle.x = 0.000000f;
-	app->robotScene.rocky.ankleCircle.y = -0.600000f;
-	app->robotScene.rocky.ankleRadius = 0.050000f;
-	// shin arc angles borrowed directly from Semni's own knee-to-ankle
+	app->robotScene.rocky.footCircle.x = 0.000000f;
+	app->robotScene.rocky.footCircle.y = -0.600000f;
+	app->robotScene.rocky.footRadius = 0.050000f;
+	// shin arc angles borrowed directly from Semni's own knee-to-foot
 	// defaults (initStandingPosition above) -- same construction, same
-	// knee/ankle radii, so the same angles already look right.
+	// knee/foot radii, so the same angles already look right.
 	app->robotScene.rocky.shinArc1Angle = 169.821564f;
 	app->robotScene.rocky.shinArc2Angle = -22.810974f;
 }
@@ -96,9 +96,9 @@ void initRockyHomePosition(AppState* app)
 	// bent knee for a crouched "home" pose -- angle stays 0 (whole body
 	// untouched), only the leg swings around kneeCircle
 	app->robotScene.rocky.kneeAngle = -35.000000f;
-	app->robotScene.rocky.ankleCircle.x = 0.000000f;
-	app->robotScene.rocky.ankleCircle.y = -0.600000f;
-	app->robotScene.rocky.ankleRadius = 0.050000f;
+	app->robotScene.rocky.footCircle.x = 0.000000f;
+	app->robotScene.rocky.footCircle.y = -0.600000f;
+	app->robotScene.rocky.footRadius = 0.050000f;
 	app->robotScene.rocky.shinArc1Angle = 169.821564f;
 	app->robotScene.rocky.shinArc2Angle = -22.810974f;
 }
@@ -115,7 +115,7 @@ void initRockyHomePosition(AppState* app)
 // too) -- that pins the hip in place regardless of angle. hipAngle is set
 // to exactly -angle so the two rotations cancel (rotating twice around
 // the SAME point is just one rotation by their sum), which means
-// ankleCircle's stored coordinates below are already its exact final
+// footCircle's stored coordinates below are already its exact final
 // on-screen offset from the hip -- no compounded rotation to reason
 // about, unlike Semni's own hand-tuned hipAngle.
 void initStiloStandingPosition(AppState* app)
@@ -132,9 +132,9 @@ void initStiloStandingPosition(AppState* app)
 	app->robotScene.stilo.innerRadius = 0.120000f;
 	app->robotScene.stilo.angle = 90.000000f;
 	app->robotScene.stilo.hipAngle = -90.000000f;
-	app->robotScene.stilo.ankleCircle.x = 0.000000f;
-	app->robotScene.stilo.ankleCircle.y = -0.850000f;
-	app->robotScene.stilo.ankleRadius = 0.060000f;
+	app->robotScene.stilo.footCircle.x = 0.000000f;
+	app->robotScene.stilo.footCircle.y = -0.850000f;
+	app->robotScene.stilo.footRadius = 0.060000f;
 	app->robotScene.stilo.thighArc1Angle = 170.000000f;
 	app->robotScene.stilo.thighArc2Angle = -15.000000f;
 }
@@ -155,9 +155,9 @@ void initStiloHomePosition(AppState* app)
 	app->robotScene.stilo.hipAngle = -90.000000f;
 	// leg tucked up and to the side (shorter, angled offset from the hip)
 	// for a crouched "home" pose, instead of straight down
-	app->robotScene.stilo.ankleCircle.x = 0.200000f;
-	app->robotScene.stilo.ankleCircle.y = -0.800000f;
-	app->robotScene.stilo.ankleRadius = 0.060000f;
+	app->robotScene.stilo.footCircle.x = 0.200000f;
+	app->robotScene.stilo.footCircle.y = -0.800000f;
+	app->robotScene.stilo.footRadius = 0.060000f;
 	app->robotScene.stilo.thighArc1Angle = 170.000000f;
 	app->robotScene.stilo.thighArc2Angle = -15.000000f;
 }

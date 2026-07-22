@@ -138,10 +138,10 @@ int saveRobotAsEquations(const char* filename, AppState* app)
     fprintf(f, "THIGH_ARC1_ANGLE=%.6f\n", robot->thighArc1Angle);
     fprintf(f, "THIGH_ARC2_ANGLE=%.6f\n", robot->thighArc2Angle);
 
-    // SHIN - Ankle Circle
-    fprintf(f, "ANKLE_X=%.6f\n", robot->ankleCircle.x);
-    fprintf(f, "ANKLE_Y=%.6f\n", robot->ankleCircle.y);
-    fprintf(f, "ANKLE_RADIUS=%.6f\n", robot->ankleRadius);
+    // SHIN - Foot Circle
+    fprintf(f, "FOOT_X=%.6f\n", robot->footCircle.x);
+    fprintf(f, "FOOT_Y=%.6f\n", robot->footCircle.y);
+    fprintf(f, "FOOT_RADIUS=%.6f\n", robot->footRadius);
 
     // SHIN - Arcs
     fprintf(f, "SHIN_ARC1_ANGLE=%.6f\n", robot->shinArc1Angle);
@@ -180,10 +180,10 @@ int saveRockyAsEquations(const char* filename, AppState* app)
     fprintf(f, "KNEE_RADIUS=%.6f\n", r->kneeRadius);
     fprintf(f, "KNEE_ANGLE=%.6f\n", r->kneeAngle);
 
-    // LEG - Ankle Circle
-    fprintf(f, "ANKLE_X=%.6f\n", r->ankleCircle.x);
-    fprintf(f, "ANKLE_Y=%.6f\n", r->ankleCircle.y);
-    fprintf(f, "ANKLE_RADIUS=%.6f\n", r->ankleRadius);
+    // LEG - Foot Circle
+    fprintf(f, "FOOT_X=%.6f\n", r->footCircle.x);
+    fprintf(f, "FOOT_Y=%.6f\n", r->footCircle.y);
+    fprintf(f, "FOOT_RADIUS=%.6f\n", r->footRadius);
 
     // LEG - Shin Arcs
     fprintf(f, "SHIN_ARC1_ANGLE=%.6f\n", r->shinArc1Angle);
@@ -226,12 +226,12 @@ int saveStiloAsEquations(const char* filename, AppState* app)
     fprintf(f, "HIP_RADIUS=%.6f\n", s->innerRadius);
     fprintf(f, "HIP_ANGLE=%.6f\n", s->hipAngle);
 
-    // LEG - Ankle Circle (no knee stage -- see app.h's Stilo comment)
-    fprintf(f, "ANKLE_X=%.6f\n", s->ankleCircle.x);
-    fprintf(f, "ANKLE_Y=%.6f\n", s->ankleCircle.y);
-    fprintf(f, "ANKLE_RADIUS=%.6f\n", s->ankleRadius);
+    // LEG - Foot Circle (no knee stage -- see app.h's Stilo comment)
+    fprintf(f, "FOOT_X=%.6f\n", s->footCircle.x);
+    fprintf(f, "FOOT_Y=%.6f\n", s->footCircle.y);
+    fprintf(f, "FOOT_RADIUS=%.6f\n", s->footRadius);
 
-    // LEG - hip-to-ankle Arcs
+    // LEG - hip-to-foot Arcs
     fprintf(f, "LEG_ARC1_ANGLE=%.6f\n", s->thighArc1Angle);
     fprintf(f, "LEG_ARC2_ANGLE=%.6f\n", s->thighArc2Angle);
 
@@ -282,9 +282,15 @@ int loadRobotPoseFromFile(const char* filename, Semni* out)
         else if (strcmp(key, "KNEE_ANGLE") == 0) out->kneeAngle = value;
         else if (strcmp(key, "THIGH_ARC1_ANGLE") == 0) out->thighArc1Angle = value;
         else if (strcmp(key, "THIGH_ARC2_ANGLE") == 0) out->thighArc2Angle = value;
-        else if (strcmp(key, "ANKLE_X") == 0) out->ankleCircle.x = value;
-        else if (strcmp(key, "ANKLE_Y") == 0) out->ankleCircle.y = value;
-        else if (strcmp(key, "ANKLE_RADIUS") == 0) out->ankleRadius = value;
+        else if (strcmp(key, "FOOT_X") == 0) out->footCircle.x = value;
+        else if (strcmp(key, "FOOT_Y") == 0) out->footCircle.y = value;
+        else if (strcmp(key, "FOOT_RADIUS") == 0) out->footRadius = value;
+        // ANKLE_* is the old key name (from before the ankle->foot rename) --
+        // accepted here too so pose files already saved to disk under the
+        // old name still load correctly. Only FOOT_* is ever written now.
+        else if (strcmp(key, "ANKLE_X") == 0) out->footCircle.x = value;
+        else if (strcmp(key, "ANKLE_Y") == 0) out->footCircle.y = value;
+        else if (strcmp(key, "ANKLE_RADIUS") == 0) out->footRadius = value;
         else if (strcmp(key, "SHIN_ARC1_ANGLE") == 0) out->shinArc1Angle = value;
         else if (strcmp(key, "SHIN_ARC2_ANGLE") == 0) out->shinArc2Angle = value;
         else if (strcmp(key, "BODY_ANGLE") == 0) out->angle = value;
@@ -318,9 +324,13 @@ int loadRockyPoseFromFile(const char* filename, Rocky* out)
         else if (strcmp(key, "KNEE_Y") == 0) out->kneeCircle.y = value;
         else if (strcmp(key, "KNEE_RADIUS") == 0) out->kneeRadius = value;
         else if (strcmp(key, "KNEE_ANGLE") == 0) out->kneeAngle = value;
-        else if (strcmp(key, "ANKLE_X") == 0) out->ankleCircle.x = value;
-        else if (strcmp(key, "ANKLE_Y") == 0) out->ankleCircle.y = value;
-        else if (strcmp(key, "ANKLE_RADIUS") == 0) out->ankleRadius = value;
+        else if (strcmp(key, "FOOT_X") == 0) out->footCircle.x = value;
+        else if (strcmp(key, "FOOT_Y") == 0) out->footCircle.y = value;
+        else if (strcmp(key, "FOOT_RADIUS") == 0) out->footRadius = value;
+        // legacy key name, see loadRobotPoseFromFile's comment above
+        else if (strcmp(key, "ANKLE_X") == 0) out->footCircle.x = value;
+        else if (strcmp(key, "ANKLE_Y") == 0) out->footCircle.y = value;
+        else if (strcmp(key, "ANKLE_RADIUS") == 0) out->footRadius = value;
         else if (strcmp(key, "SHIN_ARC1_ANGLE") == 0) out->shinArc1Angle = value;
         else if (strcmp(key, "SHIN_ARC2_ANGLE") == 0) out->shinArc2Angle = value;
     }
@@ -356,9 +366,13 @@ int loadStiloPoseFromFile(const char* filename, Stilo* out)
         else if (strcmp(key, "HIP_Y") == 0) out->innerCircle.y = value;
         else if (strcmp(key, "HIP_RADIUS") == 0) out->innerRadius = value;
         else if (strcmp(key, "HIP_ANGLE") == 0) out->hipAngle = value;
-        else if (strcmp(key, "ANKLE_X") == 0) out->ankleCircle.x = value;
-        else if (strcmp(key, "ANKLE_Y") == 0) out->ankleCircle.y = value;
-        else if (strcmp(key, "ANKLE_RADIUS") == 0) out->ankleRadius = value;
+        else if (strcmp(key, "FOOT_X") == 0) out->footCircle.x = value;
+        else if (strcmp(key, "FOOT_Y") == 0) out->footCircle.y = value;
+        else if (strcmp(key, "FOOT_RADIUS") == 0) out->footRadius = value;
+        // legacy key name, see loadRobotPoseFromFile's comment above
+        else if (strcmp(key, "ANKLE_X") == 0) out->footCircle.x = value;
+        else if (strcmp(key, "ANKLE_Y") == 0) out->footCircle.y = value;
+        else if (strcmp(key, "ANKLE_RADIUS") == 0) out->footRadius = value;
         else if (strcmp(key, "LEG_ARC1_ANGLE") == 0) out->thighArc1Angle = value;
         else if (strcmp(key, "LEG_ARC2_ANGLE") == 0) out->thighArc2Angle = value;
         else if (strcmp(key, "BODY_ANGLE") == 0) out->angle = value;

@@ -407,7 +407,7 @@ static BOOL pointCollidesWithAnyEnvironmentStroke(float ecx, float ecy, float eR
     return FALSE;
 }
 
-// TRUE if any of the robot's 5 body circles (head/butt/hip/knee/ankle --
+// TRUE if any of the robot's 5 body circles (head/butt/hip/knee/foot --
 // see computeSemniBodyCircles, renderer.h) OR its 6 connecting fillet arcs
 // (seam1/2, thigh1/2, shin1/2 -- see computeSemniArcPoints) overlaps any
 // Environment-layer stroke, in the robot's CURRENT pose/position. Used by
@@ -456,8 +456,8 @@ static BOOL robotCollidesWithEnvironment(Semni robot)
 // Simulation mode only: which of the robot's ROTATABLE joints (hip = body
 // circle index 2, knee = index 3 -- see computeSemniBodyCircles' documented
 // ordering, renderer.h) the given world-space point falls inside, or -1 if
-// neither. Head/butt/ankle are deliberately excluded -- they have no
-// independent rotation angle of their own to spin (ankle's position is
+// neither. Head/butt/foot are deliberately excluded -- they have no
+// independent rotation angle of their own to spin (foot's position is
 // fully determined by kneeCircle + kneeAngle + a fixed local offset, no
 // extra degree of freedom there). Feeds WM_MOUSEWHEEL's joint-rotate
 // feature below: hovering the hip or knee's own visible body circle and
@@ -2741,7 +2741,7 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	            appMode = APP_MODE_SIMULATION;
 
 	            // Design > Robot mode's own hover flags (app.hoverHead/
-	            // hoverButt/hoverAnkle/hoverHip/hoverKnee) are only ever
+	            // hoverButt/hoverFoot/hoverHip/hoverKnee) are only ever
 	            // updated by input.c's WM_MOUSEMOVE, which stops receiving
 	            // messages the moment editor mode leaves EDITOR_MODE_SEMNI --
 	            // so if the user was hovering a handle there right before
@@ -2755,7 +2755,7 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	            // the rest of the session (simHoveredJoint's own comment).
 	            app.hoverHead = FALSE;
 	            app.hoverButt = FALSE;
-	            app.hoverAnkle = FALSE;
+	            app.hoverFoot = FALSE;
 	            app.hoverHip = FALSE;
 	            app.hoverKnee = FALSE;
 	            simHoveredJoint = -1;
@@ -2775,7 +2775,7 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	            app.draggingKnee = 0;
 	            app.draggingThigh1 = 0;
 	            app.draggingThigh2 = 0;
-	            app.draggingAnkle = 0;
+	            app.draggingFoot = 0;
 	            app.draggingShin1 = 0;
 	            app.draggingShin2 = 0;
 	            app.activeHandle = 0;

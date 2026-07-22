@@ -88,21 +88,21 @@ typedef struct {
     float thighArc1Angle;
     float thighArc2Angle;
 
-    // continues the leg past the knee: ankleCircle is the next joint,
+    // continues the leg past the knee: footCircle is the next joint,
     // connected back to kneeCircle by two arcs, same pattern as the thigh
-    PointF ankleCircle;
-    float ankleRadius;
+    PointF footCircle;
+    float footRadius;
 
     // the two shin seams, both parameterized by the angle where they
     // attach to kneeCircle (same circleEdge/filletFromAttachAngle
     // convention as the thigh pair above), with the fillet's radius,
-    // center, and other tangent point (on ankleCircle) derived from that
+    // center, and other tangent point (on footCircle) derived from that
     // angle every frame. Same convex/concave split as thighArc1Angle/
     // thighArc2Angle: shinArc1Angle uses the usual convex construction
     // (filletFromAttachAngle) and bulges outward, away from the
-    // knee-ankle axis. shinArc2Angle uses the concave construction
+    // knee-foot axis. shinArc2Angle uses the concave construction
     // (filletFromAttachAngleConcave) instead and pinches inward, toward
-    // the knee-ankle axis -- its safe range sits on the opposite side of
+    // the knee-foot axis -- its safe range sits on the opposite side of
     // kneeCircle from shinArc1Angle's, so the two don't share a
     // degenerate point to stay clear of and drag independently with no
     // side-locking needed between them.
@@ -112,7 +112,7 @@ typedef struct {
     float angle;      // whole-body rotation
 
     // hip joint rotation: rotates the whole leg chain (kneeCircle,
-    // ankleCircle) around innerCircle, independent of the whole-body angle
+    // footCircle) around innerCircle, independent of the whole-body angle
     // above. thighArc1Angle/thighArc2Angle/shinArc1Angle/shinArc2Angle
     // don't need rotating themselves -- they're angles measured in their
     // own joint's local frame (around innerCircle or kneeCircle), so
@@ -120,7 +120,7 @@ typedef struct {
     // them along automatically.
     float hipAngle;
 
-    // knee joint rotation: rotates just the shin (ankleCircle) around
+    // knee joint rotation: rotates just the shin (footCircle) around
     // kneeCircle, independent of hipAngle/angle
     float kneeAngle;
 } Semni;
@@ -128,8 +128,8 @@ typedef struct {
 // ---- robot model ("Rocky") ----
 //
 // A simpler two-part robot: a rectangular torso, plus a single leg that's
-// otherwise IDENTICAL in construction to Semni's own knee-to-ankle "shin"
-// (kneeCircle -> two tangent-fillet arcs -> ankleCircle, see app.h's Semni
+// otherwise IDENTICAL in construction to Semni's own knee-to-foot "shin"
+// (kneeCircle -> two tangent-fillet arcs -> footCircle, see app.h's Semni
 // comment and renderer.c's drawShin) -- it just hangs directly off the
 // rectangle instead of off a hip/thigh stage. There's no equivalent of
 // Semni's hipAngle here: kneeCircle is rigidly attached to the torso (it
@@ -147,14 +147,14 @@ typedef struct {
     PointF kneeCircle;
     float kneeRadius;
 
-    PointF ankleCircle;
-    float ankleRadius;
+    PointF footCircle;
+    float footRadius;
 
     float shinArc1Angle;
     float shinArc2Angle;
 
     float angle;      // whole-body rotation, around (bodyX, bodyY)
-    float kneeAngle;  // swings the leg (ankleCircle) around kneeCircle
+    float kneeAngle;  // swings the leg (footCircle) around kneeCircle
 } Rocky;
 
 // ---- robot model ("Stilo") ----
@@ -162,9 +162,9 @@ typedef struct {
 // Same torso as Semni (head/butt circles + two seam arcs between them,
 // identical fields/construction -- see drawSemniBody), but the leg has no
 // knee stage: it goes straight from the hip (innerCircle) to the foot
-// (ankleCircle) via ONE pair of tangent-fillet arcs instead of two, so
+// (footCircle) via ONE pair of tangent-fillet arcs instead of two, so
 // thighArc1Angle/thighArc2Angle here connect innerCircle directly to
-// ankleCircle (same convex/concave split as Semni's own thigh arcs, just
+// footCircle (same convex/concave split as Semni's own thigh arcs, just
 // spanning the whole leg instead of stopping at a knee).
 typedef struct {
     float headX, buttX;
@@ -179,14 +179,14 @@ typedef struct {
     PointF innerCircle;
     float innerRadius;
 
-    PointF ankleCircle;
-    float ankleRadius;
+    PointF footCircle;
+    float footRadius;
 
-    float thighArc1Angle;   // hip-to-ankle arc 1 (convex)
-    float thighArc2Angle;   // hip-to-ankle arc 2 (concave)
+    float thighArc1Angle;   // hip-to-foot arc 1 (convex)
+    float thighArc2Angle;   // hip-to-foot arc 2 (concave)
 
     float angle;      // whole-body rotation
-    float hipAngle;   // rotates the leg (ankleCircle) around innerCircle
+    float hipAngle;   // rotates the leg (footCircle) around innerCircle
 } Stilo;
 
 // Which of the three robot models the Robot editor (input.c) is currently
@@ -289,7 +289,7 @@ typedef struct {
     int draggingKnee;
     int draggingThigh1;
     int draggingThigh2;
-    int draggingAnkle;
+    int draggingFoot;
     int draggingShin1;
     int draggingShin2;
 
@@ -313,54 +313,54 @@ typedef struct {
     int draggingRockyEdge;
 
     // Rocky's knee handle -- the joint where the leg (kneeCircle->
-    // ankleCircle, see the Rocky struct comment) attaches to the
+    // footCircle, see the Rocky struct comment) attaches to the
     // rectangle, same role Semni's own kneeCircle plays relative to its
     // hip. Mirrors Semni's hoverKnee/draggingKnee treatment for the
     // hover/scroll/Shift+scroll behaviors, but the drag itself is freer
     // than Semni's own axis-constrained hip->knee drag: it can be dropped
     // anywhere inside the rectangle, clamped so the knee circle's own
     // circumference never pokes outside the body. Plain scroll resizes
-    // kneeRadius, Shift+scroll bends kneeAngle (swings ankleCircle around
+    // kneeRadius, Shift+scroll bends kneeAngle (swings footCircle around
     // the knee) -- see input.c's WM_LBUTTONDOWN/WM_MOUSEMOVE/
     // WM_MOUSEWHEEL ROBOT_KIND_ROCKY branches.
     int hoverRockyKnee;
     int draggingRockyKnee;
 
-    // captured once, when a Rocky knee drag starts: ankleCircle's fixed
+    // captured once, when a Rocky knee drag starts: footCircle's fixed
     // offset from kneeCircle at that moment, re-applied fresh every
     // WM_MOUSEMOVE -- same "pin the shin's shape, only the knee's own
-    // distance from the body changes" idea as kneeDragAnkleOffset below.
-    PointF rockyKneeDragAnkleOffset;
+    // distance from the body changes" idea as kneeDragFootOffset below.
+    PointF rockyKneeDragFootOffset;
 
-    // Rocky's ankle handle -- mirrors Semni's own hoverAnkle/draggingAnkle:
-    // hover to highlight, drag along the knee->ankle axis (constrainToAxis,
+    // Rocky's foot handle -- mirrors Semni's own hoverFoot/draggingFoot:
+    // hover to highlight, drag along the knee->foot axis (constrainToAxis,
     // same as Semni) to change the leg's length. No offset capture needed
-    // -- unlike the knee/body handles, nothing hangs off the ankle for a
+    // -- unlike the knee/body handles, nothing hangs off the foot for a
     // drag to carry along.
-    int hoverRockyAnkle;
-    int draggingRockyAnkle;
+    int hoverRockyFoot;
+    int draggingRockyFoot;
 
     // captured once, when a Rocky body drag starts: kneeCircle's and
-    // ankleCircle's fixed offsets from (bodyX, bodyY) at that moment --
+    // footCircle's fixed offsets from (bodyX, bodyY) at that moment --
     // same "re-applied fresh every WM_MOUSEMOVE" pattern as
-    // hipDragKneeOffset/hipDragAnkleOffset below, so dragging the
+    // hipDragKneeOffset/hipDragFootOffset below, so dragging the
     // rectangle carries the whole leg along as one rigid piece instead of
     // leaving it behind.
     PointF rockyDragKneeOffset;
-    PointF rockyDragAnkleOffset;
+    PointF rockyDragFootOffset;
 
     // true while the mouse is merely hovering near a joint circle handle
-    // (hip/knee/ankle/head/butt) -- separate from the "dragging" flags
+    // (hip/knee/foot/head/butt) -- separate from the "dragging" flags
     // above, so those handles can flash yellow just from a hover, while
     // drag-only handles (thigh/shin bulges, seam attach points) keep
     // their dragging-only highlight
     int hoverHip;
     int hoverKnee;
-    int hoverAnkle;
+    int hoverFoot;
     int hoverButt;
     int hoverHead;
 
-    // captured once, when a knee drag starts: ankleCircle's fixed offset
+    // captured once, when a knee drag starts: footCircle's fixed offset
     // from kneeCircle at that moment. Re-applied fresh every WM_MOUSEMOVE
     // (kneeCircle + offset) instead of nudging it frame by frame, so the
     // shin's length can't drift over a long drag -- it's pinned to exactly
@@ -368,10 +368,10 @@ typedef struct {
     // equivalent offset -- like thighArc1Angle/thighArc2Angle, they're
     // already knee-frame-relative angles, unaffected by moving kneeCircle
     // itself.
-    PointF kneeDragAnkleOffset;
+    PointF kneeDragFootOffset;
 
     // same idea, but for a hip drag: the whole leg (kneeCircle,
-    // ankleCircle) hangs off innerCircle, so moving the hip needs to carry
+    // footCircle) hangs off innerCircle, so moving the hip needs to carry
     // all of it along as one rigid piece -- each point's fixed offset from
     // innerCircle is captured when the hip drag starts, then reapplied
     // fresh every WM_MOUSEMOVE (innerCircle + offset), so the whole leg's
@@ -381,7 +381,7 @@ typedef struct {
     // -- they're already relative to their own joint (hip or knee), so a
     // hip drag doesn't change any of them directly.
     PointF hipDragKneeOffset;
-    PointF hipDragAnkleOffset;
+    PointF hipDragFootOffset;
 
     // captured once, when a seam arc drag starts: the mouse's local Y and
     // the arc's angle at that moment. Each WM_MOUSEMOVE then sets the
@@ -404,7 +404,7 @@ typedef struct {
     float thighArcDragStartAngle;
 
     // same idea again, for the shin arcs -- perpendicular offset measured
-    // against the knee->ankle axis instead of hip->knee. Only one of
+    // against the knee->foot axis instead of hip->knee. Only one of
     // shinArc1Angle/shinArc2Angle can be dragged at a time, so they share
     // these two fields too.
     float shinArcDragStartPerp;
@@ -424,7 +424,7 @@ typedef struct {
     int hoveredCircleSegment;
 
     // Index (0-4, see NUM_ROBOT_BODY_CIRCLES in renderer.h) of the
-    // always-visible body circle (head/butt/hip/knee/ankle) whose
+    // always-visible body circle (head/butt/hip/knee/foot) whose
     // circumference the mouse is currently near, or -1 if none/not
     // applicable. Same View Segments gating as hoveredCircleSegment above
     // -- only updated while showCircleSegments is set (see input.c).

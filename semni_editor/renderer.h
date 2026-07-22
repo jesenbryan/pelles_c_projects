@@ -11,7 +11,7 @@ typedef struct {
     int draggingKnee;
     int draggingThigh1;
     int draggingThigh2;
-    int draggingAnkle;
+    int draggingFoot;
     int draggingShin1;
     int draggingShin2;
 
@@ -33,16 +33,16 @@ typedef struct {
     int hoverRockyKnee;
     int draggingRockyKnee;
 
-    // Rocky's ankle handle -- mirrors app->hoverRockyAnkle/draggingRockyAnkle,
-    // same role as Semni's own hoverAnkle/draggingAnkle below.
-    int hoverRockyAnkle;
-    int draggingRockyAnkle;
+    // Rocky's foot handle -- mirrors app->hoverRockyFoot/draggingRockyFoot,
+    // same role as Semni's own hoverFoot/draggingFoot below.
+    int hoverRockyFoot;
+    int draggingRockyFoot;
 
-    // hover-only state for the joint circle handles (hip/knee/ankle/
+    // hover-only state for the joint circle handles (hip/knee/foot/
     // head/butt), so they can highlight from a hover, not just a drag
     int hoverHip;
     int hoverKnee;
-    int hoverAnkle;
+    int hoverFoot;
     int hoverHead;
     int hoverButt;
 
@@ -70,7 +70,7 @@ typedef struct {
     int hoveredCircleSegment;
 
     // Index (0-4, see NUM_ROBOT_BODY_CIRCLES below) of the always-visible
-    // body circle (head/butt/hip/knee/ankle) whose CIRCUMFERENCE the mouse
+    // body circle (head/butt/hip/knee/foot) whose CIRCUMFERENCE the mouse
     // is currently near (app->hoveredBodyCircle), or -1 if none. Separate
     // from hoverHip/hoverKnee/etc above, which only fire near the
     // center-point handle for dragging -- this fires anywhere along the
@@ -129,7 +129,7 @@ void drawRocky(Rocky b, RenderState* rs, int includeHandles, float opacity);
 void drawStilo(Stilo b, RenderState* rs, int includeHandles, float opacity);
 
 // The 6 fillet circles View Segments reveals: seam1/2 (head-butt),
-// thigh1/2 (hip-knee), shin1/2 (knee-ankle), in that fixed order --
+// thigh1/2 (hip-knee), shin1/2 (knee-foot), in that fixed order --
 // indices into computeSemniCircleSegments' output and into
 // app->hoveredCircleSegment.
 #define NUM_ROBOT_CIRCLE_SEGMENTS 6
@@ -169,14 +169,14 @@ void computeSemniArcPoints(Semni b, PointF out[NUM_ROBOT_CIRCLE_SEGMENTS][ARC_SA
 // some circle (see app.h's seamArc1Angle comment), so this makes that
 // literally visible, the same idea as the ArcSpline canvas's own View
 // Segments overlay (canvas.c). The five body circles (head, butt, hip,
-// knee, ankle) aren't included here since drawSemniBody/drawThigh/drawShin
+// knee, foot) aren't included here since drawSemniBody/drawThigh/drawShin
 // already draw those in full unconditionally. hoveredIndex (see
 // app->hoveredCircleSegment) draws that one circle solid/bright/thicker
 // instead of dashed -- same idea as the ArcSpline canvas's hoveredSegment.
 void drawSemniCircleSegments(Semni b, int hoveredIndex, float opacity);
 
 // The 5 always-visible body circles, in a fixed order: head, butt,
-// hip (innerCircle), knee, ankle -- indices into computeSemniBodyCircles'
+// hip (innerCircle), knee, foot -- indices into computeSemniBodyCircles'
 // output and into app->hoveredBodyCircle.
 #define NUM_ROBOT_BODY_CIRCLES 5
 

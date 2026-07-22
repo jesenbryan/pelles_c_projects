@@ -101,7 +101,7 @@ PointF nestedJointToWorld(PointF local, PointF innerPivot, float innerAngle, Poi
 
 // Projects "target" onto the ray from "pivot" through "axisRef", so the
 // result always lies on that fixed line. Used so dragging a joint (e.g.
-// the knee or ankle circle) can only change a limb's length, not the
+// the knee or foot circle) can only change a limb's length, not the
 // direction it points in -- rotation is handled separately by the joint
 // angle. "minLength" stops the limb from collapsing to zero or flipping
 // through the pivot.
@@ -244,7 +244,7 @@ PointF circleAtX(PointF center, float radius, float targetX, PointF preferNear);
 // the axis happens to point. circleAtX is the special case where the
 // axis is horizontal (so the perpendicular line is vertical, x ==
 // targetX); this version works for an axis at any angle, which the
-// hip->knee (and knee->ankle) limb axis needs since it rotates with the
+// hip->knee (and knee->foot) limb axis needs since it rotates with the
 // joint angles. Like circleAtX, degenerates to the closest approach to
 // that line if the line doesn't actually reach the circle, and picks
 // whichever of the two crossing points is nearer "preferNear" so the

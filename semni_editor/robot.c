@@ -28,7 +28,7 @@ static float mirrorArcAngle(float angleDeg)
     return mirrored;
 }
 
-// The leg's joints (innerCircle, kneeCircle, ankleCircle) are stored as
+// The leg's joints (innerCircle, kneeCircle, footCircle) are stored as
 // raw local coordinates, in the frame BEFORE hipAngle/kneeAngle rotate
 // them into place (see app.h's comments on those fields) -- so mirroring
 // the leg is a plain x-reflection of each one, about the body's own
@@ -55,7 +55,7 @@ void mirrorHipLeg(Semni* b)
 
     b->innerCircle.x = 2.0f * centerX - b->innerCircle.x;
     b->kneeCircle.x  = 2.0f * centerX - b->kneeCircle.x;
-    b->ankleCircle.x = 2.0f * centerX - b->ankleCircle.x;
+    b->footCircle.x = 2.0f * centerX - b->footCircle.x;
 
     b->hipAngle  = -b->hipAngle;
     b->kneeAngle = -b->kneeAngle;
@@ -66,7 +66,7 @@ void mirrorHipLeg(Semni* b)
     b->shinArc2Angle  = mirrorArcAngle(b->shinArc2Angle);
 }
 
-// All of headX/buttX/y, innerCircle, kneeCircle, and ankleCircle live in
+// All of headX/buttX/y, innerCircle, kneeCircle, and footCircle live in
 // the same world-space frame (see getCenter/rotatePoint's use of them in
 // renderer.c) -- shifting every one of them by the identical (dx, dy)
 // shifts getCenter() by the same amount too, so every downstream
@@ -86,8 +86,8 @@ void translateRobot(Semni* b, float dx, float dy)
     b->kneeCircle.x += dx;
     b->kneeCircle.y += dy;
 
-    b->ankleCircle.x += dx;
-    b->ankleCircle.y += dy;
+    b->footCircle.x += dx;
+    b->footCircle.y += dy;
 }
 
 BOOL isPointInsideRobotBody(Semni b, float wx, float wy)
@@ -134,10 +134,10 @@ void printRobotAsInit(Semni b)
     printf("app->robotScene.robot.thighArc1Angle = %.6ff;\n", b.thighArc1Angle);
     printf("app->robotScene.robot.thighArc2Angle = %.6ff;\n\n", b.thighArc2Angle);
 
-    printf("app->robotScene.robot.ankleCircle.x = %.6ff;\n", b.ankleCircle.x);
-    printf("app->robotScene.robot.ankleCircle.y = %.6ff;\n\n", b.ankleCircle.y);
+    printf("app->robotScene.robot.footCircle.x = %.6ff;\n", b.footCircle.x);
+    printf("app->robotScene.robot.footCircle.y = %.6ff;\n\n", b.footCircle.y);
 
-    printf("app->robotScene.robot.ankleRadius = %.6ff;\n\n", b.ankleRadius);
+    printf("app->robotScene.robot.footRadius = %.6ff;\n\n", b.footRadius);
 
     printf("app->robotScene.robot.shinArc1Angle = %.6ff;\n", b.shinArc1Angle);
     printf("app->robotScene.robot.shinArc2Angle = %.6ff;\n", b.shinArc2Angle);
@@ -155,8 +155,29 @@ PointF getRockyCenter(Rocky r)
     return c;
 }
 
+// Same reasoning as mirrorHipLeg above, just with kneeCircle standing in
+// for Semni's innerCircle (Rocky's own root joint, rigidly attached to
+// the body and rotated only by the whole-body angle -- see drawRockyLeg)
+// and footCircle as its one child joint (swung by kneeAngle, same nested
+// relationship kneeCircle has to innerCircle for Semni). Both are stored
+// as raw local coordinates in that same shared body-frame (see
+// drawRockyLeg's rotatePoint(b.kneeCircle, ...) / jointToWorld(b.footCircle,
+// b.kneeCircle, ...)), so they mirror the same way: reflect both about the
+// body's own center line (bodyX, same reference getRockyCenter uses) and
+// negate the one rotation angle downstream of that reflected root.
+//
+// Previously this only negated kneeAngle and left kneeCircle/footCircle
+// untouched -- correct for a knee sitting exactly on the body's center
+// line (bodyX), but the knee handle can be dragged anywhere inside the
+// rectangle (see input.c's draggingRockyKnee), so an off-center knee just
+// sat in place and only the bend direction flipped, instead of the whole
+// leg actually swapping sides. Reflecting kneeCircle.x/footCircle.x here
+// too makes the mirror respect wherever the leg currently is.
 void mirrorRockyLeg(Rocky* r)
 {
+    r->kneeCircle.x  = 2.0f * r->bodyX - r->kneeCircle.x;
+    r->footCircle.x = 2.0f * r->bodyX - r->footCircle.x;
+
     r->kneeAngle = -r->kneeAngle;
 
     r->shinArc1Angle = mirrorArcAngle(r->shinArc1Angle);
@@ -179,10 +200,10 @@ void printRockyAsInit(Rocky r)
 
     printf("app->robotScene.rocky.kneeRadius = %.6ff;\n\n", r.kneeRadius);
 
-    printf("app->robotScene.rocky.ankleCircle.x = %.6ff;\n", r.ankleCircle.x);
-    printf("app->robotScene.rocky.ankleCircle.y = %.6ff;\n\n", r.ankleCircle.y);
+    printf("app->robotScene.rocky.footCircle.x = %.6ff;\n", r.footCircle.x);
+    printf("app->robotScene.rocky.footCircle.y = %.6ff;\n\n", r.footCircle.y);
 
-    printf("app->robotScene.rocky.ankleRadius = %.6ff;\n\n", r.ankleRadius);
+    printf("app->robotScene.rocky.footRadius = %.6ff;\n\n", r.footRadius);
 
     printf("app->robotScene.rocky.shinArc1Angle = %.6ff;\n", r.shinArc1Angle);
     printf("app->robotScene.rocky.shinArc2Angle = %.6ff;\n", r.shinArc2Angle);
@@ -205,7 +226,7 @@ void mirrorStiloLeg(Stilo* s)
     float centerX = (s->buttX + s->headX) * 0.5f;
 
     s->innerCircle.x = 2.0f * centerX - s->innerCircle.x;
-    s->ankleCircle.x = 2.0f * centerX - s->ankleCircle.x;
+    s->footCircle.x = 2.0f * centerX - s->footCircle.x;
 
     s->hipAngle = -s->hipAngle;
 
@@ -233,10 +254,10 @@ void printStiloAsInit(Stilo s)
     printf("app->robotScene.stilo.angle = %.6ff;\n", s.angle);
     printf("app->robotScene.stilo.hipAngle = %.6ff;\n\n", s.hipAngle);
 
-    printf("app->robotScene.stilo.ankleCircle.x = %.6ff;\n", s.ankleCircle.x);
-    printf("app->robotScene.stilo.ankleCircle.y = %.6ff;\n\n", s.ankleCircle.y);
+    printf("app->robotScene.stilo.footCircle.x = %.6ff;\n", s.footCircle.x);
+    printf("app->robotScene.stilo.footCircle.y = %.6ff;\n\n", s.footCircle.y);
 
-    printf("app->robotScene.stilo.ankleRadius = %.6ff;\n\n", s.ankleRadius);
+    printf("app->robotScene.stilo.footRadius = %.6ff;\n\n", s.footRadius);
 
     printf("app->robotScene.stilo.thighArc1Angle = %.6ff;\n", s.thighArc1Angle);
     printf("app->robotScene.stilo.thighArc2Angle = %.6ff;\n", s.thighArc2Angle);

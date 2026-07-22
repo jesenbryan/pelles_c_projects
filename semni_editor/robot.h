@@ -13,7 +13,7 @@ PointF getCenter(Semni b);
 // new starting pose.
 void printRobotAsInit(Semni b);
 
-// Mirrors the leg (hip through ankle, plus the four thigh/shin arcs)
+// Mirrors the leg (hip through foot, plus the four thigh/shin arcs)
 // across the body's own center line -- flips which side it bends toward,
 // leaving the torso (head/butt/top-bottom seams) and the whole-body angle
 // untouched. See robot.c for the derivation of why each field transforms
@@ -22,14 +22,14 @@ void mirrorHipLeg(Semni* b);
 
 // Rigidly translates the WHOLE robot by (dx, dy) in world units --
 // shifts every position-defining field (headX/buttX/y, innerCircle,
-// kneeCircle, ankleCircle) by the same amount, so the pose itself
+// kneeCircle, footCircle) by the same amount, so the pose itself
 // (all angles/radii) is left completely untouched, only where it sits
 // in the world changes. Used to drag the robot into a starting position
 // in Simulation mode (see canvas.c's WM_LBUTTONDOWN/WM_MOUSEMOVE).
 void translateRobot(Semni* b, float dx, float dy);
 
 // TRUE if the world-space point (wx, wy) falls genuinely INSIDE any of the
-// robot's 5 body circles (head/butt/hip/knee/ankle -- see
+// robot's 5 body circles (head/butt/hip/knee/foot -- see
 // computeSemniBodyCircles in renderer.h), i.e. distance to that circle's
 // center is <= its radius. Unlike the hover-ghost-circle tolerance check
 // in input.c (which only fires near the CIRCUMFERENCE, as an edge-hover
@@ -61,7 +61,7 @@ void printRockyAsInit(Rocky r);
 // Same torso as Semni, so the same head/butt-midpoint pivot.
 PointF getStiloCenter(Stilo s);
 
-// Mirrors Stilo's leg (hip through ankle, plus its two hip-to-ankle
+// Mirrors Stilo's leg (hip through foot, plus its two hip-to-foot
 // arcs) across the torso's own center line -- same construction as
 // mirrorHipLeg, just with no knee/shin stage to also mirror.
 void mirrorStiloLeg(Stilo* s);
