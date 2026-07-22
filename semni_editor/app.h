@@ -268,6 +268,25 @@ typedef struct {
     int draggingShin1;
     int draggingShin2;
 
+    // Rocky's rectangular torso handle (see input.c's ROBOT_KIND_ROCKY
+    // branches) -- same interaction as Semni's own hip circle: hover to
+    // highlight, drag to move the whole robot (rectangle + leg together),
+    // plain scroll to resize. Kept separate from the Semni fields above
+    // (rather than reusing draggingInner/hoverHip) since a completely
+    // different struct (Rocky, not Semni) is what's actually being
+    // edited, even though only one of the two is ever active at once.
+    int hoverRockyBody;
+    int draggingRockyBody;
+
+    // captured once, when a Rocky body drag starts: kneeCircle's and
+    // ankleCircle's fixed offsets from (bodyX, bodyY) at that moment --
+    // same "re-applied fresh every WM_MOUSEMOVE" pattern as
+    // hipDragKneeOffset/hipDragAnkleOffset below, so dragging the
+    // rectangle carries the whole leg along as one rigid piece instead of
+    // leaving it behind.
+    PointF rockyDragKneeOffset;
+    PointF rockyDragAnkleOffset;
+
     // true while the mouse is merely hovering near a joint circle handle
     // (hip/knee/ankle/head/butt) -- separate from the "dragging" flags
     // above, so those handles can flash yellow just from a hover, while

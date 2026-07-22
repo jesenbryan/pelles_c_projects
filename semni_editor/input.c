@@ -144,12 +144,41 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             app->draggingAnkle = 0;
             app->draggingShin1 = 0;
             app->draggingShin2 = 0;
+            app->draggingRockyBody = 0;
 
-            // Per-joint hand-dragging only exists for Semni right now --
-            // Rocky/Stilo (see app.h's RobotKind) are switcher + default-
-            // pose only for this pass, so a click while either is active
-            // simply doesn't start a drag (the flags above are already
-            // cleared, which is all that's needed).
+            // Rocky's rectangular torso has one hip-like handle (see
+            // app.h's hoverRockyBody/draggingRockyBody): hover to
+            // highlight, drag to move the whole robot, plain scroll (see
+            // WM_MOUSEWHEEL) to resize. Nothing else on Rocky is
+            // draggable yet, and Stilo has no handles at all yet -- see
+            // the RobotKind comment on the fallthrough break below.
+            if (app->robotScene.activeKind == ROBOT_KIND_ROCKY)
+            {
+                PointF rockyCenter = getRockyCenter(app->robotScene.rocky);
+
+                if (isNear(app->mouseGL, rockyCenter, HIP_HANDLE_RADIUS))
+                {
+                    app->draggingRockyBody = 1;
+
+                    // capture the leg's fixed offset from the body right
+                    // now, so the drag can carry it along as one rigid
+                    // piece -- same pattern as Semni's own
+                    // hipDragKneeOffset/hipDragAnkleOffset
+                    app->rockyDragKneeOffset.x = app->robotScene.rocky.kneeCircle.x - app->robotScene.rocky.bodyX;
+                    app->rockyDragKneeOffset.y = app->robotScene.rocky.kneeCircle.y - app->robotScene.rocky.bodyY;
+
+                    app->rockyDragAnkleOffset.x = app->robotScene.rocky.ankleCircle.x - app->robotScene.rocky.bodyX;
+                    app->rockyDragAnkleOffset.y = app->robotScene.rocky.ankleCircle.y - app->robotScene.rocky.bodyY;
+                }
+                break;
+            }
+
+            // Per-joint hand-dragging only exists for Semni (and, above,
+            // Rocky's one body handle) right now -- Stilo (see app.h's
+            // RobotKind) is switcher + default-pose only for this pass,
+            // so a click while it's active simply doesn't start a drag
+            // (the flags above are already cleared, which is all that's
+            // needed).
             if (app->robotScene.activeKind != ROBOT_KIND_SEMNI)
                 break;
 
@@ -375,6 +404,7 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             app->draggingAnkle = 0;
             app->draggingShin1 = 0;
             app->draggingShin2 = 0;
+            app->draggingRockyBody = 0;
             app->activeHandle = 0;
         }
         break;
@@ -400,11 +430,42 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
 
             screenToGL(hwnd, mx, my, &app->mouseGL.x, &app->mouseGL.y);
 
-            // Per-joint hover/drag feedback only exists for Semni right
-            // now -- see WM_LBUTTONDOWN's matching guard. Blank the hover
-            // label and segment-hover indices instead of leaving whatever
-            // Semni last set them to, so switching to Rocky/Stilo doesn't
-            // leave stale "Thigh Arc 1"-style text on screen.
+            // Rocky's body handle: hover highlight + drag-to-move, same
+            // "capture the leg's offset once, re-apply every move" pattern
+            // as Semni's own hip drag (see WM_LBUTTONDOWN's draggingInner
+            // handling) -- just simpler, since Rocky's handle IS its own
+            // rotation pivot (getRockyCenter), so there's no separate
+            // fixed torso frame the way Semni's head/butt-defined center
+            // is for its hip.
+            if (app->robotScene.activeKind == ROBOT_KIND_ROCKY)
+            {
+                PointF rockyCenter = getRockyCenter(app->robotScene.rocky);
+
+                app->hoverRockyBody = isNear(app->mouseGL, rockyCenter, HIP_HANDLE_RADIUS);
+                SetWindowText(app->ui.hHoverLabel, app->hoverRockyBody ? L"Body" : L"");
+
+                if (app->draggingRockyBody)
+                {
+                    PointF localMouse = inverseRotate(app->mouseGL, rockyCenter, app->robotScene.rocky.angle);
+
+                    app->robotScene.rocky.kneeCircle.x = localMouse.x + app->rockyDragKneeOffset.x;
+                    app->robotScene.rocky.kneeCircle.y = localMouse.y + app->rockyDragKneeOffset.y;
+
+                    app->robotScene.rocky.ankleCircle.x = localMouse.x + app->rockyDragAnkleOffset.x;
+                    app->robotScene.rocky.ankleCircle.y = localMouse.y + app->rockyDragAnkleOffset.y;
+
+                    app->robotScene.rocky.bodyX = localMouse.x;
+                    app->robotScene.rocky.bodyY = localMouse.y;
+                }
+                break;
+            }
+
+            // Per-joint hover/drag feedback beyond Rocky's one body handle
+            // above only exists for Semni right now -- see WM_LBUTTONDOWN's
+            // matching guard. Blank the hover label and segment-hover
+            // indices instead of leaving whatever Semni last set them to,
+            // so switching to Stilo doesn't leave stale "Thigh Arc 1"-style
+            // text on screen.
             if (app->robotScene.activeKind != ROBOT_KIND_SEMNI)
             {
                 SetWindowText(app->ui.hHoverLabel, L"");
@@ -937,11 +998,55 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
 
             PointF mouse = { gx, gy };
 
-            // Per-joint scroll-to-rotate/resize only exists for Semni
-            // right now -- see WM_LBUTTONDOWN's matching guard. Rocky/
-            // Stilo just always treat the wheel as a view zoom (the
-            // existing "not over any handle" fallback below), since they
-            // have no joint handles yet to scroll over in the first place.
+            // Rocky's body handle: plain scroll while hovering it resizes
+            // the rectangle (both half-width and half-height together),
+            // same "hover the joint circle handle, scroll to resize"
+            // interaction as Semni's own hip circle (see the innerRadius
+            // branch further below) -- no Shift-gated rotate here, since
+            // Rocky's whole-body angle has no dedicated scroll gesture yet
+            // (only the keyboard Left/Right, see WM_KEYDOWN).
+            if (app->robotScene.activeKind == ROBOT_KIND_ROCKY)
+            {
+                PointF rockyCenter = getRockyCenter(app->robotScene.rocky);
+
+                if (isNear(mouse, rockyCenter, HIP_HANDLE_RADIUS))
+                {
+                    float sizeStep = 0.02f;
+                    if (wheelDelta > 0)
+                    {
+                        app->robotScene.rocky.bodyHalfWidth += sizeStep;
+                        app->robotScene.rocky.bodyHalfHeight += sizeStep;
+                    }
+                    else
+                    {
+                        app->robotScene.rocky.bodyHalfWidth -= sizeStep;
+                        app->robotScene.rocky.bodyHalfHeight -= sizeStep;
+                    }
+
+                    if (app->robotScene.rocky.bodyHalfWidth < MIN_ROCKY_BODY_HALF)
+                        app->robotScene.rocky.bodyHalfWidth = MIN_ROCKY_BODY_HALF;
+                    if (app->robotScene.rocky.bodyHalfWidth > MAX_ROCKY_BODY_HALF)
+                        app->robotScene.rocky.bodyHalfWidth = MAX_ROCKY_BODY_HALF;
+
+                    if (app->robotScene.rocky.bodyHalfHeight < MIN_ROCKY_BODY_HALF)
+                        app->robotScene.rocky.bodyHalfHeight = MIN_ROCKY_BODY_HALF;
+                    if (app->robotScene.rocky.bodyHalfHeight > MAX_ROCKY_BODY_HALF)
+                        app->robotScene.rocky.bodyHalfHeight = MAX_ROCKY_BODY_HALF;
+                }
+                else
+                {
+                    float factor = (wheelDelta > 0) ? ZOOM_STEP : (1.0f / ZOOM_STEP);
+                    graphicsZoom(factor);
+                }
+                break;
+            }
+
+            // Per-joint scroll-to-rotate/resize beyond Rocky's one body
+            // handle above only exists for Semni right now -- see
+            // WM_LBUTTONDOWN's matching guard. Stilo just always treats
+            // the wheel as a view zoom (the existing "not over any
+            // handle" fallback below), since it has no joint handles yet
+            // to scroll over in the first place.
             if (app->robotScene.activeKind != ROBOT_KIND_SEMNI)
             {
                 float factor = (wheelDelta > 0) ? ZOOM_STEP : (1.0f / ZOOM_STEP);
@@ -1596,8 +1701,8 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                             app->robotScene.activeKind = (RobotKind)sel;
 
                         // Clear any drag/hover state left over from
-                        // whichever robot was active before -- only
-                        // meaningful for Semni right now (see
+                        // whichever robot was active before -- meaningful
+                        // for Semni and Rocky's body handle right now (see
                         // WM_LBUTTONDOWN/WM_MOUSEMOVE's own activeKind
                         // guards), but harmless to always reset.
                         app->draggingSeamArc1 = 0;
@@ -1609,6 +1714,8 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                         app->draggingAnkle = 0;
                         app->draggingShin1 = 0;
                         app->draggingShin2 = 0;
+                        app->draggingRockyBody = 0;
+                        app->hoverRockyBody = 0;
                         app->activeHandle = 0;
                         app->hoveredCircleSegment = -1;
                         app->hoveredBodyCircle = -1;

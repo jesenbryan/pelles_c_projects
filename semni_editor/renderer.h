@@ -15,6 +15,13 @@ typedef struct {
     int draggingShin1;
     int draggingShin2;
 
+    // Rocky's rectangular torso handle -- see app.h's hoverRockyBody/
+    // draggingRockyBody, mirrored here the same way the Semni-specific
+    // fields above are, so drawRocky can highlight it the same way
+    // drawSemniBody highlights the hip circle.
+    int hoverRockyBody;
+    int draggingRockyBody;
+
     // hover-only state for the joint circle handles (hip/knee/ankle/
     // head/butt), so they can highlight from a hover, not just a drag
     int hoverHip;
@@ -96,11 +103,12 @@ void renderRobotScene(AppState* app, float dimAmount);
 void drawSemni(Semni b, RenderState* rs, int includeHandles, float opacity);
 
 // Rocky/Stilo (see app.h) -- switcher + default poses only for now, so
-// unlike drawSemni these don't draw any draggable handles or a View
-// Segments overlay yet regardless of includeHandles/rs->showSegments
-// (that's a planned follow-up, see input.c's WM_LBUTTONDOWN/WM_MOUSEMOVE/
-// WM_MOUSEWHEEL comments). includeHandles is still accepted so renderRobot
-// can call all three the same way.
+// unlike drawSemni these don't draw a View Segments overlay yet regardless
+// of rs->showSegments (that's a planned follow-up, see input.c's
+// WM_LBUTTONDOWN/WM_MOUSEMOVE/WM_MOUSEWHEEL comments). Rocky's rectangular
+// torso IS draggable/resizable now though (rs->hoverRockyBody/
+// draggingRockyBody, same hip-like handle interaction as Semni's own hip
+// circle) -- Stilo still has none. includeHandles gates both.
 void drawRocky(Rocky b, RenderState* rs, int includeHandles, float opacity);
 void drawStilo(Stilo b, RenderState* rs, int includeHandles, float opacity);
 

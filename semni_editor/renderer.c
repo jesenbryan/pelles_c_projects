@@ -847,7 +847,11 @@ static void drawRockyBodyRect(Rocky b, RenderState* rs, float opacity)
     PointF c2 = rotatePoint((PointF){ b.bodyX + b.bodyHalfWidth, b.bodyY + b.bodyHalfHeight }, center, angle);
     PointF c3 = rotatePoint((PointF){ b.bodyX - b.bodyHalfWidth, b.bodyY + b.bodyHalfHeight }, center, angle);
 
-    setColor(rs, 0, 0.2f, 0.4f, 1.0f, opacity);
+    // highlights the same way Semni's hip circle does in drawSemniBody --
+    // dragging (actively resizing/moving) or a plain hover both light it
+    // up, since (unlike hoverHip) there's no Shift-gated rotate on this
+    // handle to disambiguate from.
+    setColor(rs, rs->draggingRockyBody || rs->hoverRockyBody, 0.2f, 0.4f, 1.0f, opacity);
     glBegin(GL_LINE_LOOP);
     glVertex2f(c0.x, c0.y);
     glVertex2f(c1.x, c1.y);
@@ -895,10 +899,21 @@ static void drawRockyLeg(Rocky b, RenderState* rs, float opacity)
 
 void drawRocky(Rocky b, RenderState* rs, int includeHandles, float opacity)
 {
-    (void)includeHandles; // no draggable handles for Rocky yet -- see renderer.h's comment
-
     drawRockyBodyRect(b, rs, opacity);
     drawRockyLeg(b, rs, opacity);
+
+    // Body resize/move handle -- same visible-dot treatment drawSemniHandles
+    // gives the hip circle (drawHandle, HIP_HANDLE_RADIUS), at the
+    // rectangle's own center (its rotation pivot -- see getRockyCenter).
+    // Gated on includeHandles/editor mode the same way Semni's own handles
+    // are (see drawSemni's handlesVisible) so it doesn't show up in the
+    // dimmed background copy or an exported frame.
+    BOOL handlesVisible = includeHandles && (editorModeState.currentMode == EDITOR_MODE_SEMNI);
+    if (handlesVisible)
+    {
+        PointF center = getRockyCenter(b);
+        drawHandle(center, rs->draggingRockyBody || rs->hoverRockyBody, HIP_HANDLE_RADIUS, opacity);
+    }
 }
 
 // ---- Stilo ----
@@ -998,6 +1013,9 @@ static void renderRobot(AppState* app, int includeHandles, float opacity)
     rs.draggingShin1 = app->draggingShin1;
     rs.draggingShin2 = app->draggingShin2;
 
+    rs.hoverRockyBody = app->hoverRockyBody;
+    rs.draggingRockyBody = app->draggingRockyBody;
+
     rs.hoverHip = app->hoverHip;
     rs.hoverKnee = app->hoverKnee;
     rs.hoverAnkle = app->hoverAnkle;
@@ -1019,12 +1037,13 @@ static void renderRobot(AppState* app, int includeHandles, float opacity)
 
     // Which of the three robots (see app.h's RobotKind) actually gets
     // drawn -- picked via the hRobotSelector dropdown in the control
-    // panel (input.c). Rocky/Stilo don't have their own handles/View
-    // Segments overlay yet (see drawRocky/drawStilo's own comments), so
-    // rs's hover/drag fields above are simply unused when either of those
-    // is active -- harmless, since input.c only ever sets them while
+    // panel (input.c). None of the three have a View Segments overlay yet
+    // except Semni (see drawRocky/drawStilo's own comments). rs's Semni-
+    // specific hover/drag fields above are simply unused unless Semni is
+    // active -- harmless, since input.c only ever sets them while
     // ROBOT_KIND_SEMNI is the active kind (see its own WM_LBUTTONDOWN/
-    // WM_MOUSEMOVE guards).
+    // WM_MOUSEMOVE guards). Rocky's own hoverRockyBody/draggingRockyBody
+    // above are set independently, only while Rocky is active.
     switch (app->robotScene.activeKind)
     {
         case ROBOT_KIND_ROCKY:

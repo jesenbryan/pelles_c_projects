@@ -3,6 +3,14 @@
 #define MIN_R 0.05f
 #define MAX_R 0.35f
 
+// Rocky's rectangular torso resize range (see its body handle in
+// input.c's WM_MOUSEWHEEL) -- kept separate from MIN_R/MAX_R (Semni's
+// joint-CIRCLE radius range) since this bounds a rectangle's half-extents
+// instead, and Rocky's default half-height (see initRockyStandingPosition,
+// app_init.c) is already bigger than MAX_R.
+#define MIN_ROCKY_BODY_HALF 0.10f
+#define MAX_ROCKY_BODY_HALF 0.70f
+
 // all draggable handles are drawn semi-transparent so they read as
 // lightweight overlays instead of solid shapes sitting on top of the robot
 #define HANDLE_ALPHA 0.45f
