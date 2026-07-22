@@ -49,39 +49,35 @@ typedef struct {
     // Stilo's own per-joint dragging/hover state -- mirrors app.h's
     // draggingStilo*/hoverStilo* fields the same way the Semni fields
     // above mirror app's own draggingSeamArc1/draggingInner/etc., so
-    // drawStilo can highlight its handles independently of Semni's.
+    // drawStilo can highlight its handles independently of Semni's. One
+    // hip and one feet handle per leg, plus that leg's own two thigh arcs
+    // -- no knee/shin/foot sub-stage any more (see app.h's Stilo comment).
     int draggingStiloSeamArc1;
     int draggingStiloSeamArc2;
-    int draggingStiloInner;
-    int draggingStiloKnee;
-    int draggingStiloThigh1;
-    int draggingStiloThigh2;
-    int draggingStiloFoot;
-    int draggingStiloShin1;
-    int draggingStiloShin2;
 
-    int hoverStiloHip;
-    int hoverStiloKnee;
-    int hoverStiloFoot;
+    int draggingStiloHip1;
+    int draggingStiloFeet1;
+    int draggingStiloThigh1Arc1;
+    int draggingStiloThigh1Arc2;
+
+    int hoverStiloHip1;
+    int hoverStiloFeet1;
     int hoverStiloHead;
     int hoverStiloButt;
 
-    // Stilo's SECOND leg -- mirrors app.h's draggingStilo*Leg2/hoverStilo*Leg2
-    // fields the same way the fields above mirror its first leg's, so
-    // drawStiloThighLeg2/drawStiloShinLeg2 (renderer.c) can highlight leg 2's
-    // handles independently of leg 1's. No seam-arc or head/butt hover
-    // equivalent here -- those are torso-level, shared between both legs.
-    int draggingStiloInnerLeg2;
-    int draggingStiloKneeLeg2;
-    int draggingStiloThigh1Leg2;
-    int draggingStiloThigh2Leg2;
-    int draggingStiloFootLeg2;
-    int draggingStiloShin1Leg2;
-    int draggingStiloShin2Leg2;
+    // Stilo's SECOND leg -- mirrors app.h's draggingStiloHip2/Feet2/
+    // Thigh2Arc1/Thigh2Arc2 and hoverStiloHip2/hoverStiloFeet2 fields the
+    // same way the fields above mirror its first leg's, so
+    // drawStiloThigh2 (renderer.c) can highlight leg 2's handles
+    // independently of leg 1's. No seam-arc or head/butt hover equivalent
+    // here -- those are torso-level, shared between both legs.
+    int draggingStiloHip2;
+    int draggingStiloFeet2;
+    int draggingStiloThigh2Arc1;
+    int draggingStiloThigh2Arc2;
 
-    int hoverStiloHipLeg2;
-    int hoverStiloKneeLeg2;
-    int hoverStiloFootLeg2;
+    int hoverStiloHip2;
+    int hoverStiloFeet2;
 
     // Shift held during the most recent mouse move -- combined with
     // hoverHip/hoverKnee to preview the shift+scroll joint rotation's
@@ -159,10 +155,11 @@ void drawSemni(Semni b, RenderState* rs, int includeHandles, float opacity);
 // regardless of rs->showSegments (that's a planned follow-up, see input.c's
 // WM_LBUTTONDOWN/WM_MOUSEMOVE/WM_MOUSEWHEEL comments). Rocky's rectangular
 // torso IS draggable/resizable (rs->hoverRockyBody/draggingRockyBody, same
-// hip-like handle interaction as Semni's own hip circle), and Stilo now has
-// Semni's FULL set of interactive handles too (hip/knee/foot circles, both
-// thigh arcs, both shin arcs -- rs->hoverStiloHip/draggingStiloInner/etc.,
-// see app.h's Stilo comment). includeHandles gates both.
+// hip-like handle interaction as Semni's own hip circle), and Stilo has two
+// independent two-joint legs (hip circle + feet circle, connected by a pair
+// of thigh arcs -- rs->hoverStiloHip1/draggingStiloHip1/etc. for leg 1,
+// the Hip2/Feet2/Thigh2 fields for leg 2, see app.h's Stilo comment).
+// includeHandles gates both.
 void drawRocky(Rocky b, RenderState* rs, int includeHandles, float opacity);
 void drawStilo(Stilo b, RenderState* rs, int includeHandles, float opacity);
 

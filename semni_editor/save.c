@@ -220,58 +220,41 @@ int saveStiloAsEquations(const char* filename, AppState* app)
     fprintf(f, "SEAM_ARC1_ANGLE=%.6f\n", s->seamArc1Angle);
     fprintf(f, "SEAM_ARC2_ANGLE=%.6f\n", s->seamArc2Angle);
 
-    // HIP Joint
-    fprintf(f, "HIP_X=%.6f\n", s->innerCircle.x);
-    fprintf(f, "HIP_Y=%.6f\n", s->innerCircle.y);
-    fprintf(f, "HIP_RADIUS=%.6f\n", s->innerRadius);
-    fprintf(f, "HIP_ANGLE=%.6f\n", s->hipAngle);
+    // LEG 1 - Hip Joint
+    fprintf(f, "HIP1_X=%.6f\n", s->hip1Circle.x);
+    fprintf(f, "HIP1_Y=%.6f\n", s->hip1Circle.y);
+    fprintf(f, "HIP1_RADIUS=%.6f\n", s->hip1Radius);
+    fprintf(f, "HIP1_ANGLE=%.6f\n", s->hip1Angle);
 
-    // THIGH - Knee Circle (Stilo now has the same hip->knee->foot chain
-    // as Semni -- see app.h's Stilo comment)
-    fprintf(f, "KNEE_X=%.6f\n", s->kneeCircle.x);
-    fprintf(f, "KNEE_Y=%.6f\n", s->kneeCircle.y);
-    fprintf(f, "KNEE_RADIUS=%.6f\n", s->kneeRadius);
-    fprintf(f, "KNEE_ANGLE=%.6f\n", s->kneeAngle);
+    // LEG 1 - Feet Circle (Stilo now has just a hip->feet chain per leg,
+    // no knee/shin/foot sub-stage any more -- see app.h's Stilo comment)
+    fprintf(f, "FEET1_X=%.6f\n", s->feet1Circle.x);
+    fprintf(f, "FEET1_Y=%.6f\n", s->feet1Circle.y);
+    fprintf(f, "FEET1_RADIUS=%.6f\n", s->feet1Radius);
 
-    // THIGH - Arcs (hip-to-knee)
-    fprintf(f, "THIGH_ARC1_ANGLE=%.6f\n", s->thighArc1Angle);
-    fprintf(f, "THIGH_ARC2_ANGLE=%.6f\n", s->thighArc2Angle);
-
-    // SHIN - Foot Circle
-    fprintf(f, "FOOT_X=%.6f\n", s->footCircle.x);
-    fprintf(f, "FOOT_Y=%.6f\n", s->footCircle.y);
-    fprintf(f, "FOOT_RADIUS=%.6f\n", s->footRadius);
-
-    // SHIN - Arcs (knee-to-foot)
-    fprintf(f, "SHIN_ARC1_ANGLE=%.6f\n", s->shinArc1Angle);
-    fprintf(f, "SHIN_ARC2_ANGLE=%.6f\n", s->shinArc2Angle);
+    // LEG 1 - Thigh Arcs (hip1-to-feet1)
+    fprintf(f, "THIGH1_ARC1_ANGLE=%.6f\n", s->thigh1Arc1Angle);
+    fprintf(f, "THIGH1_ARC2_ANGLE=%.6f\n", s->thigh1Arc2Angle);
 
     // BODY - Whole
     fprintf(f, "BODY_ANGLE=%.6f\n", s->angle);
 
-    // ---- leg 2 -- same fields as leg 1 above, LEG2_-prefixed keys so they
-    // can't collide with leg 1's (see app.h's Stilo comment). No LEG2_
-    // equivalent of the torso keys (HEAD_*/BUTT_*/SEAM_ARC*/BODY_ANGLE) --
-    // both legs share the one torso, already written above.
-    fprintf(f, "LEG2_HIP_X=%.6f\n", s->innerCircleLeg2.x);
-    fprintf(f, "LEG2_HIP_Y=%.6f\n", s->innerCircleLeg2.y);
-    fprintf(f, "LEG2_HIP_RADIUS=%.6f\n", s->innerRadiusLeg2);
-    fprintf(f, "LEG2_HIP_ANGLE=%.6f\n", s->hipAngleLeg2);
+    // ---- leg 2 -- same fields as leg 1 above, HIP2_/FEET2_/THIGH2_-
+    // prefixed keys so they can't collide with leg 1's (see app.h's Stilo
+    // comment). No leg-2 equivalent of the torso keys (HEAD_*/BUTT_*/
+    // SEAM_ARC*/BODY_ANGLE) -- both legs share the one torso, already
+    // written above.
+    fprintf(f, "HIP2_X=%.6f\n", s->hip2Circle.x);
+    fprintf(f, "HIP2_Y=%.6f\n", s->hip2Circle.y);
+    fprintf(f, "HIP2_RADIUS=%.6f\n", s->hip2Radius);
+    fprintf(f, "HIP2_ANGLE=%.6f\n", s->hip2Angle);
 
-    fprintf(f, "LEG2_KNEE_X=%.6f\n", s->kneeCircleLeg2.x);
-    fprintf(f, "LEG2_KNEE_Y=%.6f\n", s->kneeCircleLeg2.y);
-    fprintf(f, "LEG2_KNEE_RADIUS=%.6f\n", s->kneeRadiusLeg2);
-    fprintf(f, "LEG2_KNEE_ANGLE=%.6f\n", s->kneeAngleLeg2);
+    fprintf(f, "FEET2_X=%.6f\n", s->feet2Circle.x);
+    fprintf(f, "FEET2_Y=%.6f\n", s->feet2Circle.y);
+    fprintf(f, "FEET2_RADIUS=%.6f\n", s->feet2Radius);
 
-    fprintf(f, "LEG2_THIGH_ARC1_ANGLE=%.6f\n", s->thighArc1AngleLeg2);
-    fprintf(f, "LEG2_THIGH_ARC2_ANGLE=%.6f\n", s->thighArc2AngleLeg2);
-
-    fprintf(f, "LEG2_FOOT_X=%.6f\n", s->footCircleLeg2.x);
-    fprintf(f, "LEG2_FOOT_Y=%.6f\n", s->footCircleLeg2.y);
-    fprintf(f, "LEG2_FOOT_RADIUS=%.6f\n", s->footRadiusLeg2);
-
-    fprintf(f, "LEG2_SHIN_ARC1_ANGLE=%.6f\n", s->shinArc1AngleLeg2);
-    fprintf(f, "LEG2_SHIN_ARC2_ANGLE=%.6f\n", s->shinArc2AngleLeg2);
+    fprintf(f, "THIGH2_ARC1_ANGLE=%.6f\n", s->thigh2Arc1Angle);
+    fprintf(f, "THIGH2_ARC2_ANGLE=%.6f\n", s->thigh2Arc2Angle);
 
     fclose(f);
 
@@ -397,57 +380,67 @@ int loadStiloPoseFromFile(const char* filename, Stilo* out)
         else if (strcmp(key, "BUTT_RADIUS") == 0) out->buttRadius = value;
         else if (strcmp(key, "SEAM_ARC1_ANGLE") == 0) out->seamArc1Angle = value;
         else if (strcmp(key, "SEAM_ARC2_ANGLE") == 0) out->seamArc2Angle = value;
-        else if (strcmp(key, "HIP_X") == 0) out->innerCircle.x = value;
-        else if (strcmp(key, "HIP_Y") == 0) out->innerCircle.y = value;
-        else if (strcmp(key, "HIP_RADIUS") == 0) out->innerRadius = value;
-        else if (strcmp(key, "HIP_ANGLE") == 0) out->hipAngle = value;
-        else if (strcmp(key, "KNEE_X") == 0) out->kneeCircle.x = value;
-        else if (strcmp(key, "KNEE_Y") == 0) out->kneeCircle.y = value;
-        else if (strcmp(key, "KNEE_RADIUS") == 0) out->kneeRadius = value;
-        else if (strcmp(key, "KNEE_ANGLE") == 0) out->kneeAngle = value;
-        else if (strcmp(key, "THIGH_ARC1_ANGLE") == 0) out->thighArc1Angle = value;
-        else if (strcmp(key, "THIGH_ARC2_ANGLE") == 0) out->thighArc2Angle = value;
-        else if (strcmp(key, "FOOT_X") == 0) out->footCircle.x = value;
-        else if (strcmp(key, "FOOT_Y") == 0) out->footCircle.y = value;
-        else if (strcmp(key, "FOOT_RADIUS") == 0) out->footRadius = value;
-        // legacy key name, see loadRobotPoseFromFile's comment above
-        else if (strcmp(key, "ANKLE_X") == 0) out->footCircle.x = value;
-        else if (strcmp(key, "ANKLE_Y") == 0) out->footCircle.y = value;
-        else if (strcmp(key, "ANKLE_RADIUS") == 0) out->footRadius = value;
-        else if (strcmp(key, "SHIN_ARC1_ANGLE") == 0) out->shinArc1Angle = value;
-        else if (strcmp(key, "SHIN_ARC2_ANGLE") == 0) out->shinArc2Angle = value;
-        // LEG_ARC1_ANGLE/LEG_ARC2_ANGLE (the old key names, from before
-        // Stilo had a knee stage) are deliberately NOT accepted here, even
-        // though the ANKLE_*/FOOT_* legacy aliasing above is -- unlike a
-        // pure rename, those old values described a hip-to-FOOT arc, which
-        // means something different from the new hip-to-KNEE thighArc1/2
-        // they'd otherwise map onto, so silently reinterpreting them would
-        // produce a wrong-looking pose instead of the same one under a new
-        // name. Any pose file saved under the old Stilo (no knee) needs to
-        // be re-saved from scratch under the new structure.
+        else if (strcmp(key, "HIP1_X") == 0) out->hip1Circle.x = value;
+        else if (strcmp(key, "HIP1_Y") == 0) out->hip1Circle.y = value;
+        else if (strcmp(key, "HIP1_RADIUS") == 0) out->hip1Radius = value;
+        else if (strcmp(key, "HIP1_ANGLE") == 0) out->hip1Angle = value;
+        else if (strcmp(key, "FEET1_X") == 0) out->feet1Circle.x = value;
+        else if (strcmp(key, "FEET1_Y") == 0) out->feet1Circle.y = value;
+        else if (strcmp(key, "FEET1_RADIUS") == 0) out->feet1Radius = value;
+        else if (strcmp(key, "THIGH1_ARC1_ANGLE") == 0) out->thigh1Arc1Angle = value;
+        else if (strcmp(key, "THIGH1_ARC2_ANGLE") == 0) out->thigh1Arc2Angle = value;
+        // legacy key names, from before this leg was renumbered/renamed
+        // (hip->HIP1, knee->FEET1, thighArc->THIGH1_ARC) -- accepted here
+        // as pure renames since they describe the exact same joint at the
+        // exact same position, so an older pose file saved under the old
+        // names still loads correctly.
+        else if (strcmp(key, "HIP_X") == 0) out->hip1Circle.x = value;
+        else if (strcmp(key, "HIP_Y") == 0) out->hip1Circle.y = value;
+        else if (strcmp(key, "HIP_RADIUS") == 0) out->hip1Radius = value;
+        else if (strcmp(key, "HIP_ANGLE") == 0) out->hip1Angle = value;
+        else if (strcmp(key, "KNEE_X") == 0) out->feet1Circle.x = value;
+        else if (strcmp(key, "KNEE_Y") == 0) out->feet1Circle.y = value;
+        else if (strcmp(key, "KNEE_RADIUS") == 0) out->feet1Radius = value;
+        else if (strcmp(key, "THIGH_ARC1_ANGLE") == 0) out->thigh1Arc1Angle = value;
+        else if (strcmp(key, "THIGH_ARC2_ANGLE") == 0) out->thigh1Arc2Angle = value;
+        // FOOT_*/ANKLE_*/SHIN_ARC*_ANGLE/KNEE_ANGLE (old keys describing the
+        // now-deleted knee-to-foot stage) are deliberately NOT accepted --
+        // same reasoning as loadRobotPoseFromFile's own comment on
+        // LEG_ARC1_ANGLE: FOOT_X described a joint one stage further out
+        // than the new FEET1 (which is where KNEE used to sit), so
+        // reinterpreting it would misplace the leg's end instead of
+        // preserving it. Any pose file saved under the old hip->knee->foot
+        // Stilo needs to be re-saved from scratch under the new structure.
         else if (strcmp(key, "BODY_ANGLE") == 0) out->angle = value;
-        // ---- leg 2 -- same LEG2_-prefixed keys saveStiloAsEquations
-        // writes above. An older pose file saved before leg 2 existed
-        // simply has none of these keys, so out->*Leg2 is left whatever it
-        // already was (zero on a fresh launch) -- same "seed the hardcoded
-        // default first, then load on top" fix input.c's
-        // ID_STANDING_POSITION_BUTTON/ID_HOME_POSITION_BUTTON already apply
-        // for exactly this reason.
-        else if (strcmp(key, "LEG2_HIP_X") == 0) out->innerCircleLeg2.x = value;
-        else if (strcmp(key, "LEG2_HIP_Y") == 0) out->innerCircleLeg2.y = value;
-        else if (strcmp(key, "LEG2_HIP_RADIUS") == 0) out->innerRadiusLeg2 = value;
-        else if (strcmp(key, "LEG2_HIP_ANGLE") == 0) out->hipAngleLeg2 = value;
-        else if (strcmp(key, "LEG2_KNEE_X") == 0) out->kneeCircleLeg2.x = value;
-        else if (strcmp(key, "LEG2_KNEE_Y") == 0) out->kneeCircleLeg2.y = value;
-        else if (strcmp(key, "LEG2_KNEE_RADIUS") == 0) out->kneeRadiusLeg2 = value;
-        else if (strcmp(key, "LEG2_KNEE_ANGLE") == 0) out->kneeAngleLeg2 = value;
-        else if (strcmp(key, "LEG2_THIGH_ARC1_ANGLE") == 0) out->thighArc1AngleLeg2 = value;
-        else if (strcmp(key, "LEG2_THIGH_ARC2_ANGLE") == 0) out->thighArc2AngleLeg2 = value;
-        else if (strcmp(key, "LEG2_FOOT_X") == 0) out->footCircleLeg2.x = value;
-        else if (strcmp(key, "LEG2_FOOT_Y") == 0) out->footCircleLeg2.y = value;
-        else if (strcmp(key, "LEG2_FOOT_RADIUS") == 0) out->footRadiusLeg2 = value;
-        else if (strcmp(key, "LEG2_SHIN_ARC1_ANGLE") == 0) out->shinArc1AngleLeg2 = value;
-        else if (strcmp(key, "LEG2_SHIN_ARC2_ANGLE") == 0) out->shinArc2AngleLeg2 = value;
+        // ---- leg 2 -- same HIP2_/FEET2_/THIGH2_-prefixed keys
+        // saveStiloAsEquations writes above. An older pose file saved
+        // before leg 2 existed simply has none of these keys, so
+        // out->hip2Circle/etc is left whatever it already was (zero on a
+        // fresh launch) -- same "seed the hardcoded default first, then
+        // load on top" fix input.c's ID_STANDING_POSITION_BUTTON/
+        // ID_HOME_POSITION_BUTTON already apply for exactly this reason.
+        else if (strcmp(key, "HIP2_X") == 0) out->hip2Circle.x = value;
+        else if (strcmp(key, "HIP2_Y") == 0) out->hip2Circle.y = value;
+        else if (strcmp(key, "HIP2_RADIUS") == 0) out->hip2Radius = value;
+        else if (strcmp(key, "HIP2_ANGLE") == 0) out->hip2Angle = value;
+        else if (strcmp(key, "FEET2_X") == 0) out->feet2Circle.x = value;
+        else if (strcmp(key, "FEET2_Y") == 0) out->feet2Circle.y = value;
+        else if (strcmp(key, "FEET2_RADIUS") == 0) out->feet2Radius = value;
+        else if (strcmp(key, "THIGH2_ARC1_ANGLE") == 0) out->thigh2Arc1Angle = value;
+        else if (strcmp(key, "THIGH2_ARC2_ANGLE") == 0) out->thigh2Arc2Angle = value;
+        // legacy LEG2_-prefixed key names, same rename reasoning as leg 1's
+        // HIP_*/KNEE_*/THIGH_ARC* aliases above
+        else if (strcmp(key, "LEG2_HIP_X") == 0) out->hip2Circle.x = value;
+        else if (strcmp(key, "LEG2_HIP_Y") == 0) out->hip2Circle.y = value;
+        else if (strcmp(key, "LEG2_HIP_RADIUS") == 0) out->hip2Radius = value;
+        else if (strcmp(key, "LEG2_HIP_ANGLE") == 0) out->hip2Angle = value;
+        else if (strcmp(key, "LEG2_KNEE_X") == 0) out->feet2Circle.x = value;
+        else if (strcmp(key, "LEG2_KNEE_Y") == 0) out->feet2Circle.y = value;
+        else if (strcmp(key, "LEG2_KNEE_RADIUS") == 0) out->feet2Radius = value;
+        else if (strcmp(key, "LEG2_THIGH_ARC1_ANGLE") == 0) out->thigh2Arc1Angle = value;
+        else if (strcmp(key, "LEG2_THIGH_ARC2_ANGLE") == 0) out->thigh2Arc2Angle = value;
+        // LEG2_FOOT_*/LEG2_SHIN_ARC*_ANGLE/LEG2_KNEE_ANGLE dropped for the
+        // same reason as leg 1's FOOT_*/SHIN_ARC*_ANGLE/KNEE_ANGLE above.
     }
 
     fclose(f);

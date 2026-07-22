@@ -971,20 +971,20 @@ void drawRocky(Rocky b, RenderState* rs, int includeHandles, float opacity)
 
 // ---- Stilo ----
 //
-// Now built exactly like Semni: same torso (head/butt circles + two seam
-// arcs, identical construction to drawSemniBody) AND the same hip->knee->
-// foot leg chain, with the same thigh (hip-knee) and shin (knee-foot) arc
-// pairs -- see drawThigh/drawThighHandles/drawShin/drawShinHandles above
-// for the derivation of every one of these constructions, which apply here
-// completely unchanged, just reading Stilo's own fields and highlighting
-// via rs->hoverStilo*/draggingStilo* instead of rs->hoverHip/draggingInner
-// etc. Kept as separate functions (rather than reusing drawThigh/drawShin
-// directly) since those take a Semni by value, a different C type than
-// Stilo -- same reasoning app.h gives for keeping the two structs distinct.
+// Torso (head/butt circles + two seam arcs, identical construction to
+// drawSemniBody) shared by two independent, two-joint legs -- each just a
+// hip circle directly connected to a feet circle by a pair of thigh fillet
+// arcs, no knee/shin/foot sub-stage. See drawThigh/drawThighHandles above
+// for the derivation of the fillet-arc construction, which applies here
+// unchanged, just reading Stilo's own fields and highlighting via
+// rs->hoverStilo*/draggingStilo* instead of rs->hoverHip/draggingInner etc.
+// Kept as separate functions (rather than reusing drawThigh directly)
+// since that takes a Semni by value, a different C type than Stilo -- same
+// reasoning app.h gives for keeping the two structs distinct.
 
-// Draws Stilo's torso (head/butt circles + seam arcs) -- identical
-// construction to drawSemniBody, just reading b's own fields and
-// highlighting via the Stilo-specific rs fields.
+// Draws Stilo's torso (head/butt circles + seam arcs) plus both legs' hip
+// circles -- identical construction to drawSemniBody for the torso, just
+// reading b's own fields and highlighting via the Stilo-specific rs fields.
 static void drawStiloBody(Stilo b, RenderState* rs, float opacity)
 {
     PointF center = getStiloCenter(b);
@@ -992,7 +992,7 @@ static void drawStiloBody(Stilo b, RenderState* rs, float opacity)
 
     PointF headCenter = rotatePoint((PointF){ b.headX, b.y }, center, angle);
     PointF buttCenter = rotatePoint((PointF){ b.buttX, b.y }, center, angle);
-    PointF inner = rotatePoint(b.innerCircle, center, angle);
+    PointF hip1 = rotatePoint(b.hip1Circle, center, angle);
 
     setColor(rs, rs->hoverStiloHead, 0.2f, 0.4f, 1.0f, opacity);
     drawCircle(headCenter, b.headRadius);
@@ -1000,8 +1000,18 @@ static void drawStiloBody(Stilo b, RenderState* rs, float opacity)
     setColor(rs, rs->hoverStiloButt, 0.2f, 0.4f, 1.0f, opacity);
     drawCircle(buttCenter, b.buttRadius);
 
-    setColor(rs, rs->draggingStiloInner || (rs->hoverStiloHip && !rs->shiftHeld && !rs->hoveringWhole), 0.2f, 0.4f, 1.0f, opacity);
-    drawCircle(inner, b.innerRadius);
+    setColor(rs, rs->draggingStiloHip1 || (rs->hoverStiloHip1 && !rs->shiftHeld && !rs->hoveringWhole), 0.2f, 0.4f, 1.0f, opacity);
+    drawCircle(hip1, b.hip1Radius);
+
+    // leg 2's own hip circle -- drawStiloHandles only draws a small
+    // fixed-size DRAG HANDLE dot at hip2Circle (same as it does for leg
+    // 1's hip), it never draws the actual joint circle at hip2Radius the
+    // way leg 1's hip circle is drawn just above -- without this, leg 2's
+    // hip has no visible body, only its handle dot.
+    PointF hip2 = rotatePoint(b.hip2Circle, center, angle);
+
+    setColor(rs, rs->draggingStiloHip2 || (rs->hoverStiloHip2 && !rs->shiftHeld && !rs->hoveringWhole), 0.2f, 0.4f, 1.0f, opacity);
+    drawCircle(hip2, b.hip2Radius);
 
     PointF headLocal = { b.headX, b.y };
     PointF buttLocal = { b.buttX, b.y };
@@ -1030,260 +1040,137 @@ static void drawStiloBody(Stilo b, RenderState* rs, float opacity)
             rotatePoint(seamArc2ButtTangentLocal, center, angle));
 }
 
-// Draws Stilo's knee joint and thigh arcs (hip-to-knee) -- identical
-// construction to drawThigh, just reading Stilo's own fields.
-static void drawStiloThigh(Stilo b, RenderState* rs, float opacity)
+// Draws leg 1's feet circle and thigh arcs (hip1-to-feet1) -- identical
+// fillet-arc construction to drawThigh above, just reading Stilo's own
+// fields; there's no shin/foot stage past this any more, feet1Circle IS
+// the end of the leg.
+static void drawStiloThigh1(Stilo b, RenderState* rs, float opacity)
 {
     PointF center = getStiloCenter(b);
     float angle = b.angle;
 
-    PointF kneeWorld = jointToWorld(b.kneeCircle, b.innerCircle, b.hipAngle, center, angle);
+    PointF feet1World = jointToWorld(b.feet1Circle, b.hip1Circle, b.hip1Angle, center, angle);
 
-    int hipRotateHint = (rs->hoverStiloHip && rs->shiftHeld) || rs->draggingStiloInner;
+    int hipRotateHint = (rs->hoverStiloHip1 && rs->shiftHeld) || rs->draggingStiloHip1;
 
-    setColor(rs, hipRotateHint || (rs->hoverStiloKnee && !rs->shiftHeld && !rs->draggingStiloKnee && !rs->hoveringWhole), 0.2f, 0.4f, 1.0f, opacity);
-    drawCircle(kneeWorld, b.kneeRadius);
+    setColor(rs, hipRotateHint || (rs->hoverStiloFeet1 && !rs->shiftHeld && !rs->draggingStiloFeet1 && !rs->hoveringWhole), 0.2f, 0.4f, 1.0f, opacity);
+    drawCircle(feet1World, b.feet1Radius);
 
-    PointF axisMidLocal = { (b.innerCircle.x + b.kneeCircle.x) * 0.5f, (b.innerCircle.y + b.kneeCircle.y) * 0.5f };
+    PointF axisMidLocal = { (b.hip1Circle.x + b.feet1Circle.x) * 0.5f, (b.hip1Circle.y + b.feet1Circle.y) * 0.5f };
 
-    Fillet thigh1Fillet = filletFromAttachAngle(b.innerCircle, b.innerRadius, b.kneeCircle, b.kneeRadius, b.thighArc1Angle, MIN_THIGH_ARC_R, MAX_SEMNI_THIGH_ARC_R);
-    PointF thigh1InnerTangentLocal = circleEdge(b.innerCircle, b.innerRadius, b.thighArc1Angle);
-    PointF thigh1KneeTangentLocal = internalTangentPoint(thigh1Fillet.center, thigh1Fillet.radius, b.kneeCircle, b.kneeRadius);
-    PointF thigh1NearLocal = circleTowardPoint(thigh1Fillet.center, thigh1Fillet.radius, axisMidLocal);
+    Fillet thigh1Arc1Fillet = filletFromAttachAngle(b.hip1Circle, b.hip1Radius, b.feet1Circle, b.feet1Radius, b.thigh1Arc1Angle, MIN_THIGH_ARC_R, MAX_SEMNI_THIGH_ARC_R);
+    PointF thigh1Arc1HipTangentLocal = circleEdge(b.hip1Circle, b.hip1Radius, b.thigh1Arc1Angle);
+    PointF thigh1Arc1FeetTangentLocal = internalTangentPoint(thigh1Arc1Fillet.center, thigh1Arc1Fillet.radius, b.feet1Circle, b.feet1Radius);
+    PointF thigh1Arc1NearLocal = circleTowardPoint(thigh1Arc1Fillet.center, thigh1Arc1Fillet.radius, axisMidLocal);
 
-    Fillet thigh2Fillet = filletFromAttachAngleConcave(b.innerCircle, b.innerRadius, b.kneeCircle, b.kneeRadius, b.thighArc2Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC2_CONCAVE_R);
-    PointF thigh2InnerTangentLocal = circleEdge(b.innerCircle, b.innerRadius, b.thighArc2Angle);
-    PointF thigh2KneeTangentLocal = circleTowardPoint(thigh2Fillet.center, thigh2Fillet.radius, b.kneeCircle);
-    PointF thigh2NearLocal = circleTowardPoint(thigh2Fillet.center, thigh2Fillet.radius, axisMidLocal);
+    Fillet thigh1Arc2Fillet = filletFromAttachAngleConcave(b.hip1Circle, b.hip1Radius, b.feet1Circle, b.feet1Radius, b.thigh1Arc2Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC2_CONCAVE_R);
+    PointF thigh1Arc2HipTangentLocal = circleEdge(b.hip1Circle, b.hip1Radius, b.thigh1Arc2Angle);
+    PointF thigh1Arc2FeetTangentLocal = circleTowardPoint(thigh1Arc2Fillet.center, thigh1Arc2Fillet.radius, b.feet1Circle);
+    PointF thigh1Arc2NearLocal = circleTowardPoint(thigh1Arc2Fillet.center, thigh1Arc2Fillet.radius, axisMidLocal);
 
-    setColor(rs, rs->draggingStiloThigh1 || rs->draggingStiloKnee || hipRotateHint, 0.2f, 0.4f, 1.0f, opacity);
-    drawArc(jointToWorld(thigh1InnerTangentLocal, b.innerCircle, b.hipAngle, center, angle),
-            jointToWorld(thigh1NearLocal, b.innerCircle, b.hipAngle, center, angle),
-            jointToWorld(thigh1KneeTangentLocal, b.innerCircle, b.hipAngle, center, angle));
+    setColor(rs, rs->draggingStiloThigh1Arc1 || rs->draggingStiloFeet1 || hipRotateHint, 0.2f, 0.4f, 1.0f, opacity);
+    drawArc(jointToWorld(thigh1Arc1HipTangentLocal, b.hip1Circle, b.hip1Angle, center, angle),
+            jointToWorld(thigh1Arc1NearLocal, b.hip1Circle, b.hip1Angle, center, angle),
+            jointToWorld(thigh1Arc1FeetTangentLocal, b.hip1Circle, b.hip1Angle, center, angle));
 
-    setColor(rs, rs->draggingStiloThigh2 || rs->draggingStiloKnee || hipRotateHint, 0.2f, 0.4f, 1.0f, opacity);
-    drawArc(jointToWorld(thigh2InnerTangentLocal, b.innerCircle, b.hipAngle, center, angle),
-            jointToWorld(thigh2NearLocal, b.innerCircle, b.hipAngle, center, angle),
-            jointToWorld(thigh2KneeTangentLocal, b.innerCircle, b.hipAngle, center, angle));
+    setColor(rs, rs->draggingStiloThigh1Arc2 || rs->draggingStiloFeet1 || hipRotateHint, 0.2f, 0.4f, 1.0f, opacity);
+    drawArc(jointToWorld(thigh1Arc2HipTangentLocal, b.hip1Circle, b.hip1Angle, center, angle),
+            jointToWorld(thigh1Arc2NearLocal, b.hip1Circle, b.hip1Angle, center, angle),
+            jointToWorld(thigh1Arc2FeetTangentLocal, b.hip1Circle, b.hip1Angle, center, angle));
 }
 
-static void drawStiloThighHandles(Stilo b, RenderState* rs, float opacity)
+static void drawStiloThigh1Handles(Stilo b, RenderState* rs, float opacity)
 {
     PointF center = getStiloCenter(b);
     float angle = b.angle;
 
-    PointF kneeWorld = jointToWorld(b.kneeCircle, b.innerCircle, b.hipAngle, center, angle);
+    PointF feet1World = jointToWorld(b.feet1Circle, b.hip1Circle, b.hip1Angle, center, angle);
 
-    PointF axisMidLocal = { (b.innerCircle.x + b.kneeCircle.x) * 0.5f, (b.innerCircle.y + b.kneeCircle.y) * 0.5f };
+    PointF axisMidLocal = { (b.hip1Circle.x + b.feet1Circle.x) * 0.5f, (b.hip1Circle.y + b.feet1Circle.y) * 0.5f };
 
-    Fillet thigh1Fillet = filletFromAttachAngle(b.innerCircle, b.innerRadius, b.kneeCircle, b.kneeRadius, b.thighArc1Angle, MIN_THIGH_ARC_R, MAX_SEMNI_THIGH_ARC_R);
-    PointF thigh1NearLocal = circleTowardPoint(thigh1Fillet.center, thigh1Fillet.radius, axisMidLocal);
-    PointF thigh1MidLocal = circleAtAxisMid(thigh1Fillet.center, thigh1Fillet.radius, b.innerCircle, b.kneeCircle, thigh1NearLocal);
+    Fillet thigh1Arc1Fillet = filletFromAttachAngle(b.hip1Circle, b.hip1Radius, b.feet1Circle, b.feet1Radius, b.thigh1Arc1Angle, MIN_THIGH_ARC_R, MAX_SEMNI_THIGH_ARC_R);
+    PointF thigh1Arc1NearLocal = circleTowardPoint(thigh1Arc1Fillet.center, thigh1Arc1Fillet.radius, axisMidLocal);
+    PointF thigh1Arc1MidLocal = circleAtAxisMid(thigh1Arc1Fillet.center, thigh1Arc1Fillet.radius, b.hip1Circle, b.feet1Circle, thigh1Arc1NearLocal);
 
-    Fillet thigh2Fillet = filletFromAttachAngleConcave(b.innerCircle, b.innerRadius, b.kneeCircle, b.kneeRadius, b.thighArc2Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC2_CONCAVE_R);
-    PointF thigh2NearLocal = circleTowardPoint(thigh2Fillet.center, thigh2Fillet.radius, axisMidLocal);
-    PointF thigh2MidLocal = circleAtAxisMid(thigh2Fillet.center, thigh2Fillet.radius, b.innerCircle, b.kneeCircle, thigh2NearLocal);
+    Fillet thigh1Arc2Fillet = filletFromAttachAngleConcave(b.hip1Circle, b.hip1Radius, b.feet1Circle, b.feet1Radius, b.thigh1Arc2Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC2_CONCAVE_R);
+    PointF thigh1Arc2NearLocal = circleTowardPoint(thigh1Arc2Fillet.center, thigh1Arc2Fillet.radius, axisMidLocal);
+    PointF thigh1Arc2MidLocal = circleAtAxisMid(thigh1Arc2Fillet.center, thigh1Arc2Fillet.radius, b.hip1Circle, b.feet1Circle, thigh1Arc2NearLocal);
 
-    PointF thigh1World = jointToWorld(thigh1MidLocal, b.innerCircle, b.hipAngle, center, angle);
-    PointF thigh2World = jointToWorld(thigh2MidLocal, b.innerCircle, b.hipAngle, center, angle);
+    PointF thigh1Arc1World = jointToWorld(thigh1Arc1MidLocal, b.hip1Circle, b.hip1Angle, center, angle);
+    PointF thigh1Arc2World = jointToWorld(thigh1Arc2MidLocal, b.hip1Circle, b.hip1Angle, center, angle);
 
-    drawHandle(kneeWorld, rs->draggingStiloKnee || rs->hoverStiloKnee, KNEE_HANDLE_RADIUS, opacity);
-    drawHandle(thigh1World, rs->draggingStiloThigh1, THIGH_HANDLE_RADIUS, opacity);
-    drawHandle(thigh2World, rs->draggingStiloThigh2, THIGH_HANDLE_RADIUS, opacity);
+    drawHandle(feet1World, rs->draggingStiloFeet1 || rs->hoverStiloFeet1, KNEE_HANDLE_RADIUS, opacity);
+    drawHandle(thigh1Arc1World, rs->draggingStiloThigh1Arc1, THIGH_HANDLE_RADIUS, opacity);
+    drawHandle(thigh1Arc2World, rs->draggingStiloThigh1Arc2, THIGH_HANDLE_RADIUS, opacity);
 }
 
 // ---- Stilo leg 2 ----
 //
-// Leg 2 is Stilo's second, independent hip->knee->foot chain (see app.h's
-// Stilo comment) -- identical construction to drawStiloThigh/
-// drawStiloThighHandles above, just reading the b.*Leg2 fields and
-// highlighting via rs->*StiloInnerLeg2/rs->*StiloKneeLeg2/etc. instead of
-// leg 1's. There's no leg-2 equivalent of drawStiloBody -- both legs hang
-// off the one shared torso, already drawn once.
-static void drawStiloThighLeg2(Stilo b, RenderState* rs, float opacity)
+// Leg 2 is Stilo's second, independent hip->feet chain (see app.h's Stilo
+// comment) -- identical construction to drawStiloThigh1/
+// drawStiloThigh1Handles above, just reading the b.hip2*/feet2*/thigh2*
+// fields and highlighting via rs->*StiloHip2/rs->*StiloFeet2/etc. instead
+// of leg 1's. There's no leg-2 equivalent of drawStiloBody's torso drawing
+// -- both legs hang off the one shared torso, already drawn once (though
+// drawStiloBody DOES draw leg 2's own hip circle, see its comment).
+static void drawStiloThigh2(Stilo b, RenderState* rs, float opacity)
 {
     PointF center = getStiloCenter(b);
     float angle = b.angle;
 
-    PointF kneeWorld = jointToWorld(b.kneeCircleLeg2, b.innerCircleLeg2, b.hipAngleLeg2, center, angle);
+    PointF feet2World = jointToWorld(b.feet2Circle, b.hip2Circle, b.hip2Angle, center, angle);
 
-    int hipRotateHint = (rs->hoverStiloHipLeg2 && rs->shiftHeld) || rs->draggingStiloInnerLeg2;
+    int hipRotateHint = (rs->hoverStiloHip2 && rs->shiftHeld) || rs->draggingStiloHip2;
 
-    setColor(rs, hipRotateHint || (rs->hoverStiloKneeLeg2 && !rs->shiftHeld && !rs->draggingStiloKneeLeg2 && !rs->hoveringWhole), 0.2f, 0.4f, 1.0f, opacity);
-    drawCircle(kneeWorld, b.kneeRadiusLeg2);
+    setColor(rs, hipRotateHint || (rs->hoverStiloFeet2 && !rs->shiftHeld && !rs->draggingStiloFeet2 && !rs->hoveringWhole), 0.2f, 0.4f, 1.0f, opacity);
+    drawCircle(feet2World, b.feet2Radius);
 
-    PointF axisMidLocal = { (b.innerCircleLeg2.x + b.kneeCircleLeg2.x) * 0.5f, (b.innerCircleLeg2.y + b.kneeCircleLeg2.y) * 0.5f };
+    PointF axisMidLocal = { (b.hip2Circle.x + b.feet2Circle.x) * 0.5f, (b.hip2Circle.y + b.feet2Circle.y) * 0.5f };
 
-    Fillet thigh1Fillet = filletFromAttachAngle(b.innerCircleLeg2, b.innerRadiusLeg2, b.kneeCircleLeg2, b.kneeRadiusLeg2, b.thighArc1AngleLeg2, MIN_THIGH_ARC_R, MAX_SEMNI_THIGH_ARC_R);
-    PointF thigh1InnerTangentLocal = circleEdge(b.innerCircleLeg2, b.innerRadiusLeg2, b.thighArc1AngleLeg2);
-    PointF thigh1KneeTangentLocal = internalTangentPoint(thigh1Fillet.center, thigh1Fillet.radius, b.kneeCircleLeg2, b.kneeRadiusLeg2);
-    PointF thigh1NearLocal = circleTowardPoint(thigh1Fillet.center, thigh1Fillet.radius, axisMidLocal);
+    Fillet thigh2Arc1Fillet = filletFromAttachAngle(b.hip2Circle, b.hip2Radius, b.feet2Circle, b.feet2Radius, b.thigh2Arc1Angle, MIN_THIGH_ARC_R, MAX_SEMNI_THIGH_ARC_R);
+    PointF thigh2Arc1HipTangentLocal = circleEdge(b.hip2Circle, b.hip2Radius, b.thigh2Arc1Angle);
+    PointF thigh2Arc1FeetTangentLocal = internalTangentPoint(thigh2Arc1Fillet.center, thigh2Arc1Fillet.radius, b.feet2Circle, b.feet2Radius);
+    PointF thigh2Arc1NearLocal = circleTowardPoint(thigh2Arc1Fillet.center, thigh2Arc1Fillet.radius, axisMidLocal);
 
-    Fillet thigh2Fillet = filletFromAttachAngleConcave(b.innerCircleLeg2, b.innerRadiusLeg2, b.kneeCircleLeg2, b.kneeRadiusLeg2, b.thighArc2AngleLeg2, MIN_THIGH_ARC_R, MAX_THIGH_ARC2_CONCAVE_R);
-    PointF thigh2InnerTangentLocal = circleEdge(b.innerCircleLeg2, b.innerRadiusLeg2, b.thighArc2AngleLeg2);
-    PointF thigh2KneeTangentLocal = circleTowardPoint(thigh2Fillet.center, thigh2Fillet.radius, b.kneeCircleLeg2);
-    PointF thigh2NearLocal = circleTowardPoint(thigh2Fillet.center, thigh2Fillet.radius, axisMidLocal);
+    Fillet thigh2Arc2Fillet = filletFromAttachAngleConcave(b.hip2Circle, b.hip2Radius, b.feet2Circle, b.feet2Radius, b.thigh2Arc2Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC2_CONCAVE_R);
+    PointF thigh2Arc2HipTangentLocal = circleEdge(b.hip2Circle, b.hip2Radius, b.thigh2Arc2Angle);
+    PointF thigh2Arc2FeetTangentLocal = circleTowardPoint(thigh2Arc2Fillet.center, thigh2Arc2Fillet.radius, b.feet2Circle);
+    PointF thigh2Arc2NearLocal = circleTowardPoint(thigh2Arc2Fillet.center, thigh2Arc2Fillet.radius, axisMidLocal);
 
-    setColor(rs, rs->draggingStiloThigh1Leg2 || rs->draggingStiloKneeLeg2 || hipRotateHint, 0.2f, 0.4f, 1.0f, opacity);
-    drawArc(jointToWorld(thigh1InnerTangentLocal, b.innerCircleLeg2, b.hipAngleLeg2, center, angle),
-            jointToWorld(thigh1NearLocal, b.innerCircleLeg2, b.hipAngleLeg2, center, angle),
-            jointToWorld(thigh1KneeTangentLocal, b.innerCircleLeg2, b.hipAngleLeg2, center, angle));
+    setColor(rs, rs->draggingStiloThigh2Arc1 || rs->draggingStiloFeet2 || hipRotateHint, 0.2f, 0.4f, 1.0f, opacity);
+    drawArc(jointToWorld(thigh2Arc1HipTangentLocal, b.hip2Circle, b.hip2Angle, center, angle),
+            jointToWorld(thigh2Arc1NearLocal, b.hip2Circle, b.hip2Angle, center, angle),
+            jointToWorld(thigh2Arc1FeetTangentLocal, b.hip2Circle, b.hip2Angle, center, angle));
 
-    setColor(rs, rs->draggingStiloThigh2Leg2 || rs->draggingStiloKneeLeg2 || hipRotateHint, 0.2f, 0.4f, 1.0f, opacity);
-    drawArc(jointToWorld(thigh2InnerTangentLocal, b.innerCircleLeg2, b.hipAngleLeg2, center, angle),
-            jointToWorld(thigh2NearLocal, b.innerCircleLeg2, b.hipAngleLeg2, center, angle),
-            jointToWorld(thigh2KneeTangentLocal, b.innerCircleLeg2, b.hipAngleLeg2, center, angle));
+    setColor(rs, rs->draggingStiloThigh2Arc2 || rs->draggingStiloFeet2 || hipRotateHint, 0.2f, 0.4f, 1.0f, opacity);
+    drawArc(jointToWorld(thigh2Arc2HipTangentLocal, b.hip2Circle, b.hip2Angle, center, angle),
+            jointToWorld(thigh2Arc2NearLocal, b.hip2Circle, b.hip2Angle, center, angle),
+            jointToWorld(thigh2Arc2FeetTangentLocal, b.hip2Circle, b.hip2Angle, center, angle));
 }
 
-static void drawStiloThighHandlesLeg2(Stilo b, RenderState* rs, float opacity)
+static void drawStiloThigh2Handles(Stilo b, RenderState* rs, float opacity)
 {
     PointF center = getStiloCenter(b);
     float angle = b.angle;
 
-    PointF kneeWorld = jointToWorld(b.kneeCircleLeg2, b.innerCircleLeg2, b.hipAngleLeg2, center, angle);
+    PointF feet2World = jointToWorld(b.feet2Circle, b.hip2Circle, b.hip2Angle, center, angle);
 
-    PointF axisMidLocal = { (b.innerCircleLeg2.x + b.kneeCircleLeg2.x) * 0.5f, (b.innerCircleLeg2.y + b.kneeCircleLeg2.y) * 0.5f };
+    PointF axisMidLocal = { (b.hip2Circle.x + b.feet2Circle.x) * 0.5f, (b.hip2Circle.y + b.feet2Circle.y) * 0.5f };
 
-    Fillet thigh1Fillet = filletFromAttachAngle(b.innerCircleLeg2, b.innerRadiusLeg2, b.kneeCircleLeg2, b.kneeRadiusLeg2, b.thighArc1AngleLeg2, MIN_THIGH_ARC_R, MAX_SEMNI_THIGH_ARC_R);
-    PointF thigh1NearLocal = circleTowardPoint(thigh1Fillet.center, thigh1Fillet.radius, axisMidLocal);
-    PointF thigh1MidLocal = circleAtAxisMid(thigh1Fillet.center, thigh1Fillet.radius, b.innerCircleLeg2, b.kneeCircleLeg2, thigh1NearLocal);
+    Fillet thigh2Arc1Fillet = filletFromAttachAngle(b.hip2Circle, b.hip2Radius, b.feet2Circle, b.feet2Radius, b.thigh2Arc1Angle, MIN_THIGH_ARC_R, MAX_SEMNI_THIGH_ARC_R);
+    PointF thigh2Arc1NearLocal = circleTowardPoint(thigh2Arc1Fillet.center, thigh2Arc1Fillet.radius, axisMidLocal);
+    PointF thigh2Arc1MidLocal = circleAtAxisMid(thigh2Arc1Fillet.center, thigh2Arc1Fillet.radius, b.hip2Circle, b.feet2Circle, thigh2Arc1NearLocal);
 
-    Fillet thigh2Fillet = filletFromAttachAngleConcave(b.innerCircleLeg2, b.innerRadiusLeg2, b.kneeCircleLeg2, b.kneeRadiusLeg2, b.thighArc2AngleLeg2, MIN_THIGH_ARC_R, MAX_THIGH_ARC2_CONCAVE_R);
-    PointF thigh2NearLocal = circleTowardPoint(thigh2Fillet.center, thigh2Fillet.radius, axisMidLocal);
-    PointF thigh2MidLocal = circleAtAxisMid(thigh2Fillet.center, thigh2Fillet.radius, b.innerCircleLeg2, b.kneeCircleLeg2, thigh2NearLocal);
+    Fillet thigh2Arc2Fillet = filletFromAttachAngleConcave(b.hip2Circle, b.hip2Radius, b.feet2Circle, b.feet2Radius, b.thigh2Arc2Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC2_CONCAVE_R);
+    PointF thigh2Arc2NearLocal = circleTowardPoint(thigh2Arc2Fillet.center, thigh2Arc2Fillet.radius, axisMidLocal);
+    PointF thigh2Arc2MidLocal = circleAtAxisMid(thigh2Arc2Fillet.center, thigh2Arc2Fillet.radius, b.hip2Circle, b.feet2Circle, thigh2Arc2NearLocal);
 
-    PointF thigh1World = jointToWorld(thigh1MidLocal, b.innerCircleLeg2, b.hipAngleLeg2, center, angle);
-    PointF thigh2World = jointToWorld(thigh2MidLocal, b.innerCircleLeg2, b.hipAngleLeg2, center, angle);
+    PointF thigh2Arc1World = jointToWorld(thigh2Arc1MidLocal, b.hip2Circle, b.hip2Angle, center, angle);
+    PointF thigh2Arc2World = jointToWorld(thigh2Arc2MidLocal, b.hip2Circle, b.hip2Angle, center, angle);
 
-    drawHandle(kneeWorld, rs->draggingStiloKneeLeg2 || rs->hoverStiloKneeLeg2, KNEE_HANDLE_RADIUS, opacity);
-    drawHandle(thigh1World, rs->draggingStiloThigh1Leg2, THIGH_HANDLE_RADIUS, opacity);
-    drawHandle(thigh2World, rs->draggingStiloThigh2Leg2, THIGH_HANDLE_RADIUS, opacity);
-}
-
-// Draws Stilo's foot joint and shin arcs (knee-to-foot) -- identical
-// construction to drawShin, just reading Stilo's own fields.
-static void drawStiloShin(Stilo b, RenderState* rs, float opacity)
-{
-    PointF center = getStiloCenter(b);
-    float angle = b.angle;
-
-    PointF footWorld = nestedJointToWorld(b.footCircle, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle);
-
-    int shinAffected = ((rs->hoverStiloKnee || rs->hoverStiloHip) && rs->shiftHeld) || rs->draggingStiloInner;
-
-    setColor(rs, shinAffected || (rs->hoverStiloFoot && !rs->draggingStiloFoot), 0.2f, 0.4f, 1.0f, opacity);
-    drawCircle(footWorld, b.footRadius);
-
-    PointF axisMidLocal = { (b.kneeCircle.x + b.footCircle.x) * 0.5f, (b.kneeCircle.y + b.footCircle.y) * 0.5f };
-
-    Fillet shin1Fillet = filletFromAttachAngle(b.kneeCircle, b.kneeRadius, b.footCircle, b.footRadius, b.shinArc1Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC_R);
-    PointF shin1KneeTangentLocal = circleEdge(b.kneeCircle, b.kneeRadius, b.shinArc1Angle);
-    PointF shin1FootTangentLocal = internalTangentPoint(shin1Fillet.center, shin1Fillet.radius, b.footCircle, b.footRadius);
-    PointF shin1NearLocal = circleTowardPoint(shin1Fillet.center, shin1Fillet.radius, axisMidLocal);
-
-    Fillet shin2Fillet = filletFromAttachAngleConcave(b.kneeCircle, b.kneeRadius, b.footCircle, b.footRadius, b.shinArc2Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC2_CONCAVE_R);
-    PointF shin2KneeTangentLocal = circleEdge(b.kneeCircle, b.kneeRadius, b.shinArc2Angle);
-    PointF shin2FootTangentLocal = circleTowardPoint(shin2Fillet.center, shin2Fillet.radius, b.footCircle);
-    PointF shin2NearLocal = circleTowardPoint(shin2Fillet.center, shin2Fillet.radius, axisMidLocal);
-
-    setColor(rs, rs->draggingStiloShin1 || rs->draggingStiloFoot || shinAffected, 0.2f, 0.4f, 1.0f, opacity);
-    drawArc(nestedJointToWorld(shin1KneeTangentLocal, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle),
-            nestedJointToWorld(shin1NearLocal, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle),
-            nestedJointToWorld(shin1FootTangentLocal, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle));
-
-    setColor(rs, rs->draggingStiloShin2 || rs->draggingStiloFoot || shinAffected, 0.2f, 0.4f, 1.0f, opacity);
-    drawArc(nestedJointToWorld(shin2KneeTangentLocal, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle),
-            nestedJointToWorld(shin2NearLocal, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle),
-            nestedJointToWorld(shin2FootTangentLocal, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle));
-}
-
-static void drawStiloShinHandles(Stilo b, RenderState* rs, float opacity)
-{
-    PointF center = getStiloCenter(b);
-    float angle = b.angle;
-
-    PointF footWorld = nestedJointToWorld(b.footCircle, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle);
-
-    PointF axisMidLocal = { (b.kneeCircle.x + b.footCircle.x) * 0.5f, (b.kneeCircle.y + b.footCircle.y) * 0.5f };
-
-    Fillet shin1Fillet = filletFromAttachAngle(b.kneeCircle, b.kneeRadius, b.footCircle, b.footRadius, b.shinArc1Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC_R);
-    PointF shin1NearLocal = circleTowardPoint(shin1Fillet.center, shin1Fillet.radius, axisMidLocal);
-    PointF shin1MidLocal = circleAtAxisMid(shin1Fillet.center, shin1Fillet.radius, b.kneeCircle, b.footCircle, shin1NearLocal);
-
-    Fillet shin2Fillet = filletFromAttachAngleConcave(b.kneeCircle, b.kneeRadius, b.footCircle, b.footRadius, b.shinArc2Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC2_CONCAVE_R);
-    PointF shin2NearLocal = circleTowardPoint(shin2Fillet.center, shin2Fillet.radius, axisMidLocal);
-    PointF shin2MidLocal = circleAtAxisMid(shin2Fillet.center, shin2Fillet.radius, b.kneeCircle, b.footCircle, shin2NearLocal);
-
-    PointF shin1World = nestedJointToWorld(shin1MidLocal, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle);
-    PointF shin2World = nestedJointToWorld(shin2MidLocal, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle);
-
-    drawHandle(footWorld, rs->draggingStiloFoot || rs->hoverStiloFoot, FOOT_HANDLE_RADIUS, opacity);
-    drawHandle(shin1World, rs->draggingStiloShin1, SHIN_HANDLE_RADIUS, opacity);
-    drawHandle(shin2World, rs->draggingStiloShin2, SHIN_HANDLE_RADIUS, opacity);
-}
-
-// Same construction as drawStiloShin/drawStiloShinHandles above, for leg 2's
-// own knee-to-foot chain (b.*Leg2 fields, rs->*StiloFootLeg2/*StiloShin*Leg2
-// hover/drag state) -- see drawStiloThighLeg2's comment for why leg 2 gets
-// its own copies of these functions.
-static void drawStiloShinLeg2(Stilo b, RenderState* rs, float opacity)
-{
-    PointF center = getStiloCenter(b);
-    float angle = b.angle;
-
-    PointF footWorld = nestedJointToWorld(b.footCircleLeg2, b.kneeCircleLeg2, b.kneeAngleLeg2, b.innerCircleLeg2, b.hipAngleLeg2, center, angle);
-
-    int shinAffected = ((rs->hoverStiloKneeLeg2 || rs->hoverStiloHipLeg2) && rs->shiftHeld) || rs->draggingStiloInnerLeg2;
-
-    setColor(rs, shinAffected || (rs->hoverStiloFootLeg2 && !rs->draggingStiloFootLeg2), 0.2f, 0.4f, 1.0f, opacity);
-    drawCircle(footWorld, b.footRadiusLeg2);
-
-    PointF axisMidLocal = { (b.kneeCircleLeg2.x + b.footCircleLeg2.x) * 0.5f, (b.kneeCircleLeg2.y + b.footCircleLeg2.y) * 0.5f };
-
-    Fillet shin1Fillet = filletFromAttachAngle(b.kneeCircleLeg2, b.kneeRadiusLeg2, b.footCircleLeg2, b.footRadiusLeg2, b.shinArc1AngleLeg2, MIN_SHIN_ARC_R, MAX_SHIN_ARC_R);
-    PointF shin1KneeTangentLocal = circleEdge(b.kneeCircleLeg2, b.kneeRadiusLeg2, b.shinArc1AngleLeg2);
-    PointF shin1FootTangentLocal = internalTangentPoint(shin1Fillet.center, shin1Fillet.radius, b.footCircleLeg2, b.footRadiusLeg2);
-    PointF shin1NearLocal = circleTowardPoint(shin1Fillet.center, shin1Fillet.radius, axisMidLocal);
-
-    Fillet shin2Fillet = filletFromAttachAngleConcave(b.kneeCircleLeg2, b.kneeRadiusLeg2, b.footCircleLeg2, b.footRadiusLeg2, b.shinArc2AngleLeg2, MIN_SHIN_ARC_R, MAX_SHIN_ARC2_CONCAVE_R);
-    PointF shin2KneeTangentLocal = circleEdge(b.kneeCircleLeg2, b.kneeRadiusLeg2, b.shinArc2AngleLeg2);
-    PointF shin2FootTangentLocal = circleTowardPoint(shin2Fillet.center, shin2Fillet.radius, b.footCircleLeg2);
-    PointF shin2NearLocal = circleTowardPoint(shin2Fillet.center, shin2Fillet.radius, axisMidLocal);
-
-    setColor(rs, rs->draggingStiloShin1Leg2 || rs->draggingStiloFootLeg2 || shinAffected, 0.2f, 0.4f, 1.0f, opacity);
-    drawArc(nestedJointToWorld(shin1KneeTangentLocal, b.kneeCircleLeg2, b.kneeAngleLeg2, b.innerCircleLeg2, b.hipAngleLeg2, center, angle),
-            nestedJointToWorld(shin1NearLocal, b.kneeCircleLeg2, b.kneeAngleLeg2, b.innerCircleLeg2, b.hipAngleLeg2, center, angle),
-            nestedJointToWorld(shin1FootTangentLocal, b.kneeCircleLeg2, b.kneeAngleLeg2, b.innerCircleLeg2, b.hipAngleLeg2, center, angle));
-
-    setColor(rs, rs->draggingStiloShin2Leg2 || rs->draggingStiloFootLeg2 || shinAffected, 0.2f, 0.4f, 1.0f, opacity);
-    drawArc(nestedJointToWorld(shin2KneeTangentLocal, b.kneeCircleLeg2, b.kneeAngleLeg2, b.innerCircleLeg2, b.hipAngleLeg2, center, angle),
-            nestedJointToWorld(shin2NearLocal, b.kneeCircleLeg2, b.kneeAngleLeg2, b.innerCircleLeg2, b.hipAngleLeg2, center, angle),
-            nestedJointToWorld(shin2FootTangentLocal, b.kneeCircleLeg2, b.kneeAngleLeg2, b.innerCircleLeg2, b.hipAngleLeg2, center, angle));
-}
-
-static void drawStiloShinHandlesLeg2(Stilo b, RenderState* rs, float opacity)
-{
-    PointF center = getStiloCenter(b);
-    float angle = b.angle;
-
-    PointF footWorld = nestedJointToWorld(b.footCircleLeg2, b.kneeCircleLeg2, b.kneeAngleLeg2, b.innerCircleLeg2, b.hipAngleLeg2, center, angle);
-
-    PointF axisMidLocal = { (b.kneeCircleLeg2.x + b.footCircleLeg2.x) * 0.5f, (b.kneeCircleLeg2.y + b.footCircleLeg2.y) * 0.5f };
-
-    Fillet shin1Fillet = filletFromAttachAngle(b.kneeCircleLeg2, b.kneeRadiusLeg2, b.footCircleLeg2, b.footRadiusLeg2, b.shinArc1AngleLeg2, MIN_SHIN_ARC_R, MAX_SHIN_ARC_R);
-    PointF shin1NearLocal = circleTowardPoint(shin1Fillet.center, shin1Fillet.radius, axisMidLocal);
-    PointF shin1MidLocal = circleAtAxisMid(shin1Fillet.center, shin1Fillet.radius, b.kneeCircleLeg2, b.footCircleLeg2, shin1NearLocal);
-
-    Fillet shin2Fillet = filletFromAttachAngleConcave(b.kneeCircleLeg2, b.kneeRadiusLeg2, b.footCircleLeg2, b.footRadiusLeg2, b.shinArc2AngleLeg2, MIN_SHIN_ARC_R, MAX_SHIN_ARC2_CONCAVE_R);
-    PointF shin2NearLocal = circleTowardPoint(shin2Fillet.center, shin2Fillet.radius, axisMidLocal);
-    PointF shin2MidLocal = circleAtAxisMid(shin2Fillet.center, shin2Fillet.radius, b.kneeCircleLeg2, b.footCircleLeg2, shin2NearLocal);
-
-    PointF shin1World = nestedJointToWorld(shin1MidLocal, b.kneeCircleLeg2, b.kneeAngleLeg2, b.innerCircleLeg2, b.hipAngleLeg2, center, angle);
-    PointF shin2World = nestedJointToWorld(shin2MidLocal, b.kneeCircleLeg2, b.kneeAngleLeg2, b.innerCircleLeg2, b.hipAngleLeg2, center, angle);
-
-    drawHandle(footWorld, rs->draggingStiloFootLeg2 || rs->hoverStiloFootLeg2, FOOT_HANDLE_RADIUS, opacity);
-    drawHandle(shin1World, rs->draggingStiloShin1Leg2, SHIN_HANDLE_RADIUS, opacity);
-    drawHandle(shin2World, rs->draggingStiloShin2Leg2, SHIN_HANDLE_RADIUS, opacity);
+    drawHandle(feet2World, rs->draggingStiloFeet2 || rs->hoverStiloFeet2, KNEE_HANDLE_RADIUS, opacity);
+    drawHandle(thigh2Arc1World, rs->draggingStiloThigh2Arc1, THIGH_HANDLE_RADIUS, opacity);
+    drawHandle(thigh2Arc2World, rs->draggingStiloThigh2Arc2, THIGH_HANDLE_RADIUS, opacity);
 }
 
 static void drawStiloHandles(Stilo b, RenderState* rs, float opacity)
@@ -1291,8 +1178,8 @@ static void drawStiloHandles(Stilo b, RenderState* rs, float opacity)
     PointF center = getStiloCenter(b);
     float angle = b.angle;
 
-    PointF inner      = rotatePoint(b.innerCircle, center, angle);
-    PointF innerLeg2  = rotatePoint(b.innerCircleLeg2, center, angle);
+    PointF hip1      = rotatePoint(b.hip1Circle, center, angle);
+    PointF hip2       = rotatePoint(b.hip2Circle, center, angle);
     PointF headHandle = rotatePoint((PointF){b.headX, b.y}, center, angle);
     PointF buttHandle  = rotatePoint((PointF){b.buttX, b.y}, center, angle);
 
@@ -1315,10 +1202,10 @@ static void drawStiloHandles(Stilo b, RenderState* rs, float opacity)
     drawHandle(seamArc1Handle, rs->draggingStiloSeamArc1, ARC_HANDLE_RADIUS, opacity);
     drawHandle(seamArc2Handle, rs->draggingStiloSeamArc2, ARC_HANDLE_RADIUS, opacity);
 
-    drawHandle(inner, rs->draggingStiloInner || rs->hoverStiloHip, HIP_HANDLE_RADIUS, opacity);
+    drawHandle(hip1, rs->draggingStiloHip1 || rs->hoverStiloHip1, HIP_HANDLE_RADIUS, opacity);
     // leg 2's hip handle -- torso (head/butt/seam arcs) is shared and drawn
     // only once above, but each leg gets its own hip circle handle
-    drawHandle(innerLeg2, rs->draggingStiloInnerLeg2 || rs->hoverStiloHipLeg2, HIP_HANDLE_RADIUS, opacity);
+    drawHandle(hip2, rs->draggingStiloHip2 || rs->hoverStiloHip2, HIP_HANDLE_RADIUS, opacity);
     drawHandle(headHandle, rs->hoverStiloHead, HEAD_BUTT_HANDLE_RADIUS, opacity);
     drawHandle(buttHandle, rs->hoverStiloButt, HEAD_BUTT_HANDLE_RADIUS, opacity);
 }
@@ -1326,10 +1213,8 @@ static void drawStiloHandles(Stilo b, RenderState* rs, float opacity)
 void drawStilo(Stilo b, RenderState* rs, int includeHandles, float opacity)
 {
     drawStiloBody(b, rs, opacity);
-    drawStiloThigh(b, rs, opacity);
-    drawStiloShin(b, rs, opacity);
-    drawStiloThighLeg2(b, rs, opacity);
-    drawStiloShinLeg2(b, rs, opacity);
+    drawStiloThigh1(b, rs, opacity);
+    drawStiloThigh2(b, rs, opacity);
 
     // same includeHandles + editor-mode gating as drawSemni's own
     // handlesVisible/drawRocky's own handlesVisible -- editor UI only,
@@ -1339,10 +1224,8 @@ void drawStilo(Stilo b, RenderState* rs, int includeHandles, float opacity)
     if (handlesVisible)
     {
         drawStiloHandles(b, rs, opacity);
-        drawStiloThighHandles(b, rs, opacity);
-        drawStiloShinHandles(b, rs, opacity);
-        drawStiloThighHandlesLeg2(b, rs, opacity);
-        drawStiloShinHandlesLeg2(b, rs, opacity);
+        drawStiloThigh1Handles(b, rs, opacity);
+        drawStiloThigh2Handles(b, rs, opacity);
     }
 }
 
@@ -1378,31 +1261,23 @@ static void renderRobot(AppState* app, int includeHandles, float opacity)
 
     rs.draggingStiloSeamArc1 = app->draggingStiloSeamArc1;
     rs.draggingStiloSeamArc2 = app->draggingStiloSeamArc2;
-    rs.draggingStiloInner = app->draggingStiloInner;
-    rs.draggingStiloKnee = app->draggingStiloKnee;
-    rs.draggingStiloThigh1 = app->draggingStiloThigh1;
-    rs.draggingStiloThigh2 = app->draggingStiloThigh2;
-    rs.draggingStiloFoot = app->draggingStiloFoot;
-    rs.draggingStiloShin1 = app->draggingStiloShin1;
-    rs.draggingStiloShin2 = app->draggingStiloShin2;
+    rs.draggingStiloHip1 = app->draggingStiloHip1;
+    rs.draggingStiloFeet1 = app->draggingStiloFeet1;
+    rs.draggingStiloThigh1Arc1 = app->draggingStiloThigh1Arc1;
+    rs.draggingStiloThigh1Arc2 = app->draggingStiloThigh1Arc2;
 
-    rs.hoverStiloHip = app->hoverStiloHip;
-    rs.hoverStiloKnee = app->hoverStiloKnee;
-    rs.hoverStiloFoot = app->hoverStiloFoot;
+    rs.hoverStiloHip1 = app->hoverStiloHip1;
+    rs.hoverStiloFeet1 = app->hoverStiloFeet1;
     rs.hoverStiloHead = app->hoverStiloHead;
     rs.hoverStiloButt = app->hoverStiloButt;
 
-    rs.draggingStiloInnerLeg2 = app->draggingStiloInnerLeg2;
-    rs.draggingStiloKneeLeg2 = app->draggingStiloKneeLeg2;
-    rs.draggingStiloThigh1Leg2 = app->draggingStiloThigh1Leg2;
-    rs.draggingStiloThigh2Leg2 = app->draggingStiloThigh2Leg2;
-    rs.draggingStiloFootLeg2 = app->draggingStiloFootLeg2;
-    rs.draggingStiloShin1Leg2 = app->draggingStiloShin1Leg2;
-    rs.draggingStiloShin2Leg2 = app->draggingStiloShin2Leg2;
+    rs.draggingStiloHip2 = app->draggingStiloHip2;
+    rs.draggingStiloFeet2 = app->draggingStiloFeet2;
+    rs.draggingStiloThigh2Arc1 = app->draggingStiloThigh2Arc1;
+    rs.draggingStiloThigh2Arc2 = app->draggingStiloThigh2Arc2;
 
-    rs.hoverStiloHipLeg2 = app->hoverStiloHipLeg2;
-    rs.hoverStiloKneeLeg2 = app->hoverStiloKneeLeg2;
-    rs.hoverStiloFootLeg2 = app->hoverStiloFootLeg2;
+    rs.hoverStiloHip2 = app->hoverStiloHip2;
+    rs.hoverStiloFeet2 = app->hoverStiloFeet2;
 
     rs.showSegments = app->showCircleSegments;
     rs.hoveredCircleSegment = app->hoveredCircleSegment;

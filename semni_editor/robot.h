@@ -61,13 +61,21 @@ void printRockyAsInit(Rocky r);
 // Same torso as Semni, so the same head/butt-midpoint pivot.
 PointF getStiloCenter(Stilo s);
 
-// Mirrors Stilo's leg (hip through knee through foot, plus all four
-// thigh/shin arcs) across the torso's own center line -- Stilo now has
-// the exact same hip->knee->foot chain as Semni, so this is the same
-// chain-aware, bodyAngle-correct construction as mirrorHipLeg (see
-// robot.c for the derivation of why each field transforms the way it
-// does), just reading/writing app->robotScene.stilo's own fields.
+// Mirrors Stilo's FIRST leg only (hip1 + feet1, plus its two thigh1 arcs)
+// across the torso's own center line -- same reflect-then-solve-backward
+// construction as mirrorHipLeg (see robot.c for the full derivation), just
+// a shorter chain (hip1 -> feet1 directly, no knee/shin/foot sub-stage).
+// Leg 2 is untouched -- see mirrorStiloLeg2 below for its own, independent
+// mirror, since the two legs need to be mirrorable one at a time.
 void mirrorStiloLeg(Stilo* s);
+
+// Same construction as mirrorStiloLeg above, for Stilo's SECOND leg (its
+// own hip2/feet2/thigh2 fields, see app.h's Stilo comment) -- leaves leg 1
+// and the shared torso untouched. Kept as a separate function (rather than
+// a parameter on mirrorStiloLeg) so each leg has its own dedicated UI
+// button (input.c's ID_MIRROR_LEG_BUTTON/ID_MIRROR_LEG2_BUTTON) and either
+// leg can be mirrored independently of the other.
+void mirrorStiloLeg2(Stilo* s);
 
 // Same idea as printRobotAsInit, for Stilo's own fields.
 void printStiloAsInit(Stilo s);

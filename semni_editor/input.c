@@ -68,47 +68,30 @@ static void adjustRockyShinArcs(AppState* app)
 }
 
 // Same re-validation as adjustThighArcs/adjustShinArcs, for Stilo's own
-// hip->knee->foot chain -- Stilo now has the identical fillet
-// construction as Semni (see app.h's Stilo comment), just needing its own
-// copy since it's a separate struct/set of AppState fields.
-static void adjustStiloThighArcs(AppState* app)
+// hip1->feet1 chain -- Stilo now has no knee/shin/foot sub-stage any more
+// (see app.h's Stilo comment), just the pair of thigh arcs directly between
+// the hip and feet circles, needing its own copy since it's a separate
+// struct/set of AppState fields.
+static void adjustStiloThigh1Arcs(AppState* app)
 {
-    SafeAngleRange range1 = filletSafeAngleRange(app->robotScene.stilo.innerCircle, app->robotScene.stilo.innerRadius, app->robotScene.stilo.kneeCircle, app->robotScene.stilo.kneeRadius, MAX_SEMNI_THIGH_ARC_R);
-    SafeAngleRange range2 = filletSafeAngleRangeConcave(app->robotScene.stilo.innerCircle, app->robotScene.stilo.innerRadius, app->robotScene.stilo.kneeCircle, app->robotScene.stilo.kneeRadius, MAX_THIGH_ARC2_CONCAVE_R);
+    SafeAngleRange range1 = filletSafeAngleRange(app->robotScene.stilo.hip1Circle, app->robotScene.stilo.hip1Radius, app->robotScene.stilo.feet1Circle, app->robotScene.stilo.feet1Radius, MAX_SEMNI_THIGH_ARC_R);
+    SafeAngleRange range2 = filletSafeAngleRangeConcave(app->robotScene.stilo.hip1Circle, app->robotScene.stilo.hip1Radius, app->robotScene.stilo.feet1Circle, app->robotScene.stilo.feet1Radius, MAX_THIGH_ARC2_CONCAVE_R);
 
-    app->robotScene.stilo.thighArc1Angle = clampToSafeAngleRange(app->robotScene.stilo.thighArc1Angle, range1, THIGH_ARC_ANGLE_MARGIN_DEG);
-    app->robotScene.stilo.thighArc2Angle = clampToSafeAngleRange(app->robotScene.stilo.thighArc2Angle, range2, THIGH_ARC_ANGLE_MARGIN_DEG);
+    app->robotScene.stilo.thigh1Arc1Angle = clampToSafeAngleRange(app->robotScene.stilo.thigh1Arc1Angle, range1, THIGH_ARC_ANGLE_MARGIN_DEG);
+    app->robotScene.stilo.thigh1Arc2Angle = clampToSafeAngleRange(app->robotScene.stilo.thigh1Arc2Angle, range2, THIGH_ARC_ANGLE_MARGIN_DEG);
 }
 
-static void adjustStiloShinArcs(AppState* app)
+// Same re-validation as adjustStiloThigh1Arcs above, for Stilo's SECOND leg
+// (see app.h's Stilo comment) -- its own independent hip2->feet2 chain, so
+// it needs its own copy of these checks against its own hip2/feet2/thigh2
+// fields.
+static void adjustStiloThigh2Arcs(AppState* app)
 {
-    SafeAngleRange range1 = filletSafeAngleRange(app->robotScene.stilo.kneeCircle, app->robotScene.stilo.kneeRadius, app->robotScene.stilo.footCircle, app->robotScene.stilo.footRadius, MAX_SHIN_ARC_R);
-    SafeAngleRange range2 = filletSafeAngleRangeConcave(app->robotScene.stilo.kneeCircle, app->robotScene.stilo.kneeRadius, app->robotScene.stilo.footCircle, app->robotScene.stilo.footRadius, MAX_SHIN_ARC2_CONCAVE_R);
+    SafeAngleRange range1 = filletSafeAngleRange(app->robotScene.stilo.hip2Circle, app->robotScene.stilo.hip2Radius, app->robotScene.stilo.feet2Circle, app->robotScene.stilo.feet2Radius, MAX_SEMNI_THIGH_ARC_R);
+    SafeAngleRange range2 = filletSafeAngleRangeConcave(app->robotScene.stilo.hip2Circle, app->robotScene.stilo.hip2Radius, app->robotScene.stilo.feet2Circle, app->robotScene.stilo.feet2Radius, MAX_THIGH_ARC2_CONCAVE_R);
 
-    app->robotScene.stilo.shinArc1Angle = clampToSafeAngleRange(app->robotScene.stilo.shinArc1Angle, range1, SHIN_ARC_ANGLE_MARGIN_DEG);
-    app->robotScene.stilo.shinArc2Angle = clampToSafeAngleRange(app->robotScene.stilo.shinArc2Angle, range2, SHIN_ARC_ANGLE_MARGIN_DEG);
-}
-
-// Same re-validation as adjustStiloThighArcs/adjustStiloShinArcs above, for
-// Stilo's SECOND leg (see app.h's Stilo comment) -- its own independent
-// hip->knee->foot chain, so it needs its own copy of these checks against
-// its own Leg2 fields.
-static void adjustStiloThighArcsLeg2(AppState* app)
-{
-    SafeAngleRange range1 = filletSafeAngleRange(app->robotScene.stilo.innerCircleLeg2, app->robotScene.stilo.innerRadiusLeg2, app->robotScene.stilo.kneeCircleLeg2, app->robotScene.stilo.kneeRadiusLeg2, MAX_SEMNI_THIGH_ARC_R);
-    SafeAngleRange range2 = filletSafeAngleRangeConcave(app->robotScene.stilo.innerCircleLeg2, app->robotScene.stilo.innerRadiusLeg2, app->robotScene.stilo.kneeCircleLeg2, app->robotScene.stilo.kneeRadiusLeg2, MAX_THIGH_ARC2_CONCAVE_R);
-
-    app->robotScene.stilo.thighArc1AngleLeg2 = clampToSafeAngleRange(app->robotScene.stilo.thighArc1AngleLeg2, range1, THIGH_ARC_ANGLE_MARGIN_DEG);
-    app->robotScene.stilo.thighArc2AngleLeg2 = clampToSafeAngleRange(app->robotScene.stilo.thighArc2AngleLeg2, range2, THIGH_ARC_ANGLE_MARGIN_DEG);
-}
-
-static void adjustStiloShinArcsLeg2(AppState* app)
-{
-    SafeAngleRange range1 = filletSafeAngleRange(app->robotScene.stilo.kneeCircleLeg2, app->robotScene.stilo.kneeRadiusLeg2, app->robotScene.stilo.footCircleLeg2, app->robotScene.stilo.footRadiusLeg2, MAX_SHIN_ARC_R);
-    SafeAngleRange range2 = filletSafeAngleRangeConcave(app->robotScene.stilo.kneeCircleLeg2, app->robotScene.stilo.kneeRadiusLeg2, app->robotScene.stilo.footCircleLeg2, app->robotScene.stilo.footRadiusLeg2, MAX_SHIN_ARC2_CONCAVE_R);
-
-    app->robotScene.stilo.shinArc1AngleLeg2 = clampToSafeAngleRange(app->robotScene.stilo.shinArc1AngleLeg2, range1, SHIN_ARC_ANGLE_MARGIN_DEG);
-    app->robotScene.stilo.shinArc2AngleLeg2 = clampToSafeAngleRange(app->robotScene.stilo.shinArc2AngleLeg2, range2, SHIN_ARC_ANGLE_MARGIN_DEG);
+    app->robotScene.stilo.thigh2Arc1Angle = clampToSafeAngleRange(app->robotScene.stilo.thigh2Arc1Angle, range1, THIGH_ARC_ANGLE_MARGIN_DEG);
+    app->robotScene.stilo.thigh2Arc2Angle = clampToSafeAngleRange(app->robotScene.stilo.thigh2Arc2Angle, range2, THIGH_ARC_ANGLE_MARGIN_DEG);
 }
 
 // Keeps the knee handle honest whenever the rectangle's own size changes
@@ -277,20 +260,14 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             app->draggingRockyFoot = 0;
             app->draggingStiloSeamArc1 = 0;
             app->draggingStiloSeamArc2 = 0;
-            app->draggingStiloInner = 0;
-            app->draggingStiloKnee = 0;
-            app->draggingStiloThigh1 = 0;
-            app->draggingStiloThigh2 = 0;
-            app->draggingStiloFoot = 0;
-            app->draggingStiloShin1 = 0;
-            app->draggingStiloShin2 = 0;
-            app->draggingStiloInnerLeg2 = 0;
-            app->draggingStiloKneeLeg2 = 0;
-            app->draggingStiloThigh1Leg2 = 0;
-            app->draggingStiloThigh2Leg2 = 0;
-            app->draggingStiloFootLeg2 = 0;
-            app->draggingStiloShin1Leg2 = 0;
-            app->draggingStiloShin2Leg2 = 0;
+            app->draggingStiloHip1 = 0;
+            app->draggingStiloFeet1 = 0;
+            app->draggingStiloThigh1Arc1 = 0;
+            app->draggingStiloThigh1Arc2 = 0;
+            app->draggingStiloHip2 = 0;
+            app->draggingStiloFeet2 = 0;
+            app->draggingStiloThigh2Arc1 = 0;
+            app->draggingStiloThigh2Arc2 = 0;
 
             // Rocky's rectangular torso has one hip-like handle (see
             // app.h's hoverRockyBody/draggingRockyBody): hover to
@@ -359,12 +336,13 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 break;
             }
 
-            // Stilo now has Semni's full set of joint handles (hip, knee,
-            // foot, both thigh arcs, both shin arcs) -- same hit-test
-            // construction as the ROBOT_KIND_SEMNI block below, just
-            // reading/writing app->robotScene.stilo and the Stilo-specific
-            // draggingStilo*/stilo* fields (see app.h) instead of Semni's
-            // own, since a different struct is being edited.
+            // Stilo now has just two joints per leg (hip + feet, no
+            // knee/shin/foot sub-stage any more -- see app.h's Stilo
+            // comment) -- same hit-test construction as the ROBOT_KIND_SEMNI
+            // block below, just reading/writing app->robotScene.stilo and
+            // the Stilo-specific draggingStilo*/stilo* fields (see app.h)
+            // instead of Semni's own, since a different struct is being
+            // edited.
             if (app->robotScene.activeKind == ROBOT_KIND_STILO)
             {
                 PointF stiloCenter = getStiloCenter(app->robotScene.stilo);
@@ -386,113 +364,63 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 PointF stiloSeamArc1HandleWorld = rotatePoint(stiloSeamArc1MidLocal, stiloCenter, app->robotScene.stilo.angle);
                 PointF stiloSeamArc2HandleWorld = rotatePoint(stiloSeamArc2MidLocal, stiloCenter, app->robotScene.stilo.angle);
 
-                PointF stiloInnerWorld = rotatePoint(app->robotScene.stilo.innerCircle, stiloCenter, app->robotScene.stilo.angle);
+                PointF stiloHip1World = rotatePoint(app->robotScene.stilo.hip1Circle, stiloCenter, app->robotScene.stilo.angle);
 
-                PointF stiloHipPivot = app->robotScene.stilo.innerCircle;
-                float stiloHipAngle = app->robotScene.stilo.hipAngle;
+                PointF stiloHip1Pivot = app->robotScene.stilo.hip1Circle;
+                float stiloHip1Angle = app->robotScene.stilo.hip1Angle;
 
-                PointF stiloKneeWorld = jointToWorld(app->robotScene.stilo.kneeCircle, stiloHipPivot, stiloHipAngle, stiloCenter, app->robotScene.stilo.angle);
+                PointF stiloFeet1World = jointToWorld(app->robotScene.stilo.feet1Circle, stiloHip1Pivot, stiloHip1Angle, stiloCenter, app->robotScene.stilo.angle);
 
-                PointF stiloThighAxisMidLocal = { (app->robotScene.stilo.innerCircle.x + app->robotScene.stilo.kneeCircle.x) * 0.5f,
-                                                   (app->robotScene.stilo.innerCircle.y + app->robotScene.stilo.kneeCircle.y) * 0.5f };
+                PointF stiloThigh1AxisMidLocal = { (app->robotScene.stilo.hip1Circle.x + app->robotScene.stilo.feet1Circle.x) * 0.5f,
+                                                    (app->robotScene.stilo.hip1Circle.y + app->robotScene.stilo.feet1Circle.y) * 0.5f };
 
-                Fillet stiloThigh1Fillet = filletFromAttachAngle(app->robotScene.stilo.innerCircle, app->robotScene.stilo.innerRadius,
-                                                                  app->robotScene.stilo.kneeCircle, app->robotScene.stilo.kneeRadius,
-                                                                  app->robotScene.stilo.thighArc1Angle, MIN_THIGH_ARC_R, MAX_SEMNI_THIGH_ARC_R);
-                PointF stiloThigh1NearLocal = circleTowardPoint(stiloThigh1Fillet.center, stiloThigh1Fillet.radius, stiloThighAxisMidLocal);
-                PointF stiloThigh1MidLocal = circleAtAxisMid(stiloThigh1Fillet.center, stiloThigh1Fillet.radius, app->robotScene.stilo.innerCircle, app->robotScene.stilo.kneeCircle, stiloThigh1NearLocal);
+                Fillet stiloThigh1Arc1Fillet = filletFromAttachAngle(app->robotScene.stilo.hip1Circle, app->robotScene.stilo.hip1Radius,
+                                                                      app->robotScene.stilo.feet1Circle, app->robotScene.stilo.feet1Radius,
+                                                                      app->robotScene.stilo.thigh1Arc1Angle, MIN_THIGH_ARC_R, MAX_SEMNI_THIGH_ARC_R);
+                PointF stiloThigh1Arc1NearLocal = circleTowardPoint(stiloThigh1Arc1Fillet.center, stiloThigh1Arc1Fillet.radius, stiloThigh1AxisMidLocal);
+                PointF stiloThigh1Arc1MidLocal = circleAtAxisMid(stiloThigh1Arc1Fillet.center, stiloThigh1Arc1Fillet.radius, app->robotScene.stilo.hip1Circle, app->robotScene.stilo.feet1Circle, stiloThigh1Arc1NearLocal);
 
-                Fillet stiloThigh2Fillet = filletFromAttachAngleConcave(app->robotScene.stilo.innerCircle, app->robotScene.stilo.innerRadius,
-                                                                         app->robotScene.stilo.kneeCircle, app->robotScene.stilo.kneeRadius,
-                                                                         app->robotScene.stilo.thighArc2Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC2_CONCAVE_R);
-                PointF stiloThigh2NearLocal = circleTowardPoint(stiloThigh2Fillet.center, stiloThigh2Fillet.radius, stiloThighAxisMidLocal);
-                PointF stiloThigh2MidLocal = circleAtAxisMid(stiloThigh2Fillet.center, stiloThigh2Fillet.radius, app->robotScene.stilo.innerCircle, app->robotScene.stilo.kneeCircle, stiloThigh2NearLocal);
+                Fillet stiloThigh1Arc2Fillet = filletFromAttachAngleConcave(app->robotScene.stilo.hip1Circle, app->robotScene.stilo.hip1Radius,
+                                                                             app->robotScene.stilo.feet1Circle, app->robotScene.stilo.feet1Radius,
+                                                                             app->robotScene.stilo.thigh1Arc2Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC2_CONCAVE_R);
+                PointF stiloThigh1Arc2NearLocal = circleTowardPoint(stiloThigh1Arc2Fillet.center, stiloThigh1Arc2Fillet.radius, stiloThigh1AxisMidLocal);
+                PointF stiloThigh1Arc2MidLocal = circleAtAxisMid(stiloThigh1Arc2Fillet.center, stiloThigh1Arc2Fillet.radius, app->robotScene.stilo.hip1Circle, app->robotScene.stilo.feet1Circle, stiloThigh1Arc2NearLocal);
 
-                PointF stiloThigh1World = jointToWorld(stiloThigh1MidLocal, stiloHipPivot, stiloHipAngle, stiloCenter, app->robotScene.stilo.angle);
-                PointF stiloThigh2World = jointToWorld(stiloThigh2MidLocal, stiloHipPivot, stiloHipAngle, stiloCenter, app->robotScene.stilo.angle);
+                PointF stiloThigh1Arc1World = jointToWorld(stiloThigh1Arc1MidLocal, stiloHip1Pivot, stiloHip1Angle, stiloCenter, app->robotScene.stilo.angle);
+                PointF stiloThigh1Arc2World = jointToWorld(stiloThigh1Arc2MidLocal, stiloHip1Pivot, stiloHip1Angle, stiloCenter, app->robotScene.stilo.angle);
 
-                PointF stiloLegLocalMouseDown = inverseRotate(inverseRotate(stiloMouse, stiloCenter, app->robotScene.stilo.angle), stiloHipPivot, stiloHipAngle);
-
-                PointF stiloKneePivot = app->robotScene.stilo.kneeCircle;
-                float stiloKneeAngle = app->robotScene.stilo.kneeAngle;
-
-                PointF stiloFootWorld = nestedJointToWorld(app->robotScene.stilo.footCircle, stiloKneePivot, stiloKneeAngle, stiloHipPivot, stiloHipAngle, stiloCenter, app->robotScene.stilo.angle);
-
-                PointF stiloShinAxisMidLocal = { (app->robotScene.stilo.kneeCircle.x + app->robotScene.stilo.footCircle.x) * 0.5f,
-                                                  (app->robotScene.stilo.kneeCircle.y + app->robotScene.stilo.footCircle.y) * 0.5f };
-
-                Fillet stiloShin1Fillet = filletFromAttachAngle(app->robotScene.stilo.kneeCircle, app->robotScene.stilo.kneeRadius,
-                                                                 app->robotScene.stilo.footCircle, app->robotScene.stilo.footRadius,
-                                                                 app->robotScene.stilo.shinArc1Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC_R);
-                PointF stiloShin1NearLocal = circleTowardPoint(stiloShin1Fillet.center, stiloShin1Fillet.radius, stiloShinAxisMidLocal);
-                PointF stiloShin1MidLocal = circleAtAxisMid(stiloShin1Fillet.center, stiloShin1Fillet.radius, app->robotScene.stilo.kneeCircle, app->robotScene.stilo.footCircle, stiloShin1NearLocal);
-
-                Fillet stiloShin2Fillet = filletFromAttachAngleConcave(app->robotScene.stilo.kneeCircle, app->robotScene.stilo.kneeRadius,
-                                                                        app->robotScene.stilo.footCircle, app->robotScene.stilo.footRadius,
-                                                                        app->robotScene.stilo.shinArc2Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC2_CONCAVE_R);
-                PointF stiloShin2NearLocal = circleTowardPoint(stiloShin2Fillet.center, stiloShin2Fillet.radius, stiloShinAxisMidLocal);
-                PointF stiloShin2MidLocal = circleAtAxisMid(stiloShin2Fillet.center, stiloShin2Fillet.radius, app->robotScene.stilo.kneeCircle, app->robotScene.stilo.footCircle, stiloShin2NearLocal);
-
-                PointF stiloShin1World = nestedJointToWorld(stiloShin1MidLocal, stiloKneePivot, stiloKneeAngle, stiloHipPivot, stiloHipAngle, stiloCenter, app->robotScene.stilo.angle);
-                PointF stiloShin2World = nestedJointToWorld(stiloShin2MidLocal, stiloKneePivot, stiloKneeAngle, stiloHipPivot, stiloHipAngle, stiloCenter, app->robotScene.stilo.angle);
-
-                PointF stiloShinLocalMouseDown = inverseRotate(stiloLegLocalMouseDown, stiloKneePivot, stiloKneeAngle);
+                PointF stiloLeg1LocalMouseDown = inverseRotate(inverseRotate(stiloMouse, stiloCenter, app->robotScene.stilo.angle), stiloHip1Pivot, stiloHip1Angle);
 
                 // ---- leg 2 hit-test -- same construction as leg 1 above,
-                // just reading app->robotScene.stilo's Leg2 fields (see
-                // app.h's Stilo comment). No seam arc handles here -- those
-                // are torso-level, shared with leg 1, already hit-tested
-                // above.
-                PointF stiloHipPivotLeg2 = app->robotScene.stilo.innerCircleLeg2;
-                float stiloHipAngleLeg2 = app->robotScene.stilo.hipAngleLeg2;
+                // just reading app->robotScene.stilo's hip2/feet2/thigh2
+                // fields (see app.h's Stilo comment). No seam arc handles
+                // here -- those are torso-level, shared with leg 1, already
+                // hit-tested above.
+                PointF stiloHip2Pivot = app->robotScene.stilo.hip2Circle;
+                float stiloHip2Angle = app->robotScene.stilo.hip2Angle;
 
-                PointF stiloInnerWorldLeg2 = rotatePoint(stiloHipPivotLeg2, stiloCenter, app->robotScene.stilo.angle);
-                PointF stiloKneeWorldLeg2 = jointToWorld(app->robotScene.stilo.kneeCircleLeg2, stiloHipPivotLeg2, stiloHipAngleLeg2, stiloCenter, app->robotScene.stilo.angle);
+                PointF stiloHip2World = rotatePoint(stiloHip2Pivot, stiloCenter, app->robotScene.stilo.angle);
+                PointF stiloFeet2World = jointToWorld(app->robotScene.stilo.feet2Circle, stiloHip2Pivot, stiloHip2Angle, stiloCenter, app->robotScene.stilo.angle);
 
-                PointF stiloThighAxisMidLocalLeg2 = { (app->robotScene.stilo.innerCircleLeg2.x + app->robotScene.stilo.kneeCircleLeg2.x) * 0.5f,
-                                                       (app->robotScene.stilo.innerCircleLeg2.y + app->robotScene.stilo.kneeCircleLeg2.y) * 0.5f };
+                PointF stiloThigh2AxisMidLocal = { (app->robotScene.stilo.hip2Circle.x + app->robotScene.stilo.feet2Circle.x) * 0.5f,
+                                                    (app->robotScene.stilo.hip2Circle.y + app->robotScene.stilo.feet2Circle.y) * 0.5f };
 
-                Fillet stiloThigh1FilletLeg2 = filletFromAttachAngle(app->robotScene.stilo.innerCircleLeg2, app->robotScene.stilo.innerRadiusLeg2,
-                                                                      app->robotScene.stilo.kneeCircleLeg2, app->robotScene.stilo.kneeRadiusLeg2,
-                                                                      app->robotScene.stilo.thighArc1AngleLeg2, MIN_THIGH_ARC_R, MAX_SEMNI_THIGH_ARC_R);
-                PointF stiloThigh1NearLocalLeg2 = circleTowardPoint(stiloThigh1FilletLeg2.center, stiloThigh1FilletLeg2.radius, stiloThighAxisMidLocalLeg2);
-                PointF stiloThigh1MidLocalLeg2 = circleAtAxisMid(stiloThigh1FilletLeg2.center, stiloThigh1FilletLeg2.radius, app->robotScene.stilo.innerCircleLeg2, app->robotScene.stilo.kneeCircleLeg2, stiloThigh1NearLocalLeg2);
+                Fillet stiloThigh2Arc1Fillet = filletFromAttachAngle(app->robotScene.stilo.hip2Circle, app->robotScene.stilo.hip2Radius,
+                                                                      app->robotScene.stilo.feet2Circle, app->robotScene.stilo.feet2Radius,
+                                                                      app->robotScene.stilo.thigh2Arc1Angle, MIN_THIGH_ARC_R, MAX_SEMNI_THIGH_ARC_R);
+                PointF stiloThigh2Arc1NearLocal = circleTowardPoint(stiloThigh2Arc1Fillet.center, stiloThigh2Arc1Fillet.radius, stiloThigh2AxisMidLocal);
+                PointF stiloThigh2Arc1MidLocal = circleAtAxisMid(stiloThigh2Arc1Fillet.center, stiloThigh2Arc1Fillet.radius, app->robotScene.stilo.hip2Circle, app->robotScene.stilo.feet2Circle, stiloThigh2Arc1NearLocal);
 
-                Fillet stiloThigh2FilletLeg2 = filletFromAttachAngleConcave(app->robotScene.stilo.innerCircleLeg2, app->robotScene.stilo.innerRadiusLeg2,
-                                                                             app->robotScene.stilo.kneeCircleLeg2, app->robotScene.stilo.kneeRadiusLeg2,
-                                                                             app->robotScene.stilo.thighArc2AngleLeg2, MIN_THIGH_ARC_R, MAX_THIGH_ARC2_CONCAVE_R);
-                PointF stiloThigh2NearLocalLeg2 = circleTowardPoint(stiloThigh2FilletLeg2.center, stiloThigh2FilletLeg2.radius, stiloThighAxisMidLocalLeg2);
-                PointF stiloThigh2MidLocalLeg2 = circleAtAxisMid(stiloThigh2FilletLeg2.center, stiloThigh2FilletLeg2.radius, app->robotScene.stilo.innerCircleLeg2, app->robotScene.stilo.kneeCircleLeg2, stiloThigh2NearLocalLeg2);
+                Fillet stiloThigh2Arc2Fillet = filletFromAttachAngleConcave(app->robotScene.stilo.hip2Circle, app->robotScene.stilo.hip2Radius,
+                                                                             app->robotScene.stilo.feet2Circle, app->robotScene.stilo.feet2Radius,
+                                                                             app->robotScene.stilo.thigh2Arc2Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC2_CONCAVE_R);
+                PointF stiloThigh2Arc2NearLocal = circleTowardPoint(stiloThigh2Arc2Fillet.center, stiloThigh2Arc2Fillet.radius, stiloThigh2AxisMidLocal);
+                PointF stiloThigh2Arc2MidLocal = circleAtAxisMid(stiloThigh2Arc2Fillet.center, stiloThigh2Arc2Fillet.radius, app->robotScene.stilo.hip2Circle, app->robotScene.stilo.feet2Circle, stiloThigh2Arc2NearLocal);
 
-                PointF stiloThigh1WorldLeg2 = jointToWorld(stiloThigh1MidLocalLeg2, stiloHipPivotLeg2, stiloHipAngleLeg2, stiloCenter, app->robotScene.stilo.angle);
-                PointF stiloThigh2WorldLeg2 = jointToWorld(stiloThigh2MidLocalLeg2, stiloHipPivotLeg2, stiloHipAngleLeg2, stiloCenter, app->robotScene.stilo.angle);
+                PointF stiloThigh2Arc1World = jointToWorld(stiloThigh2Arc1MidLocal, stiloHip2Pivot, stiloHip2Angle, stiloCenter, app->robotScene.stilo.angle);
+                PointF stiloThigh2Arc2World = jointToWorld(stiloThigh2Arc2MidLocal, stiloHip2Pivot, stiloHip2Angle, stiloCenter, app->robotScene.stilo.angle);
 
-                PointF stiloLegLocalMouseDownLeg2 = inverseRotate(inverseRotate(stiloMouse, stiloCenter, app->robotScene.stilo.angle), stiloHipPivotLeg2, stiloHipAngleLeg2);
-
-                PointF stiloKneePivotLeg2 = app->robotScene.stilo.kneeCircleLeg2;
-                float stiloKneeAngleLeg2 = app->robotScene.stilo.kneeAngleLeg2;
-
-                PointF stiloFootWorldLeg2 = nestedJointToWorld(app->robotScene.stilo.footCircleLeg2, stiloKneePivotLeg2, stiloKneeAngleLeg2, stiloHipPivotLeg2, stiloHipAngleLeg2, stiloCenter, app->robotScene.stilo.angle);
-
-                PointF stiloShinAxisMidLocalLeg2 = { (app->robotScene.stilo.kneeCircleLeg2.x + app->robotScene.stilo.footCircleLeg2.x) * 0.5f,
-                                                      (app->robotScene.stilo.kneeCircleLeg2.y + app->robotScene.stilo.footCircleLeg2.y) * 0.5f };
-
-                Fillet stiloShin1FilletLeg2 = filletFromAttachAngle(app->robotScene.stilo.kneeCircleLeg2, app->robotScene.stilo.kneeRadiusLeg2,
-                                                                     app->robotScene.stilo.footCircleLeg2, app->robotScene.stilo.footRadiusLeg2,
-                                                                     app->robotScene.stilo.shinArc1AngleLeg2, MIN_SHIN_ARC_R, MAX_SHIN_ARC_R);
-                PointF stiloShin1NearLocalLeg2 = circleTowardPoint(stiloShin1FilletLeg2.center, stiloShin1FilletLeg2.radius, stiloShinAxisMidLocalLeg2);
-                PointF stiloShin1MidLocalLeg2 = circleAtAxisMid(stiloShin1FilletLeg2.center, stiloShin1FilletLeg2.radius, app->robotScene.stilo.kneeCircleLeg2, app->robotScene.stilo.footCircleLeg2, stiloShin1NearLocalLeg2);
-
-                Fillet stiloShin2FilletLeg2 = filletFromAttachAngleConcave(app->robotScene.stilo.kneeCircleLeg2, app->robotScene.stilo.kneeRadiusLeg2,
-                                                                            app->robotScene.stilo.footCircleLeg2, app->robotScene.stilo.footRadiusLeg2,
-                                                                            app->robotScene.stilo.shinArc2AngleLeg2, MIN_SHIN_ARC_R, MAX_SHIN_ARC2_CONCAVE_R);
-                PointF stiloShin2NearLocalLeg2 = circleTowardPoint(stiloShin2FilletLeg2.center, stiloShin2FilletLeg2.radius, stiloShinAxisMidLocalLeg2);
-                PointF stiloShin2MidLocalLeg2 = circleAtAxisMid(stiloShin2FilletLeg2.center, stiloShin2FilletLeg2.radius, app->robotScene.stilo.kneeCircleLeg2, app->robotScene.stilo.footCircleLeg2, stiloShin2NearLocalLeg2);
-
-                PointF stiloShin1WorldLeg2 = nestedJointToWorld(stiloShin1MidLocalLeg2, stiloKneePivotLeg2, stiloKneeAngleLeg2, stiloHipPivotLeg2, stiloHipAngleLeg2, stiloCenter, app->robotScene.stilo.angle);
-                PointF stiloShin2WorldLeg2 = nestedJointToWorld(stiloShin2MidLocalLeg2, stiloKneePivotLeg2, stiloKneeAngleLeg2, stiloHipPivotLeg2, stiloHipAngleLeg2, stiloCenter, app->robotScene.stilo.angle);
-
-                PointF stiloShinLocalMouseDownLeg2 = inverseRotate(stiloLegLocalMouseDownLeg2, stiloKneePivotLeg2, stiloKneeAngleLeg2);
+                PointF stiloLeg2LocalMouseDown = inverseRotate(inverseRotate(stiloMouse, stiloCenter, app->robotScene.stilo.angle), stiloHip2Pivot, stiloHip2Angle);
 
                 if (isNear(stiloMouse, stiloSeamArc1HandleWorld, ARC_HANDLE_RADIUS))
                 {
@@ -506,103 +434,55 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     app->stiloArcDragStartMouseY = inverseRotate(stiloMouse, stiloCenter, app->robotScene.stilo.angle).y;
                     app->stiloArcDragStartAngle = app->robotScene.stilo.seamArc2Angle;
                 }
-                else if (isNear(stiloMouse, stiloInnerWorld, HIP_HANDLE_RADIUS))
+                else if (isNear(stiloMouse, stiloHip1World, HIP_HANDLE_RADIUS))
                 {
-                    app->draggingStiloInner = 1;
+                    app->draggingStiloHip1 = 1;
 
-                    PointF stiloHip = app->robotScene.stilo.innerCircle;
+                    PointF stiloHip1 = app->robotScene.stilo.hip1Circle;
 
-                    app->stiloHipDragKneeOffset.x = app->robotScene.stilo.kneeCircle.x - stiloHip.x;
-                    app->stiloHipDragKneeOffset.y = app->robotScene.stilo.kneeCircle.y - stiloHip.y;
+                    app->stiloHip1DragFeetOffset.x = app->robotScene.stilo.feet1Circle.x - stiloHip1.x;
+                    app->stiloHip1DragFeetOffset.y = app->robotScene.stilo.feet1Circle.y - stiloHip1.y;
+                }
+                else if (isNear(stiloMouse, stiloFeet1World, KNEE_HANDLE_RADIUS))
+                {
+                    app->draggingStiloFeet1 = 1;
+                }
+                else if (isNear(stiloMouse, stiloThigh1Arc1World, THIGH_HANDLE_RADIUS))
+                {
+                    app->draggingStiloThigh1Arc1 = 1;
+                    app->stiloThigh1ArcDragStartPerp = perpOffsetOnAxis(stiloLeg1LocalMouseDown, app->robotScene.stilo.hip1Circle, app->robotScene.stilo.feet1Circle);
+                    app->stiloThigh1ArcDragStartAngle = app->robotScene.stilo.thigh1Arc1Angle;
+                }
+                else if (isNear(stiloMouse, stiloThigh1Arc2World, THIGH_HANDLE_RADIUS))
+                {
+                    app->draggingStiloThigh1Arc2 = 1;
+                    app->stiloThigh1ArcDragStartPerp = perpOffsetOnAxis(stiloLeg1LocalMouseDown, app->robotScene.stilo.hip1Circle, app->robotScene.stilo.feet1Circle);
+                    app->stiloThigh1ArcDragStartAngle = app->robotScene.stilo.thigh1Arc2Angle;
+                }
+                else if (isNear(stiloMouse, stiloHip2World, HIP_HANDLE_RADIUS))
+                {
+                    app->draggingStiloHip2 = 1;
 
-                    app->stiloHipDragFootOffset.x = app->robotScene.stilo.footCircle.x - stiloHip.x;
-                    app->stiloHipDragFootOffset.y = app->robotScene.stilo.footCircle.y - stiloHip.y;
-                }
-                else if (isNear(stiloMouse, stiloKneeWorld, KNEE_HANDLE_RADIUS))
-                {
-                    app->draggingStiloKnee = 1;
+                    PointF stiloHip2 = app->robotScene.stilo.hip2Circle;
 
-                    PointF stiloKnee = app->robotScene.stilo.kneeCircle;
-
-                    app->stiloKneeDragFootOffset.x = app->robotScene.stilo.footCircle.x - stiloKnee.x;
-                    app->stiloKneeDragFootOffset.y = app->robotScene.stilo.footCircle.y - stiloKnee.y;
+                    app->stiloHip2DragFeetOffset.x = app->robotScene.stilo.feet2Circle.x - stiloHip2.x;
+                    app->stiloHip2DragFeetOffset.y = app->robotScene.stilo.feet2Circle.y - stiloHip2.y;
                 }
-                else if (isNear(stiloMouse, stiloThigh1World, THIGH_HANDLE_RADIUS))
+                else if (isNear(stiloMouse, stiloFeet2World, KNEE_HANDLE_RADIUS))
                 {
-                    app->draggingStiloThigh1 = 1;
-                    app->stiloThighArcDragStartPerp = perpOffsetOnAxis(stiloLegLocalMouseDown, app->robotScene.stilo.innerCircle, app->robotScene.stilo.kneeCircle);
-                    app->stiloThighArcDragStartAngle = app->robotScene.stilo.thighArc1Angle;
+                    app->draggingStiloFeet2 = 1;
                 }
-                else if (isNear(stiloMouse, stiloThigh2World, THIGH_HANDLE_RADIUS))
+                else if (isNear(stiloMouse, stiloThigh2Arc1World, THIGH_HANDLE_RADIUS))
                 {
-                    app->draggingStiloThigh2 = 1;
-                    app->stiloThighArcDragStartPerp = perpOffsetOnAxis(stiloLegLocalMouseDown, app->robotScene.stilo.innerCircle, app->robotScene.stilo.kneeCircle);
-                    app->stiloThighArcDragStartAngle = app->robotScene.stilo.thighArc2Angle;
+                    app->draggingStiloThigh2Arc1 = 1;
+                    app->stiloThigh2ArcDragStartPerp = perpOffsetOnAxis(stiloLeg2LocalMouseDown, app->robotScene.stilo.hip2Circle, app->robotScene.stilo.feet2Circle);
+                    app->stiloThigh2ArcDragStartAngle = app->robotScene.stilo.thigh2Arc1Angle;
                 }
-                else if (isNear(stiloMouse, stiloFootWorld, FOOT_HANDLE_RADIUS))
+                else if (isNear(stiloMouse, stiloThigh2Arc2World, THIGH_HANDLE_RADIUS))
                 {
-                    app->draggingStiloFoot = 1;
-                }
-                else if (isNear(stiloMouse, stiloShin1World, SHIN_HANDLE_RADIUS))
-                {
-                    app->draggingStiloShin1 = 1;
-                    app->stiloShinArcDragStartPerp = perpOffsetOnAxis(stiloShinLocalMouseDown, app->robotScene.stilo.kneeCircle, app->robotScene.stilo.footCircle);
-                    app->stiloShinArcDragStartAngle = app->robotScene.stilo.shinArc1Angle;
-                }
-                else if (isNear(stiloMouse, stiloShin2World, SHIN_HANDLE_RADIUS))
-                {
-                    app->draggingStiloShin2 = 1;
-                    app->stiloShinArcDragStartPerp = perpOffsetOnAxis(stiloShinLocalMouseDown, app->robotScene.stilo.kneeCircle, app->robotScene.stilo.footCircle);
-                    app->stiloShinArcDragStartAngle = app->robotScene.stilo.shinArc2Angle;
-                }
-                else if (isNear(stiloMouse, stiloInnerWorldLeg2, HIP_HANDLE_RADIUS))
-                {
-                    app->draggingStiloInnerLeg2 = 1;
-
-                    PointF stiloHipLeg2 = app->robotScene.stilo.innerCircleLeg2;
-
-                    app->stiloHipDragKneeOffsetLeg2.x = app->robotScene.stilo.kneeCircleLeg2.x - stiloHipLeg2.x;
-                    app->stiloHipDragKneeOffsetLeg2.y = app->robotScene.stilo.kneeCircleLeg2.y - stiloHipLeg2.y;
-
-                    app->stiloHipDragFootOffsetLeg2.x = app->robotScene.stilo.footCircleLeg2.x - stiloHipLeg2.x;
-                    app->stiloHipDragFootOffsetLeg2.y = app->robotScene.stilo.footCircleLeg2.y - stiloHipLeg2.y;
-                }
-                else if (isNear(stiloMouse, stiloKneeWorldLeg2, KNEE_HANDLE_RADIUS))
-                {
-                    app->draggingStiloKneeLeg2 = 1;
-
-                    PointF stiloKneeLeg2 = app->robotScene.stilo.kneeCircleLeg2;
-
-                    app->stiloKneeDragFootOffsetLeg2.x = app->robotScene.stilo.footCircleLeg2.x - stiloKneeLeg2.x;
-                    app->stiloKneeDragFootOffsetLeg2.y = app->robotScene.stilo.footCircleLeg2.y - stiloKneeLeg2.y;
-                }
-                else if (isNear(stiloMouse, stiloThigh1WorldLeg2, THIGH_HANDLE_RADIUS))
-                {
-                    app->draggingStiloThigh1Leg2 = 1;
-                    app->stiloThighArcDragStartPerpLeg2 = perpOffsetOnAxis(stiloLegLocalMouseDownLeg2, app->robotScene.stilo.innerCircleLeg2, app->robotScene.stilo.kneeCircleLeg2);
-                    app->stiloThighArcDragStartAngleLeg2 = app->robotScene.stilo.thighArc1AngleLeg2;
-                }
-                else if (isNear(stiloMouse, stiloThigh2WorldLeg2, THIGH_HANDLE_RADIUS))
-                {
-                    app->draggingStiloThigh2Leg2 = 1;
-                    app->stiloThighArcDragStartPerpLeg2 = perpOffsetOnAxis(stiloLegLocalMouseDownLeg2, app->robotScene.stilo.innerCircleLeg2, app->robotScene.stilo.kneeCircleLeg2);
-                    app->stiloThighArcDragStartAngleLeg2 = app->robotScene.stilo.thighArc2AngleLeg2;
-                }
-                else if (isNear(stiloMouse, stiloFootWorldLeg2, FOOT_HANDLE_RADIUS))
-                {
-                    app->draggingStiloFootLeg2 = 1;
-                }
-                else if (isNear(stiloMouse, stiloShin1WorldLeg2, SHIN_HANDLE_RADIUS))
-                {
-                    app->draggingStiloShin1Leg2 = 1;
-                    app->stiloShinArcDragStartPerpLeg2 = perpOffsetOnAxis(stiloShinLocalMouseDownLeg2, app->robotScene.stilo.kneeCircleLeg2, app->robotScene.stilo.footCircleLeg2);
-                    app->stiloShinArcDragStartAngleLeg2 = app->robotScene.stilo.shinArc1AngleLeg2;
-                }
-                else if (isNear(stiloMouse, stiloShin2WorldLeg2, SHIN_HANDLE_RADIUS))
-                {
-                    app->draggingStiloShin2Leg2 = 1;
-                    app->stiloShinArcDragStartPerpLeg2 = perpOffsetOnAxis(stiloShinLocalMouseDownLeg2, app->robotScene.stilo.kneeCircleLeg2, app->robotScene.stilo.footCircleLeg2);
-                    app->stiloShinArcDragStartAngleLeg2 = app->robotScene.stilo.shinArc2AngleLeg2;
+                    app->draggingStiloThigh2Arc2 = 1;
+                    app->stiloThigh2ArcDragStartPerp = perpOffsetOnAxis(stiloLeg2LocalMouseDown, app->robotScene.stilo.hip2Circle, app->robotScene.stilo.feet2Circle);
+                    app->stiloThigh2ArcDragStartAngle = app->robotScene.stilo.thigh2Arc2Angle;
                 }
 
                 break;
@@ -843,20 +723,14 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             app->draggingRockyFoot = 0;
             app->draggingStiloSeamArc1 = 0;
             app->draggingStiloSeamArc2 = 0;
-            app->draggingStiloInner = 0;
-            app->draggingStiloKnee = 0;
-            app->draggingStiloThigh1 = 0;
-            app->draggingStiloThigh2 = 0;
-            app->draggingStiloFoot = 0;
-            app->draggingStiloShin1 = 0;
-            app->draggingStiloShin2 = 0;
-            app->draggingStiloInnerLeg2 = 0;
-            app->draggingStiloKneeLeg2 = 0;
-            app->draggingStiloThigh1Leg2 = 0;
-            app->draggingStiloThigh2Leg2 = 0;
-            app->draggingStiloFootLeg2 = 0;
-            app->draggingStiloShin1Leg2 = 0;
-            app->draggingStiloShin2Leg2 = 0;
+            app->draggingStiloHip1 = 0;
+            app->draggingStiloFeet1 = 0;
+            app->draggingStiloThigh1Arc1 = 0;
+            app->draggingStiloThigh1Arc2 = 0;
+            app->draggingStiloHip2 = 0;
+            app->draggingStiloFeet2 = 0;
+            app->draggingStiloThigh2Arc1 = 0;
+            app->draggingStiloThigh2Arc2 = 0;
             app->activeHandle = 0;
         }
         break;
@@ -1011,8 +885,8 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 break;
             }
 
-            // Stilo now has Semni's full set of per-joint hover/drag
-            // feedback and dragging -- same construction as the
+            // Stilo now has just two joints per leg (hip + feet) worth of
+            // hover/drag feedback -- same construction as the
             // ROBOT_KIND_SEMNI block below, operating on
             // app->robotScene.stilo and the Stilo-specific hoverStilo*/
             // draggingStilo*/stilo* fields instead of Semni's own. Stilo
@@ -1029,29 +903,25 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 PointF stiloCenter = getStiloCenter(app->robotScene.stilo);
                 float stiloAngle = app->robotScene.stilo.angle;
 
-                PointF stiloInnerWorld = rotatePoint(app->robotScene.stilo.innerCircle, stiloCenter, stiloAngle);
-                PointF stiloKneeWorld  = jointToWorld(app->robotScene.stilo.kneeCircle, app->robotScene.stilo.innerCircle, app->robotScene.stilo.hipAngle, stiloCenter, stiloAngle);
-                PointF stiloFootWorld = nestedJointToWorld(app->robotScene.stilo.footCircle, app->robotScene.stilo.kneeCircle, app->robotScene.stilo.kneeAngle, app->robotScene.stilo.innerCircle, app->robotScene.stilo.hipAngle, stiloCenter, stiloAngle);
+                PointF stiloHip1World  = rotatePoint(app->robotScene.stilo.hip1Circle, stiloCenter, stiloAngle);
+                PointF stiloFeet1World = jointToWorld(app->robotScene.stilo.feet1Circle, app->robotScene.stilo.hip1Circle, app->robotScene.stilo.hip1Angle, stiloCenter, stiloAngle);
                 PointF stiloHeadWorld  = rotatePoint((PointF){app->robotScene.stilo.headX, app->robotScene.stilo.y}, stiloCenter, stiloAngle);
                 PointF stiloButtWorld  = rotatePoint((PointF){app->robotScene.stilo.buttX, app->robotScene.stilo.y}, stiloCenter, stiloAngle);
 
-                app->hoverStiloHip  = isNear(stiloMouse, stiloInnerWorld, HIP_HANDLE_RADIUS);
-                app->hoverStiloKnee = isNear(stiloMouse, stiloKneeWorld, KNEE_HANDLE_RADIUS);
-                app->hoverStiloFoot = isNear(stiloMouse, stiloFootWorld, FOOT_HANDLE_RADIUS);
+                app->hoverStiloHip1  = isNear(stiloMouse, stiloHip1World, HIP_HANDLE_RADIUS);
+                app->hoverStiloFeet1 = isNear(stiloMouse, stiloFeet1World, KNEE_HANDLE_RADIUS);
                 app->hoverStiloHead = isNear(stiloMouse, stiloHeadWorld, HEAD_BUTT_HANDLE_RADIUS);
                 app->hoverStiloButt = isNear(stiloMouse, stiloButtWorld, HEAD_BUTT_HANDLE_RADIUS);
 
-                // leg 2's own hip/knee/foot hover -- same construction as
-                // leg 1's above, against app->robotScene.stilo's Leg2
-                // fields. No leg-2 equivalent of hoverStiloHead/hoverStiloButt
-                // -- those are torso-level, shared with leg 1.
-                PointF stiloInnerWorldLeg2 = rotatePoint(app->robotScene.stilo.innerCircleLeg2, stiloCenter, stiloAngle);
-                PointF stiloKneeWorldLeg2  = jointToWorld(app->robotScene.stilo.kneeCircleLeg2, app->robotScene.stilo.innerCircleLeg2, app->robotScene.stilo.hipAngleLeg2, stiloCenter, stiloAngle);
-                PointF stiloFootWorldLeg2 = nestedJointToWorld(app->robotScene.stilo.footCircleLeg2, app->robotScene.stilo.kneeCircleLeg2, app->robotScene.stilo.kneeAngleLeg2, app->robotScene.stilo.innerCircleLeg2, app->robotScene.stilo.hipAngleLeg2, stiloCenter, stiloAngle);
+                // leg 2's own hip/feet hover -- same construction as leg 1's
+                // above, against app->robotScene.stilo's hip2/feet2 fields.
+                // No leg-2 equivalent of hoverStiloHead/hoverStiloButt --
+                // those are torso-level, shared with leg 1.
+                PointF stiloHip2World  = rotatePoint(app->robotScene.stilo.hip2Circle, stiloCenter, stiloAngle);
+                PointF stiloFeet2World = jointToWorld(app->robotScene.stilo.feet2Circle, app->robotScene.stilo.hip2Circle, app->robotScene.stilo.hip2Angle, stiloCenter, stiloAngle);
 
-                app->hoverStiloHipLeg2  = isNear(stiloMouse, stiloInnerWorldLeg2, HIP_HANDLE_RADIUS);
-                app->hoverStiloKneeLeg2 = isNear(stiloMouse, stiloKneeWorldLeg2, KNEE_HANDLE_RADIUS);
-                app->hoverStiloFootLeg2 = isNear(stiloMouse, stiloFootWorldLeg2, FOOT_HANDLE_RADIUS);
+                app->hoverStiloHip2  = isNear(stiloMouse, stiloHip2World, HIP_HANDLE_RADIUS);
+                app->hoverStiloFeet2 = isNear(stiloMouse, stiloFeet2World, KNEE_HANDLE_RADIUS);
 
                 // hover label -- same construction/priority order as
                 // Semni's own hover label block below
@@ -1072,63 +942,35 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     PointF stiloSeamArc1HandleWorldHover = rotatePoint(stiloSeamArc1MidLocalHover, stiloCenter, stiloAngle);
                     PointF stiloSeamArc2HandleWorldHover = rotatePoint(stiloSeamArc2MidLocalHover, stiloCenter, stiloAngle);
 
-                    PointF stiloThighAxisMidLocalHover = { (app->robotScene.stilo.innerCircle.x + app->robotScene.stilo.kneeCircle.x) * 0.5f,
-                                                            (app->robotScene.stilo.innerCircle.y + app->robotScene.stilo.kneeCircle.y) * 0.5f };
+                    PointF stiloThigh1AxisMidLocalHover = { (app->robotScene.stilo.hip1Circle.x + app->robotScene.stilo.feet1Circle.x) * 0.5f,
+                                                             (app->robotScene.stilo.hip1Circle.y + app->robotScene.stilo.feet1Circle.y) * 0.5f };
 
-                    Fillet stiloThigh1FilletHover = filletFromAttachAngle(app->robotScene.stilo.innerCircle, app->robotScene.stilo.innerRadius, app->robotScene.stilo.kneeCircle, app->robotScene.stilo.kneeRadius, app->robotScene.stilo.thighArc1Angle, MIN_THIGH_ARC_R, MAX_SEMNI_THIGH_ARC_R);
-                    PointF stiloThigh1NearLocalHover = circleTowardPoint(stiloThigh1FilletHover.center, stiloThigh1FilletHover.radius, stiloThighAxisMidLocalHover);
-                    PointF stiloThigh1MidLocalHover = circleAtAxisMid(stiloThigh1FilletHover.center, stiloThigh1FilletHover.radius, app->robotScene.stilo.innerCircle, app->robotScene.stilo.kneeCircle, stiloThigh1NearLocalHover);
+                    Fillet stiloThigh1Arc1FilletHover = filletFromAttachAngle(app->robotScene.stilo.hip1Circle, app->robotScene.stilo.hip1Radius, app->robotScene.stilo.feet1Circle, app->robotScene.stilo.feet1Radius, app->robotScene.stilo.thigh1Arc1Angle, MIN_THIGH_ARC_R, MAX_SEMNI_THIGH_ARC_R);
+                    PointF stiloThigh1Arc1NearLocalHover = circleTowardPoint(stiloThigh1Arc1FilletHover.center, stiloThigh1Arc1FilletHover.radius, stiloThigh1AxisMidLocalHover);
+                    PointF stiloThigh1Arc1MidLocalHover = circleAtAxisMid(stiloThigh1Arc1FilletHover.center, stiloThigh1Arc1FilletHover.radius, app->robotScene.stilo.hip1Circle, app->robotScene.stilo.feet1Circle, stiloThigh1Arc1NearLocalHover);
 
-                    Fillet stiloThigh2FilletHover = filletFromAttachAngleConcave(app->robotScene.stilo.innerCircle, app->robotScene.stilo.innerRadius, app->robotScene.stilo.kneeCircle, app->robotScene.stilo.kneeRadius, app->robotScene.stilo.thighArc2Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC2_CONCAVE_R);
-                    PointF stiloThigh2NearLocalHover = circleTowardPoint(stiloThigh2FilletHover.center, stiloThigh2FilletHover.radius, stiloThighAxisMidLocalHover);
-                    PointF stiloThigh2MidLocalHover = circleAtAxisMid(stiloThigh2FilletHover.center, stiloThigh2FilletHover.radius, app->robotScene.stilo.innerCircle, app->robotScene.stilo.kneeCircle, stiloThigh2NearLocalHover);
+                    Fillet stiloThigh1Arc2FilletHover = filletFromAttachAngleConcave(app->robotScene.stilo.hip1Circle, app->robotScene.stilo.hip1Radius, app->robotScene.stilo.feet1Circle, app->robotScene.stilo.feet1Radius, app->robotScene.stilo.thigh1Arc2Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC2_CONCAVE_R);
+                    PointF stiloThigh1Arc2NearLocalHover = circleTowardPoint(stiloThigh1Arc2FilletHover.center, stiloThigh1Arc2FilletHover.radius, stiloThigh1AxisMidLocalHover);
+                    PointF stiloThigh1Arc2MidLocalHover = circleAtAxisMid(stiloThigh1Arc2FilletHover.center, stiloThigh1Arc2FilletHover.radius, app->robotScene.stilo.hip1Circle, app->robotScene.stilo.feet1Circle, stiloThigh1Arc2NearLocalHover);
 
-                    PointF stiloThigh1WorldHover = jointToWorld(stiloThigh1MidLocalHover, app->robotScene.stilo.innerCircle, app->robotScene.stilo.hipAngle, stiloCenter, stiloAngle);
-                    PointF stiloThigh2WorldHover = jointToWorld(stiloThigh2MidLocalHover, app->robotScene.stilo.innerCircle, app->robotScene.stilo.hipAngle, stiloCenter, stiloAngle);
+                    PointF stiloThigh1Arc1WorldHover = jointToWorld(stiloThigh1Arc1MidLocalHover, app->robotScene.stilo.hip1Circle, app->robotScene.stilo.hip1Angle, stiloCenter, stiloAngle);
+                    PointF stiloThigh1Arc2WorldHover = jointToWorld(stiloThigh1Arc2MidLocalHover, app->robotScene.stilo.hip1Circle, app->robotScene.stilo.hip1Angle, stiloCenter, stiloAngle);
 
-                    PointF stiloShinAxisMidLocalHover = { (app->robotScene.stilo.kneeCircle.x + app->robotScene.stilo.footCircle.x) * 0.5f,
-                                                           (app->robotScene.stilo.kneeCircle.y + app->robotScene.stilo.footCircle.y) * 0.5f };
+                    // leg 2's own thigh arc hover -- same construction as
+                    // leg 1's above, against the hip2/feet2/thigh2 fields
+                    PointF stiloThigh2AxisMidLocalHover = { (app->robotScene.stilo.hip2Circle.x + app->robotScene.stilo.feet2Circle.x) * 0.5f,
+                                                             (app->robotScene.stilo.hip2Circle.y + app->robotScene.stilo.feet2Circle.y) * 0.5f };
 
-                    Fillet stiloShin1FilletHover = filletFromAttachAngle(app->robotScene.stilo.kneeCircle, app->robotScene.stilo.kneeRadius, app->robotScene.stilo.footCircle, app->robotScene.stilo.footRadius, app->robotScene.stilo.shinArc1Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC_R);
-                    PointF stiloShin1NearLocalHover = circleTowardPoint(stiloShin1FilletHover.center, stiloShin1FilletHover.radius, stiloShinAxisMidLocalHover);
-                    PointF stiloShin1MidLocalHover = circleAtAxisMid(stiloShin1FilletHover.center, stiloShin1FilletHover.radius, app->robotScene.stilo.kneeCircle, app->robotScene.stilo.footCircle, stiloShin1NearLocalHover);
+                    Fillet stiloThigh2Arc1FilletHover = filletFromAttachAngle(app->robotScene.stilo.hip2Circle, app->robotScene.stilo.hip2Radius, app->robotScene.stilo.feet2Circle, app->robotScene.stilo.feet2Radius, app->robotScene.stilo.thigh2Arc1Angle, MIN_THIGH_ARC_R, MAX_SEMNI_THIGH_ARC_R);
+                    PointF stiloThigh2Arc1NearLocalHover = circleTowardPoint(stiloThigh2Arc1FilletHover.center, stiloThigh2Arc1FilletHover.radius, stiloThigh2AxisMidLocalHover);
+                    PointF stiloThigh2Arc1MidLocalHover = circleAtAxisMid(stiloThigh2Arc1FilletHover.center, stiloThigh2Arc1FilletHover.radius, app->robotScene.stilo.hip2Circle, app->robotScene.stilo.feet2Circle, stiloThigh2Arc1NearLocalHover);
 
-                    Fillet stiloShin2FilletHover = filletFromAttachAngleConcave(app->robotScene.stilo.kneeCircle, app->robotScene.stilo.kneeRadius, app->robotScene.stilo.footCircle, app->robotScene.stilo.footRadius, app->robotScene.stilo.shinArc2Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC2_CONCAVE_R);
-                    PointF stiloShin2NearLocalHover = circleTowardPoint(stiloShin2FilletHover.center, stiloShin2FilletHover.radius, stiloShinAxisMidLocalHover);
-                    PointF stiloShin2MidLocalHover = circleAtAxisMid(stiloShin2FilletHover.center, stiloShin2FilletHover.radius, app->robotScene.stilo.kneeCircle, app->robotScene.stilo.footCircle, stiloShin2NearLocalHover);
+                    Fillet stiloThigh2Arc2FilletHover = filletFromAttachAngleConcave(app->robotScene.stilo.hip2Circle, app->robotScene.stilo.hip2Radius, app->robotScene.stilo.feet2Circle, app->robotScene.stilo.feet2Radius, app->robotScene.stilo.thigh2Arc2Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC2_CONCAVE_R);
+                    PointF stiloThigh2Arc2NearLocalHover = circleTowardPoint(stiloThigh2Arc2FilletHover.center, stiloThigh2Arc2FilletHover.radius, stiloThigh2AxisMidLocalHover);
+                    PointF stiloThigh2Arc2MidLocalHover = circleAtAxisMid(stiloThigh2Arc2FilletHover.center, stiloThigh2Arc2FilletHover.radius, app->robotScene.stilo.hip2Circle, app->robotScene.stilo.feet2Circle, stiloThigh2Arc2NearLocalHover);
 
-                    PointF stiloShin1WorldHover = nestedJointToWorld(stiloShin1MidLocalHover, app->robotScene.stilo.kneeCircle, app->robotScene.stilo.kneeAngle, app->robotScene.stilo.innerCircle, app->robotScene.stilo.hipAngle, stiloCenter, stiloAngle);
-                    PointF stiloShin2WorldHover = nestedJointToWorld(stiloShin2MidLocalHover, app->robotScene.stilo.kneeCircle, app->robotScene.stilo.kneeAngle, app->robotScene.stilo.innerCircle, app->robotScene.stilo.hipAngle, stiloCenter, stiloAngle);
-
-                    // leg 2's own thigh/shin arc hover -- same construction
-                    // as leg 1's above, against the Leg2 fields
-                    PointF stiloThighAxisMidLocalHoverLeg2 = { (app->robotScene.stilo.innerCircleLeg2.x + app->robotScene.stilo.kneeCircleLeg2.x) * 0.5f,
-                                                                (app->robotScene.stilo.innerCircleLeg2.y + app->robotScene.stilo.kneeCircleLeg2.y) * 0.5f };
-
-                    Fillet stiloThigh1FilletHoverLeg2 = filletFromAttachAngle(app->robotScene.stilo.innerCircleLeg2, app->robotScene.stilo.innerRadiusLeg2, app->robotScene.stilo.kneeCircleLeg2, app->robotScene.stilo.kneeRadiusLeg2, app->robotScene.stilo.thighArc1AngleLeg2, MIN_THIGH_ARC_R, MAX_SEMNI_THIGH_ARC_R);
-                    PointF stiloThigh1NearLocalHoverLeg2 = circleTowardPoint(stiloThigh1FilletHoverLeg2.center, stiloThigh1FilletHoverLeg2.radius, stiloThighAxisMidLocalHoverLeg2);
-                    PointF stiloThigh1MidLocalHoverLeg2 = circleAtAxisMid(stiloThigh1FilletHoverLeg2.center, stiloThigh1FilletHoverLeg2.radius, app->robotScene.stilo.innerCircleLeg2, app->robotScene.stilo.kneeCircleLeg2, stiloThigh1NearLocalHoverLeg2);
-
-                    Fillet stiloThigh2FilletHoverLeg2 = filletFromAttachAngleConcave(app->robotScene.stilo.innerCircleLeg2, app->robotScene.stilo.innerRadiusLeg2, app->robotScene.stilo.kneeCircleLeg2, app->robotScene.stilo.kneeRadiusLeg2, app->robotScene.stilo.thighArc2AngleLeg2, MIN_THIGH_ARC_R, MAX_THIGH_ARC2_CONCAVE_R);
-                    PointF stiloThigh2NearLocalHoverLeg2 = circleTowardPoint(stiloThigh2FilletHoverLeg2.center, stiloThigh2FilletHoverLeg2.radius, stiloThighAxisMidLocalHoverLeg2);
-                    PointF stiloThigh2MidLocalHoverLeg2 = circleAtAxisMid(stiloThigh2FilletHoverLeg2.center, stiloThigh2FilletHoverLeg2.radius, app->robotScene.stilo.innerCircleLeg2, app->robotScene.stilo.kneeCircleLeg2, stiloThigh2NearLocalHoverLeg2);
-
-                    PointF stiloThigh1WorldHoverLeg2 = jointToWorld(stiloThigh1MidLocalHoverLeg2, app->robotScene.stilo.innerCircleLeg2, app->robotScene.stilo.hipAngleLeg2, stiloCenter, stiloAngle);
-                    PointF stiloThigh2WorldHoverLeg2 = jointToWorld(stiloThigh2MidLocalHoverLeg2, app->robotScene.stilo.innerCircleLeg2, app->robotScene.stilo.hipAngleLeg2, stiloCenter, stiloAngle);
-
-                    PointF stiloShinAxisMidLocalHoverLeg2 = { (app->robotScene.stilo.kneeCircleLeg2.x + app->robotScene.stilo.footCircleLeg2.x) * 0.5f,
-                                                               (app->robotScene.stilo.kneeCircleLeg2.y + app->robotScene.stilo.footCircleLeg2.y) * 0.5f };
-
-                    Fillet stiloShin1FilletHoverLeg2 = filletFromAttachAngle(app->robotScene.stilo.kneeCircleLeg2, app->robotScene.stilo.kneeRadiusLeg2, app->robotScene.stilo.footCircleLeg2, app->robotScene.stilo.footRadiusLeg2, app->robotScene.stilo.shinArc1AngleLeg2, MIN_SHIN_ARC_R, MAX_SHIN_ARC_R);
-                    PointF stiloShin1NearLocalHoverLeg2 = circleTowardPoint(stiloShin1FilletHoverLeg2.center, stiloShin1FilletHoverLeg2.radius, stiloShinAxisMidLocalHoverLeg2);
-                    PointF stiloShin1MidLocalHoverLeg2 = circleAtAxisMid(stiloShin1FilletHoverLeg2.center, stiloShin1FilletHoverLeg2.radius, app->robotScene.stilo.kneeCircleLeg2, app->robotScene.stilo.footCircleLeg2, stiloShin1NearLocalHoverLeg2);
-
-                    Fillet stiloShin2FilletHoverLeg2 = filletFromAttachAngleConcave(app->robotScene.stilo.kneeCircleLeg2, app->robotScene.stilo.kneeRadiusLeg2, app->robotScene.stilo.footCircleLeg2, app->robotScene.stilo.footRadiusLeg2, app->robotScene.stilo.shinArc2AngleLeg2, MIN_SHIN_ARC_R, MAX_SHIN_ARC2_CONCAVE_R);
-                    PointF stiloShin2NearLocalHoverLeg2 = circleTowardPoint(stiloShin2FilletHoverLeg2.center, stiloShin2FilletHoverLeg2.radius, stiloShinAxisMidLocalHoverLeg2);
-                    PointF stiloShin2MidLocalHoverLeg2 = circleAtAxisMid(stiloShin2FilletHoverLeg2.center, stiloShin2FilletHoverLeg2.radius, app->robotScene.stilo.kneeCircleLeg2, app->robotScene.stilo.footCircleLeg2, stiloShin2NearLocalHoverLeg2);
-
-                    PointF stiloShin1WorldHoverLeg2 = nestedJointToWorld(stiloShin1MidLocalHoverLeg2, app->robotScene.stilo.kneeCircleLeg2, app->robotScene.stilo.kneeAngleLeg2, app->robotScene.stilo.innerCircleLeg2, app->robotScene.stilo.hipAngleLeg2, stiloCenter, stiloAngle);
-                    PointF stiloShin2WorldHoverLeg2 = nestedJointToWorld(stiloShin2MidLocalHoverLeg2, app->robotScene.stilo.kneeCircleLeg2, app->robotScene.stilo.kneeAngleLeg2, app->robotScene.stilo.innerCircleLeg2, app->robotScene.stilo.hipAngleLeg2, stiloCenter, stiloAngle);
+                    PointF stiloThigh2Arc1WorldHover = jointToWorld(stiloThigh2Arc1MidLocalHover, app->robotScene.stilo.hip2Circle, app->robotScene.stilo.hip2Angle, stiloCenter, stiloAngle);
+                    PointF stiloThigh2Arc2WorldHover = jointToWorld(stiloThigh2Arc2MidLocalHover, app->robotScene.stilo.hip2Circle, app->robotScene.stilo.hip2Angle, stiloCenter, stiloAngle);
 
                     const wchar_t* stiloHoverLabel = L"";
 
@@ -1136,34 +978,22 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                         stiloHoverLabel = L"Seam Arc 1";
                     else if (isNear(stiloMouse, stiloSeamArc2HandleWorldHover, ARC_HANDLE_RADIUS))
                         stiloHoverLabel = L"Seam Arc 2";
-                    else if (app->hoverStiloHip)
-                        stiloHoverLabel = L"Hip";
-                    else if (app->hoverStiloKnee)
-                        stiloHoverLabel = L"Knee";
-                    else if (isNear(stiloMouse, stiloThigh1WorldHover, THIGH_HANDLE_RADIUS))
-                        stiloHoverLabel = L"Thigh Arc 1";
-                    else if (isNear(stiloMouse, stiloThigh2WorldHover, THIGH_HANDLE_RADIUS))
-                        stiloHoverLabel = L"Thigh Arc 2";
-                    else if (app->hoverStiloFoot)
-                        stiloHoverLabel = L"Foot";
-                    else if (isNear(stiloMouse, stiloShin1WorldHover, SHIN_HANDLE_RADIUS))
-                        stiloHoverLabel = L"Shin Arc 1";
-                    else if (isNear(stiloMouse, stiloShin2WorldHover, SHIN_HANDLE_RADIUS))
-                        stiloHoverLabel = L"Shin Arc 2";
-                    else if (app->hoverStiloHipLeg2)
-                        stiloHoverLabel = L"Leg 2 Hip";
-                    else if (app->hoverStiloKneeLeg2)
-                        stiloHoverLabel = L"Leg 2 Knee";
-                    else if (isNear(stiloMouse, stiloThigh1WorldHoverLeg2, THIGH_HANDLE_RADIUS))
-                        stiloHoverLabel = L"Leg 2 Thigh Arc 1";
-                    else if (isNear(stiloMouse, stiloThigh2WorldHoverLeg2, THIGH_HANDLE_RADIUS))
-                        stiloHoverLabel = L"Leg 2 Thigh Arc 2";
-                    else if (app->hoverStiloFootLeg2)
-                        stiloHoverLabel = L"Leg 2 Foot";
-                    else if (isNear(stiloMouse, stiloShin1WorldHoverLeg2, SHIN_HANDLE_RADIUS))
-                        stiloHoverLabel = L"Leg 2 Shin Arc 1";
-                    else if (isNear(stiloMouse, stiloShin2WorldHoverLeg2, SHIN_HANDLE_RADIUS))
-                        stiloHoverLabel = L"Leg 2 Shin Arc 2";
+                    else if (app->hoverStiloHip1)
+                        stiloHoverLabel = L"Hip 1";
+                    else if (isNear(stiloMouse, stiloThigh1Arc1WorldHover, THIGH_HANDLE_RADIUS))
+                        stiloHoverLabel = L"Thigh 1 Arc 1";
+                    else if (isNear(stiloMouse, stiloThigh1Arc2WorldHover, THIGH_HANDLE_RADIUS))
+                        stiloHoverLabel = L"Thigh 1 Arc 2";
+                    else if (app->hoverStiloFeet1)
+                        stiloHoverLabel = L"Feet 1";
+                    else if (app->hoverStiloHip2)
+                        stiloHoverLabel = L"Hip 2";
+                    else if (isNear(stiloMouse, stiloThigh2Arc1WorldHover, THIGH_HANDLE_RADIUS))
+                        stiloHoverLabel = L"Thigh 2 Arc 1";
+                    else if (isNear(stiloMouse, stiloThigh2Arc2WorldHover, THIGH_HANDLE_RADIUS))
+                        stiloHoverLabel = L"Thigh 2 Arc 2";
+                    else if (app->hoverStiloFeet2)
+                        stiloHoverLabel = L"Feet 2";
                     else if (app->hoverStiloHead)
                         stiloHoverLabel = L"Butt";
                     else if (app->hoverStiloButt)
@@ -1173,12 +1003,10 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 }
 
                 if (!app->draggingStiloSeamArc1 && !app->draggingStiloSeamArc2 &&
-                    !app->draggingStiloInner &&
-                    !app->draggingStiloKnee && !app->draggingStiloThigh1 && !app->draggingStiloThigh2 &&
-                    !app->draggingStiloFoot && !app->draggingStiloShin1 && !app->draggingStiloShin2 &&
-                    !app->draggingStiloInnerLeg2 &&
-                    !app->draggingStiloKneeLeg2 && !app->draggingStiloThigh1Leg2 && !app->draggingStiloThigh2Leg2 &&
-                    !app->draggingStiloFootLeg2 && !app->draggingStiloShin1Leg2 && !app->draggingStiloShin2Leg2)
+                    !app->draggingStiloHip1 && !app->draggingStiloFeet1 &&
+                    !app->draggingStiloThigh1Arc1 && !app->draggingStiloThigh1Arc2 &&
+                    !app->draggingStiloHip2 && !app->draggingStiloFeet2 &&
+                    !app->draggingStiloThigh2Arc1 && !app->draggingStiloThigh2Arc2)
                     break;
 
                 PointF stiloLocalMouse = inverseRotate(stiloMouse, stiloCenter, stiloAngle);
@@ -1226,50 +1054,41 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     app->robotScene.stilo.seamArc1Angle = range.centerDeg - delta;
                 }
 
-                if (app->draggingStiloInner)
+                if (app->draggingStiloHip1)
                 {
-                    PointF newInner = stiloLocalMouse;
+                    PointF newHip1 = stiloLocalMouse;
 
-                    app->robotScene.stilo.kneeCircle.x = newInner.x + app->stiloHipDragKneeOffset.x;
-                    app->robotScene.stilo.kneeCircle.y = newInner.y + app->stiloHipDragKneeOffset.y;
+                    app->robotScene.stilo.feet1Circle.x = newHip1.x + app->stiloHip1DragFeetOffset.x;
+                    app->robotScene.stilo.feet1Circle.y = newHip1.y + app->stiloHip1DragFeetOffset.y;
 
-                    app->robotScene.stilo.footCircle.x = newInner.x + app->stiloHipDragFootOffset.x;
-                    app->robotScene.stilo.footCircle.y = newInner.y + app->stiloHipDragFootOffset.y;
+                    app->robotScene.stilo.hip1Circle = newHip1;
 
-                    app->robotScene.stilo.innerCircle = newInner;
-
-                    adjustStiloThighArcs(app);
-                    adjustStiloShinArcs(app);
+                    adjustStiloThigh1Arcs(app);
                 }
 
-                PointF stiloLegLocalMouse = inverseRotate(stiloLocalMouse, app->robotScene.stilo.innerCircle, app->robotScene.stilo.hipAngle);
+                PointF stiloLeg1LocalMouse = inverseRotate(stiloLocalMouse, app->robotScene.stilo.hip1Circle, app->robotScene.stilo.hip1Angle);
 
-                if (app->draggingStiloKnee)
+                if (app->draggingStiloFeet1)
                 {
-                    PointF newKnee = constrainToAxis(
-                        app->robotScene.stilo.innerCircle,
-                        app->robotScene.stilo.kneeCircle,
-                        stiloLegLocalMouse,
+                    app->robotScene.stilo.feet1Circle = constrainToAxis(
+                        app->robotScene.stilo.hip1Circle,
+                        app->robotScene.stilo.feet1Circle,
+                        stiloLeg1LocalMouse,
                         MIN_LIMB_LENGTH);
 
-                    app->robotScene.stilo.kneeCircle = newKnee;
-
-                    app->robotScene.stilo.footCircle.x = newKnee.x + app->stiloKneeDragFootOffset.x;
-                    app->robotScene.stilo.footCircle.y = newKnee.y + app->stiloKneeDragFootOffset.y;
-
-                    adjustStiloThighArcs(app);
+                    adjustStiloThigh1Arcs(app);
                 }
 
-                if (app->draggingStiloThigh1)
+                if (app->draggingStiloThigh1Arc1)
                 {
-                    SafeAngleRange range = filletSafeAngleRange(app->robotScene.stilo.innerCircle, app->robotScene.stilo.innerRadius,
-                                                                 app->robotScene.stilo.kneeCircle, app->robotScene.stilo.kneeRadius,
+                    SafeAngleRange range = filletSafeAngleRange(app->robotScene.stilo.hip1Circle, app->robotScene.stilo.hip1Radius,
+                                                                 app->robotScene.stilo.feet1Circle, app->robotScene.stilo.feet1Radius,
                                                                  MAX_SEMNI_THIGH_ARC_R);
                     float maxDelta = range.halfWidthDeg - THIGH_ARC_ANGLE_MARGIN_DEG;
                     if (maxDelta < THIGH_ARC_SIDE_MARGIN_DEG) maxDelta = THIGH_ARC_SIDE_MARGIN_DEG;
 
-                    float perpNow = perpOffsetOnAxis(stiloLegLocalMouse, app->robotScene.stilo.innerCircle, app->robotScene.stilo.kneeCircle);
-                    float raw = app->stiloThighArcDragStartAngle + (perpNow - app->stiloThighArcDragStartPerp) * THIGH_ARC_DRAG_SENSITIVITY_DEG_PER_UNIT;
+                    float perpNow = perpOffsetOnAxis(stiloLeg1LocalMouse, app->robotScene.stilo.hip1Circle, app->robotScene.stilo.feet1Circle);
+                    float raw = app->stiloThigh1ArcDragStartAngle + (perpNow - app->stiloThigh1ArcDragStartPerp) * THIGH_ARC_DRAG_SENSITIVITY_DEG_PER_UNIT;
 
                     float delta = raw - range.centerDeg;
                     while (delta > 180.0f) delta -= 360.0f;
@@ -1278,19 +1097,19 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     if (delta > -THIGH_ARC_SIDE_MARGIN_DEG) delta = -THIGH_ARC_SIDE_MARGIN_DEG;
                     if (delta < -maxDelta) delta = -maxDelta;
 
-                    app->robotScene.stilo.thighArc1Angle = range.centerDeg + delta;
+                    app->robotScene.stilo.thigh1Arc1Angle = range.centerDeg + delta;
                 }
 
-                if (app->draggingStiloThigh2)
+                if (app->draggingStiloThigh1Arc2)
                 {
-                    SafeAngleRange range = filletSafeAngleRangeConcave(app->robotScene.stilo.innerCircle, app->robotScene.stilo.innerRadius,
-                                                                        app->robotScene.stilo.kneeCircle, app->robotScene.stilo.kneeRadius,
+                    SafeAngleRange range = filletSafeAngleRangeConcave(app->robotScene.stilo.hip1Circle, app->robotScene.stilo.hip1Radius,
+                                                                        app->robotScene.stilo.feet1Circle, app->robotScene.stilo.feet1Radius,
                                                                         MAX_THIGH_ARC2_CONCAVE_R);
                     float maxDelta = range.halfWidthDeg - THIGH_ARC_ANGLE_MARGIN_DEG;
                     if (maxDelta < 0.0f) maxDelta = 0.0f;
 
-                    float perpNow = perpOffsetOnAxis(stiloLegLocalMouse, app->robotScene.stilo.innerCircle, app->robotScene.stilo.kneeCircle);
-                    float raw = app->stiloThighArcDragStartAngle + (perpNow - app->stiloThighArcDragStartPerp) * THIGH_ARC_DRAG_SENSITIVITY_DEG_PER_UNIT;
+                    float perpNow = perpOffsetOnAxis(stiloLeg1LocalMouse, app->robotScene.stilo.hip1Circle, app->robotScene.stilo.feet1Circle);
+                    float raw = app->stiloThigh1ArcDragStartAngle + (perpNow - app->stiloThigh1ArcDragStartPerp) * THIGH_ARC_DRAG_SENSITIVITY_DEG_PER_UNIT;
 
                     float delta = raw - range.centerDeg;
                     while (delta > 180.0f) delta -= 360.0f;
@@ -1299,112 +1118,48 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     if (delta > maxDelta) delta = maxDelta;
                     if (delta < -maxDelta) delta = -maxDelta;
 
-                    app->robotScene.stilo.thighArc2Angle = range.centerDeg + delta;
-                }
-
-                PointF stiloShinLocalMouse = inverseRotate(stiloLegLocalMouse, app->robotScene.stilo.kneeCircle, app->robotScene.stilo.kneeAngle);
-
-                if (app->draggingStiloFoot)
-                {
-                    app->robotScene.stilo.footCircle = constrainToAxis(
-                        app->robotScene.stilo.kneeCircle,
-                        app->robotScene.stilo.footCircle,
-                        stiloShinLocalMouse,
-                        MIN_LIMB_LENGTH);
-
-                    adjustStiloShinArcs(app);
-                }
-
-                if (app->draggingStiloShin1)
-                {
-                    SafeAngleRange range = filletSafeAngleRange(app->robotScene.stilo.kneeCircle, app->robotScene.stilo.kneeRadius,
-                                                                 app->robotScene.stilo.footCircle, app->robotScene.stilo.footRadius,
-                                                                 MAX_SHIN_ARC_R);
-                    float maxDelta = range.halfWidthDeg - SHIN_ARC_ANGLE_MARGIN_DEG;
-                    if (maxDelta < SHIN_ARC_SIDE_MARGIN_DEG) maxDelta = SHIN_ARC_SIDE_MARGIN_DEG;
-
-                    float perpNow = perpOffsetOnAxis(stiloShinLocalMouse, app->robotScene.stilo.kneeCircle, app->robotScene.stilo.footCircle);
-                    float raw = app->stiloShinArcDragStartAngle + (perpNow - app->stiloShinArcDragStartPerp) * SHIN_ARC_DRAG_SENSITIVITY_DEG_PER_UNIT;
-
-                    float delta = raw - range.centerDeg;
-                    while (delta > 180.0f) delta -= 360.0f;
-                    while (delta < -180.0f) delta += 360.0f;
-
-                    if (delta > -SHIN_ARC_SIDE_MARGIN_DEG) delta = -SHIN_ARC_SIDE_MARGIN_DEG;
-                    if (delta < -maxDelta) delta = -maxDelta;
-
-                    app->robotScene.stilo.shinArc1Angle = range.centerDeg + delta;
-                }
-
-                if (app->draggingStiloShin2)
-                {
-                    SafeAngleRange range = filletSafeAngleRangeConcave(app->robotScene.stilo.kneeCircle, app->robotScene.stilo.kneeRadius,
-                                                                        app->robotScene.stilo.footCircle, app->robotScene.stilo.footRadius,
-                                                                        MAX_SHIN_ARC2_CONCAVE_R);
-                    float maxDelta = range.halfWidthDeg - SHIN_ARC_ANGLE_MARGIN_DEG;
-                    if (maxDelta < 0.0f) maxDelta = 0.0f;
-
-                    float perpNow = perpOffsetOnAxis(stiloShinLocalMouse, app->robotScene.stilo.kneeCircle, app->robotScene.stilo.footCircle);
-                    float raw = app->stiloShinArcDragStartAngle + (perpNow - app->stiloShinArcDragStartPerp) * SHIN_ARC_DRAG_SENSITIVITY_DEG_PER_UNIT;
-
-                    float delta = raw - range.centerDeg;
-                    while (delta > 180.0f) delta -= 360.0f;
-                    while (delta < -180.0f) delta += 360.0f;
-
-                    if (delta > maxDelta) delta = maxDelta;
-                    if (delta < -maxDelta) delta = -maxDelta;
-
-                    app->robotScene.stilo.shinArc2Angle = range.centerDeg + delta;
+                    app->robotScene.stilo.thigh1Arc2Angle = range.centerDeg + delta;
                 }
 
                 // ---- leg 2 drag updates -- same construction as leg 1's
-                // above, against the Leg2 fields. No seam-arc dragging here
-                // -- that's torso-level, shared with leg 1, already handled
-                // above.
-                if (app->draggingStiloInnerLeg2)
+                // above, against the hip2/feet2/thigh2 fields. No seam-arc
+                // dragging here -- that's torso-level, shared with leg 1,
+                // already handled above.
+                if (app->draggingStiloHip2)
                 {
-                    PointF newInnerLeg2 = stiloLocalMouse;
+                    PointF newHip2 = stiloLocalMouse;
 
-                    app->robotScene.stilo.kneeCircleLeg2.x = newInnerLeg2.x + app->stiloHipDragKneeOffsetLeg2.x;
-                    app->robotScene.stilo.kneeCircleLeg2.y = newInnerLeg2.y + app->stiloHipDragKneeOffsetLeg2.y;
+                    app->robotScene.stilo.feet2Circle.x = newHip2.x + app->stiloHip2DragFeetOffset.x;
+                    app->robotScene.stilo.feet2Circle.y = newHip2.y + app->stiloHip2DragFeetOffset.y;
 
-                    app->robotScene.stilo.footCircleLeg2.x = newInnerLeg2.x + app->stiloHipDragFootOffsetLeg2.x;
-                    app->robotScene.stilo.footCircleLeg2.y = newInnerLeg2.y + app->stiloHipDragFootOffsetLeg2.y;
+                    app->robotScene.stilo.hip2Circle = newHip2;
 
-                    app->robotScene.stilo.innerCircleLeg2 = newInnerLeg2;
-
-                    adjustStiloThighArcsLeg2(app);
-                    adjustStiloShinArcsLeg2(app);
+                    adjustStiloThigh2Arcs(app);
                 }
 
-                PointF stiloLegLocalMouseLeg2 = inverseRotate(stiloLocalMouse, app->robotScene.stilo.innerCircleLeg2, app->robotScene.stilo.hipAngleLeg2);
+                PointF stiloLeg2LocalMouse = inverseRotate(stiloLocalMouse, app->robotScene.stilo.hip2Circle, app->robotScene.stilo.hip2Angle);
 
-                if (app->draggingStiloKneeLeg2)
+                if (app->draggingStiloFeet2)
                 {
-                    PointF newKneeLeg2 = constrainToAxis(
-                        app->robotScene.stilo.innerCircleLeg2,
-                        app->robotScene.stilo.kneeCircleLeg2,
-                        stiloLegLocalMouseLeg2,
+                    app->robotScene.stilo.feet2Circle = constrainToAxis(
+                        app->robotScene.stilo.hip2Circle,
+                        app->robotScene.stilo.feet2Circle,
+                        stiloLeg2LocalMouse,
                         MIN_LIMB_LENGTH);
 
-                    app->robotScene.stilo.kneeCircleLeg2 = newKneeLeg2;
-
-                    app->robotScene.stilo.footCircleLeg2.x = newKneeLeg2.x + app->stiloKneeDragFootOffsetLeg2.x;
-                    app->robotScene.stilo.footCircleLeg2.y = newKneeLeg2.y + app->stiloKneeDragFootOffsetLeg2.y;
-
-                    adjustStiloThighArcsLeg2(app);
+                    adjustStiloThigh2Arcs(app);
                 }
 
-                if (app->draggingStiloThigh1Leg2)
+                if (app->draggingStiloThigh2Arc1)
                 {
-                    SafeAngleRange range = filletSafeAngleRange(app->robotScene.stilo.innerCircleLeg2, app->robotScene.stilo.innerRadiusLeg2,
-                                                                 app->robotScene.stilo.kneeCircleLeg2, app->robotScene.stilo.kneeRadiusLeg2,
+                    SafeAngleRange range = filletSafeAngleRange(app->robotScene.stilo.hip2Circle, app->robotScene.stilo.hip2Radius,
+                                                                 app->robotScene.stilo.feet2Circle, app->robotScene.stilo.feet2Radius,
                                                                  MAX_SEMNI_THIGH_ARC_R);
                     float maxDelta = range.halfWidthDeg - THIGH_ARC_ANGLE_MARGIN_DEG;
                     if (maxDelta < THIGH_ARC_SIDE_MARGIN_DEG) maxDelta = THIGH_ARC_SIDE_MARGIN_DEG;
 
-                    float perpNow = perpOffsetOnAxis(stiloLegLocalMouseLeg2, app->robotScene.stilo.innerCircleLeg2, app->robotScene.stilo.kneeCircleLeg2);
-                    float raw = app->stiloThighArcDragStartAngleLeg2 + (perpNow - app->stiloThighArcDragStartPerpLeg2) * THIGH_ARC_DRAG_SENSITIVITY_DEG_PER_UNIT;
+                    float perpNow = perpOffsetOnAxis(stiloLeg2LocalMouse, app->robotScene.stilo.hip2Circle, app->robotScene.stilo.feet2Circle);
+                    float raw = app->stiloThigh2ArcDragStartAngle + (perpNow - app->stiloThigh2ArcDragStartPerp) * THIGH_ARC_DRAG_SENSITIVITY_DEG_PER_UNIT;
 
                     float delta = raw - range.centerDeg;
                     while (delta > 180.0f) delta -= 360.0f;
@@ -1413,19 +1168,19 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     if (delta > -THIGH_ARC_SIDE_MARGIN_DEG) delta = -THIGH_ARC_SIDE_MARGIN_DEG;
                     if (delta < -maxDelta) delta = -maxDelta;
 
-                    app->robotScene.stilo.thighArc1AngleLeg2 = range.centerDeg + delta;
+                    app->robotScene.stilo.thigh2Arc1Angle = range.centerDeg + delta;
                 }
 
-                if (app->draggingStiloThigh2Leg2)
+                if (app->draggingStiloThigh2Arc2)
                 {
-                    SafeAngleRange range = filletSafeAngleRangeConcave(app->robotScene.stilo.innerCircleLeg2, app->robotScene.stilo.innerRadiusLeg2,
-                                                                        app->robotScene.stilo.kneeCircleLeg2, app->robotScene.stilo.kneeRadiusLeg2,
+                    SafeAngleRange range = filletSafeAngleRangeConcave(app->robotScene.stilo.hip2Circle, app->robotScene.stilo.hip2Radius,
+                                                                        app->robotScene.stilo.feet2Circle, app->robotScene.stilo.feet2Radius,
                                                                         MAX_THIGH_ARC2_CONCAVE_R);
                     float maxDelta = range.halfWidthDeg - THIGH_ARC_ANGLE_MARGIN_DEG;
                     if (maxDelta < 0.0f) maxDelta = 0.0f;
 
-                    float perpNow = perpOffsetOnAxis(stiloLegLocalMouseLeg2, app->robotScene.stilo.innerCircleLeg2, app->robotScene.stilo.kneeCircleLeg2);
-                    float raw = app->stiloThighArcDragStartAngleLeg2 + (perpNow - app->stiloThighArcDragStartPerpLeg2) * THIGH_ARC_DRAG_SENSITIVITY_DEG_PER_UNIT;
+                    float perpNow = perpOffsetOnAxis(stiloLeg2LocalMouse, app->robotScene.stilo.hip2Circle, app->robotScene.stilo.feet2Circle);
+                    float raw = app->stiloThigh2ArcDragStartAngle + (perpNow - app->stiloThigh2ArcDragStartPerp) * THIGH_ARC_DRAG_SENSITIVITY_DEG_PER_UNIT;
 
                     float delta = raw - range.centerDeg;
                     while (delta > 180.0f) delta -= 360.0f;
@@ -1434,62 +1189,7 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     if (delta > maxDelta) delta = maxDelta;
                     if (delta < -maxDelta) delta = -maxDelta;
 
-                    app->robotScene.stilo.thighArc2AngleLeg2 = range.centerDeg + delta;
-                }
-
-                PointF stiloShinLocalMouseLeg2 = inverseRotate(stiloLegLocalMouseLeg2, app->robotScene.stilo.kneeCircleLeg2, app->robotScene.stilo.kneeAngleLeg2);
-
-                if (app->draggingStiloFootLeg2)
-                {
-                    app->robotScene.stilo.footCircleLeg2 = constrainToAxis(
-                        app->robotScene.stilo.kneeCircleLeg2,
-                        app->robotScene.stilo.footCircleLeg2,
-                        stiloShinLocalMouseLeg2,
-                        MIN_LIMB_LENGTH);
-
-                    adjustStiloShinArcsLeg2(app);
-                }
-
-                if (app->draggingStiloShin1Leg2)
-                {
-                    SafeAngleRange range = filletSafeAngleRange(app->robotScene.stilo.kneeCircleLeg2, app->robotScene.stilo.kneeRadiusLeg2,
-                                                                 app->robotScene.stilo.footCircleLeg2, app->robotScene.stilo.footRadiusLeg2,
-                                                                 MAX_SHIN_ARC_R);
-                    float maxDelta = range.halfWidthDeg - SHIN_ARC_ANGLE_MARGIN_DEG;
-                    if (maxDelta < SHIN_ARC_SIDE_MARGIN_DEG) maxDelta = SHIN_ARC_SIDE_MARGIN_DEG;
-
-                    float perpNow = perpOffsetOnAxis(stiloShinLocalMouseLeg2, app->robotScene.stilo.kneeCircleLeg2, app->robotScene.stilo.footCircleLeg2);
-                    float raw = app->stiloShinArcDragStartAngleLeg2 + (perpNow - app->stiloShinArcDragStartPerpLeg2) * SHIN_ARC_DRAG_SENSITIVITY_DEG_PER_UNIT;
-
-                    float delta = raw - range.centerDeg;
-                    while (delta > 180.0f) delta -= 360.0f;
-                    while (delta < -180.0f) delta += 360.0f;
-
-                    if (delta > -SHIN_ARC_SIDE_MARGIN_DEG) delta = -SHIN_ARC_SIDE_MARGIN_DEG;
-                    if (delta < -maxDelta) delta = -maxDelta;
-
-                    app->robotScene.stilo.shinArc1AngleLeg2 = range.centerDeg + delta;
-                }
-
-                if (app->draggingStiloShin2Leg2)
-                {
-                    SafeAngleRange range = filletSafeAngleRangeConcave(app->robotScene.stilo.kneeCircleLeg2, app->robotScene.stilo.kneeRadiusLeg2,
-                                                                        app->robotScene.stilo.footCircleLeg2, app->robotScene.stilo.footRadiusLeg2,
-                                                                        MAX_SHIN_ARC2_CONCAVE_R);
-                    float maxDelta = range.halfWidthDeg - SHIN_ARC_ANGLE_MARGIN_DEG;
-                    if (maxDelta < 0.0f) maxDelta = 0.0f;
-
-                    float perpNow = perpOffsetOnAxis(stiloShinLocalMouseLeg2, app->robotScene.stilo.kneeCircleLeg2, app->robotScene.stilo.footCircleLeg2);
-                    float raw = app->stiloShinArcDragStartAngleLeg2 + (perpNow - app->stiloShinArcDragStartPerpLeg2) * SHIN_ARC_DRAG_SENSITIVITY_DEG_PER_UNIT;
-
-                    float delta = raw - range.centerDeg;
-                    while (delta > 180.0f) delta -= 360.0f;
-                    while (delta < -180.0f) delta += 360.0f;
-
-                    if (delta > maxDelta) delta = maxDelta;
-                    if (delta < -maxDelta) delta = -maxDelta;
-
-                    app->robotScene.stilo.shinArc2AngleLeg2 = range.centerDeg + delta;
+                    app->robotScene.stilo.thigh2Arc2Angle = range.centerDeg + delta;
                 }
 
                 break;
@@ -2141,88 +1841,65 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 break;
             }
 
-            // Stilo now has Semni's full set of per-joint scroll-to-
-            // rotate/resize handles -- same construction as the
-            // ROBOT_KIND_SEMNI block below, operating on
+            // Stilo now has just a hip + feet handle per leg's worth of
+            // scroll-to-rotate/resize (no knee/foot/shin sub-stage any
+            // more -- see app.h's Stilo comment) -- same construction as
+            // the ROBOT_KIND_SEMNI block below, operating on
             // app->robotScene.stilo instead of Semni's own.
             if (app->robotScene.activeKind == ROBOT_KIND_STILO)
             {
                 PointF stiloCenter = getStiloCenter(app->robotScene.stilo);
-                PointF stiloInnerWorld = rotatePoint(app->robotScene.stilo.innerCircle, stiloCenter, app->robotScene.stilo.angle);
-                PointF stiloKneeWorld = jointToWorld(app->robotScene.stilo.kneeCircle, app->robotScene.stilo.innerCircle, app->robotScene.stilo.hipAngle, stiloCenter, app->robotScene.stilo.angle);
-                PointF stiloFootWorld = nestedJointToWorld(app->robotScene.stilo.footCircle, app->robotScene.stilo.kneeCircle, app->robotScene.stilo.kneeAngle, app->robotScene.stilo.innerCircle, app->robotScene.stilo.hipAngle, stiloCenter, app->robotScene.stilo.angle);
+                PointF stiloHip1World  = rotatePoint(app->robotScene.stilo.hip1Circle, stiloCenter, app->robotScene.stilo.angle);
+                PointF stiloFeet1World = jointToWorld(app->robotScene.stilo.feet1Circle, app->robotScene.stilo.hip1Circle, app->robotScene.stilo.hip1Angle, stiloCenter, app->robotScene.stilo.angle);
                 PointF stiloHeadWorld = rotatePoint((PointF){app->robotScene.stilo.headX, app->robotScene.stilo.y}, stiloCenter, app->robotScene.stilo.angle);
                 PointF stiloButtWorld = rotatePoint((PointF){app->robotScene.stilo.buttX, app->robotScene.stilo.y}, stiloCenter, app->robotScene.stilo.angle);
 
-                // leg 2's own hip/knee/foot -- same construction as leg 1's
-                // above, against the Leg2 fields. No leg-2 equivalent of
-                // stiloHeadWorld/stiloButtWorld -- those are torso-level,
+                // leg 2's own hip/feet -- same construction as leg 1's
+                // above, against the hip2/feet2 fields. No leg-2 equivalent
+                // of stiloHeadWorld/stiloButtWorld -- those are torso-level,
                 // shared with leg 1.
-                PointF stiloInnerWorldLeg2 = rotatePoint(app->robotScene.stilo.innerCircleLeg2, stiloCenter, app->robotScene.stilo.angle);
-                PointF stiloKneeWorldLeg2 = jointToWorld(app->robotScene.stilo.kneeCircleLeg2, app->robotScene.stilo.innerCircleLeg2, app->robotScene.stilo.hipAngleLeg2, stiloCenter, app->robotScene.stilo.angle);
-                PointF stiloFootWorldLeg2 = nestedJointToWorld(app->robotScene.stilo.footCircleLeg2, app->robotScene.stilo.kneeCircleLeg2, app->robotScene.stilo.kneeAngleLeg2, app->robotScene.stilo.innerCircleLeg2, app->robotScene.stilo.hipAngleLeg2, stiloCenter, app->robotScene.stilo.angle);
+                PointF stiloHip2World  = rotatePoint(app->robotScene.stilo.hip2Circle, stiloCenter, app->robotScene.stilo.angle);
+                PointF stiloFeet2World = jointToWorld(app->robotScene.stilo.feet2Circle, app->robotScene.stilo.hip2Circle, app->robotScene.stilo.hip2Angle, stiloCenter, app->robotScene.stilo.angle);
 
                 float stiloStep = 2.0f;
                 float stiloRadiusStep = 0.01f;
 
                 int stiloShiftHeld = (LOWORD(wParam) & MK_SHIFT) != 0;
 
-                if (isNear(mouse, stiloInnerWorld, HIP_HANDLE_RADIUS) && stiloShiftHeld)
+                if (isNear(mouse, stiloHip1World, HIP_HANDLE_RADIUS) && stiloShiftHeld)
                 {
                     if (wheelDelta > 0)
-                        app->robotScene.stilo.hipAngle += stiloStep;
+                        app->robotScene.stilo.hip1Angle += stiloStep;
                     else
-                        app->robotScene.stilo.hipAngle -= stiloStep;
+                        app->robotScene.stilo.hip1Angle -= stiloStep;
                 }
-                else if (isNear(mouse, stiloInnerWorld, HIP_HANDLE_RADIUS))
+                else if (isNear(mouse, stiloHip1World, HIP_HANDLE_RADIUS))
                 {
                     if (wheelDelta > 0)
-                        app->robotScene.stilo.innerRadius += stiloRadiusStep;
+                        app->robotScene.stilo.hip1Radius += stiloRadiusStep;
                     else
-                        app->robotScene.stilo.innerRadius -= stiloRadiusStep;
+                        app->robotScene.stilo.hip1Radius -= stiloRadiusStep;
 
-                    if (app->robotScene.stilo.innerRadius < MIN_R)
-                        app->robotScene.stilo.innerRadius = MIN_R;
-                    if (app->robotScene.stilo.innerRadius > MAX_R)
-                        app->robotScene.stilo.innerRadius = MAX_R;
+                    if (app->robotScene.stilo.hip1Radius < MIN_R)
+                        app->robotScene.stilo.hip1Radius = MIN_R;
+                    if (app->robotScene.stilo.hip1Radius > MAX_R)
+                        app->robotScene.stilo.hip1Radius = MAX_R;
 
-                    adjustStiloThighArcs(app);
+                    adjustStiloThigh1Arcs(app);
                 }
-                else if (isNear(mouse, stiloKneeWorld, KNEE_HANDLE_RADIUS) && stiloShiftHeld)
+                else if (isNear(mouse, stiloFeet1World, KNEE_HANDLE_RADIUS))
                 {
                     if (wheelDelta > 0)
-                        app->robotScene.stilo.kneeAngle += stiloStep;
+                        app->robotScene.stilo.feet1Radius += stiloRadiusStep;
                     else
-                        app->robotScene.stilo.kneeAngle -= stiloStep;
-                }
-                else if (isNear(mouse, stiloKneeWorld, KNEE_HANDLE_RADIUS))
-                {
-                    if (wheelDelta > 0)
-                        app->robotScene.stilo.kneeRadius += stiloRadiusStep;
-                    else
-                        app->robotScene.stilo.kneeRadius -= stiloRadiusStep;
+                        app->robotScene.stilo.feet1Radius -= stiloRadiusStep;
 
-                    if (app->robotScene.stilo.kneeRadius < MIN_R)
-                        app->robotScene.stilo.kneeRadius = MIN_R;
-                    if (app->robotScene.stilo.kneeRadius > MAX_R)
-                        app->robotScene.stilo.kneeRadius = MAX_R;
+                    if (app->robotScene.stilo.feet1Radius < MIN_R)
+                        app->robotScene.stilo.feet1Radius = MIN_R;
+                    if (app->robotScene.stilo.feet1Radius > MAX_R)
+                        app->robotScene.stilo.feet1Radius = MAX_R;
 
-                    adjustStiloThighArcs(app);
-                    adjustStiloShinArcs(app);
-                }
-                else if (isNear(mouse, stiloFootWorld, FOOT_HANDLE_RADIUS))
-                {
-                    if (wheelDelta > 0)
-                        app->robotScene.stilo.footRadius += stiloRadiusStep;
-                    else
-                        app->robotScene.stilo.footRadius -= stiloRadiusStep;
-
-                    if (app->robotScene.stilo.footRadius < MIN_R)
-                        app->robotScene.stilo.footRadius = MIN_R;
-                    if (app->robotScene.stilo.footRadius > MAX_R)
-                        app->robotScene.stilo.footRadius = MAX_R;
-
-                    adjustStiloShinArcs(app);
+                    adjustStiloThigh1Arcs(app);
                 }
                 else if (isNear(mouse, stiloHeadWorld, HEAD_BUTT_HANDLE_RADIUS))
                 {
@@ -2248,62 +1925,40 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     if (app->robotScene.stilo.buttRadius > MAX_R)
                         app->robotScene.stilo.buttRadius = MAX_R;
                 }
-                else if (isNear(mouse, stiloInnerWorldLeg2, HIP_HANDLE_RADIUS) && stiloShiftHeld)
+                else if (isNear(mouse, stiloHip2World, HIP_HANDLE_RADIUS) && stiloShiftHeld)
                 {
                     if (wheelDelta > 0)
-                        app->robotScene.stilo.hipAngleLeg2 += stiloStep;
+                        app->robotScene.stilo.hip2Angle += stiloStep;
                     else
-                        app->robotScene.stilo.hipAngleLeg2 -= stiloStep;
+                        app->robotScene.stilo.hip2Angle -= stiloStep;
                 }
-                else if (isNear(mouse, stiloInnerWorldLeg2, HIP_HANDLE_RADIUS))
+                else if (isNear(mouse, stiloHip2World, HIP_HANDLE_RADIUS))
                 {
                     if (wheelDelta > 0)
-                        app->robotScene.stilo.innerRadiusLeg2 += stiloRadiusStep;
+                        app->robotScene.stilo.hip2Radius += stiloRadiusStep;
                     else
-                        app->robotScene.stilo.innerRadiusLeg2 -= stiloRadiusStep;
+                        app->robotScene.stilo.hip2Radius -= stiloRadiusStep;
 
-                    if (app->robotScene.stilo.innerRadiusLeg2 < MIN_R)
-                        app->robotScene.stilo.innerRadiusLeg2 = MIN_R;
-                    if (app->robotScene.stilo.innerRadiusLeg2 > MAX_R)
-                        app->robotScene.stilo.innerRadiusLeg2 = MAX_R;
+                    if (app->robotScene.stilo.hip2Radius < MIN_R)
+                        app->robotScene.stilo.hip2Radius = MIN_R;
+                    if (app->robotScene.stilo.hip2Radius > MAX_R)
+                        app->robotScene.stilo.hip2Radius = MAX_R;
 
-                    adjustStiloThighArcsLeg2(app);
+                    adjustStiloThigh2Arcs(app);
                 }
-                else if (isNear(mouse, stiloKneeWorldLeg2, KNEE_HANDLE_RADIUS) && stiloShiftHeld)
+                else if (isNear(mouse, stiloFeet2World, KNEE_HANDLE_RADIUS))
                 {
                     if (wheelDelta > 0)
-                        app->robotScene.stilo.kneeAngleLeg2 += stiloStep;
+                        app->robotScene.stilo.feet2Radius += stiloRadiusStep;
                     else
-                        app->robotScene.stilo.kneeAngleLeg2 -= stiloStep;
-                }
-                else if (isNear(mouse, stiloKneeWorldLeg2, KNEE_HANDLE_RADIUS))
-                {
-                    if (wheelDelta > 0)
-                        app->robotScene.stilo.kneeRadiusLeg2 += stiloRadiusStep;
-                    else
-                        app->robotScene.stilo.kneeRadiusLeg2 -= stiloRadiusStep;
+                        app->robotScene.stilo.feet2Radius -= stiloRadiusStep;
 
-                    if (app->robotScene.stilo.kneeRadiusLeg2 < MIN_R)
-                        app->robotScene.stilo.kneeRadiusLeg2 = MIN_R;
-                    if (app->robotScene.stilo.kneeRadiusLeg2 > MAX_R)
-                        app->robotScene.stilo.kneeRadiusLeg2 = MAX_R;
+                    if (app->robotScene.stilo.feet2Radius < MIN_R)
+                        app->robotScene.stilo.feet2Radius = MIN_R;
+                    if (app->robotScene.stilo.feet2Radius > MAX_R)
+                        app->robotScene.stilo.feet2Radius = MAX_R;
 
-                    adjustStiloThighArcsLeg2(app);
-                    adjustStiloShinArcsLeg2(app);
-                }
-                else if (isNear(mouse, stiloFootWorldLeg2, FOOT_HANDLE_RADIUS))
-                {
-                    if (wheelDelta > 0)
-                        app->robotScene.stilo.footRadiusLeg2 += stiloRadiusStep;
-                    else
-                        app->robotScene.stilo.footRadiusLeg2 -= stiloRadiusStep;
-
-                    if (app->robotScene.stilo.footRadiusLeg2 < MIN_R)
-                        app->robotScene.stilo.footRadiusLeg2 = MIN_R;
-                    if (app->robotScene.stilo.footRadiusLeg2 > MAX_R)
-                        app->robotScene.stilo.footRadiusLeg2 = MAX_R;
-
-                    adjustStiloShinArcsLeg2(app);
+                    adjustStiloThigh2Arcs(app);
                 }
                 else
                 {
@@ -2563,16 +2218,15 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                         if (wParam == VK_DOWN) step = -step;
 
                         app->robotScene.stilo.y += step;
-                        app->robotScene.stilo.innerCircle.y += step;
-                        app->robotScene.stilo.footCircle.y += step;
+                        app->robotScene.stilo.hip1Circle.y += step;
+                        app->robotScene.stilo.feet1Circle.y += step;
 
                         // leg 2 hangs off the same shared torso Y above --
                         // carry it along the same whole-body nudge, same
-                        // "y/innerCircle.y/footCircle.y" pattern as leg 1
-                        // just above (kneeCircle.y is left alone here too,
-                        // matching leg 1's own existing behavior)
-                        app->robotScene.stilo.innerCircleLeg2.y += step;
-                        app->robotScene.stilo.footCircleLeg2.y += step;
+                        // "y/hip1Circle.y/feet1Circle.y" pattern as leg 1
+                        // just above
+                        app->robotScene.stilo.hip2Circle.y += step;
+                        app->robotScene.stilo.feet2Circle.y += step;
                     }
                     break;
                 }
@@ -2655,7 +2309,8 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             int relYRow1     = relYSelector + comboRowH + rowGap;  // Home | Standing
             int relYRow1b    = relYRow1     + btnH      + rowGap;  // Set Home | Set Standing
             int relYRow2     = relYRow1b    + btnH      + rowGap;  // Save | Mirror Leg
-            int relYScale    = relYRow2     + btnH       + rowGap; // Scale label + slider
+            int relYMirror2  = relYRow2     + btnH      + rowGap;  // Mirror Leg 2 (Stilo only, inert otherwise)
+            int relYScale    = relYMirror2  + btnH       + rowGap; // Scale label + slider
             int relYSeg      = relYScale    + sliderH    + rowGap; // View Segments
             int relYDebug    = relYSeg      + btnH       + rowGap; // Debug Log
             int panelH       = relYDebug    + btnH       + pad;
@@ -2714,6 +2369,14 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
 
             SetWindowPos(app->ui.hMirrorButton, NULL,
                  col2X, panelY + relYRow2, colW, btnH,
+                 SWP_NOZORDER);
+
+            // Full content width, own row -- only meaningful for Stilo
+            // (mirrors its leg 2 only, see ID_MIRROR_LEG2_BUTTON), so it
+            // doesn't share a row/column with the single-leg Mirror button
+            // above it.
+            SetWindowPos(app->ui.hMirrorButton2, NULL,
+                 col1X, panelY + relYMirror2, contentW, btnH,
                  SWP_NOZORDER);
 
             // Scale label + slider share the full content width, same as
@@ -2786,6 +2449,7 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 app->ui.hSetHomeButton,
                 app->ui.hSaveButton,
                 app->ui.hMirrorButton,
+                app->ui.hMirrorButton2,
                 app->ui.hScaleLabel,
                 app->ui.hScaleSlider,
                 app->ui.hViewSegmentsButton,
@@ -2946,6 +2610,23 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 NULL
             );
              SendMessage(app->ui.hMirrorButton, WM_SETFONT, (WPARAM)g_semniUIFont, TRUE);
+
+             // Mirrors Stilo's leg 2 only (see ID_MIRROR_LEG2_BUTTON) --
+             // always created/shown alongside hMirrorButton above, same
+             // "harmlessly inert unless applicable" convention as
+             // hViewSegmentsButton, rather than hidden/disabled per robot
+             // kind (see app.h's ID_MIRROR_LEG2_BUTTON comment).
+             app->ui.hMirrorButton2 = CreateWindow(
+                L"BUTTON",
+                L"Mirror Leg 2",
+                WS_VISIBLE | WS_CHILD,
+                0, 0, 10, 10,
+                hwnd,
+                (HMENU)ID_MIRROR_LEG2_BUTTON,
+                NULL,
+                NULL
+            );
+             SendMessage(app->ui.hMirrorButton2, WM_SETFONT, (WPARAM)g_semniUIFont, TRUE);
 
              // Robot size slider: 0.25 - 1.0 (see ROBOT_SCALE_MIN/MAX in
              // config.h), mapped to an integer trackbar range of 25-100
@@ -3144,6 +2825,21 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                             break;
                     }
                     InvalidateRect(hwnd, NULL, FALSE);
+                    SetFocus(app->hwndMain);  // return focus for keyboard input
+                    break;
+
+                case ID_MIRROR_LEG2_BUTTON:
+                    // Only meaningful for Stilo (its leg 2, see app.h's
+                    // Stilo comment) -- harmlessly inert for Semni/Rocky,
+                    // same convention as ID_VIEW_SEGMENTS_BUTTON being inert
+                    // outside Semni, rather than hiding/disabling the
+                    // button per robot kind (see app.h's
+                    // ID_MIRROR_LEG2_BUTTON comment).
+                    if (app->robotScene.activeKind == ROBOT_KIND_STILO)
+                    {
+                        mirrorStiloLeg2(&app->robotScene.stilo);
+                        InvalidateRect(hwnd, NULL, FALSE);
+                    }
                     SetFocus(app->hwndMain);  // return focus for keyboard input
                     break;
 
