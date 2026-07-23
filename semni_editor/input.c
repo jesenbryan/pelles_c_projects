@@ -3108,6 +3108,35 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                         if (sel >= 0 && sel < ROBOT_KIND_COUNT)
                             app->robotScene.activeKind = (RobotKind)sel;
 
+                        // Reset the newly-selected robot to its Home pose
+                        // -- same "custom file first, hardcoded default as
+                        // fallback" pattern as ID_HOME_POSITION_BUTTON
+                        // below, so switching kinds always lands on a
+                        // known, consistent pose instead of leaving
+                        // whatever that robot was last left in (which
+                        // could be mid-drag/off-screen/degenerate from an
+                        // earlier session). Matches app_init.c's
+                        // initAppState, which now seeds every robot into
+                        // Home on startup for the same reason.
+                        switch (app->robotScene.activeKind)
+                        {
+                            case ROBOT_KIND_ROCKY:
+                                if (!loadRockyPoseFromFile("Poses\\rocky_home.txt", &app->robotScene.rocky))
+                                    initRockyHomePosition(app);
+                                break;
+
+                            case ROBOT_KIND_STILO:
+                                initStiloHomePosition(app);
+                                loadStiloPoseFromFile("Poses\\stilo_home.txt", &app->robotScene.stilo);
+                                break;
+
+                            case ROBOT_KIND_SEMNI:
+                            default:
+                                if (!loadRobotPoseFromFile("Poses\\semni_home.txt", &app->robotScene.robot))
+                                    initHomePosition(app);
+                                break;
+                        }
+
                         // Clear any drag/hover state left over from
                         // whichever robot was active before -- meaningful
                         // for Semni and Rocky's body handle right now (see
@@ -3190,7 +3219,7 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
 				    switch (app->robotScene.activeKind)
 				    {
 				        case ROBOT_KIND_ROCKY:
-				            if (!loadRockyPoseFromFile("rocky_standing.txt", &app->robotScene.rocky))
+				            if (!loadRockyPoseFromFile("Poses\\rocky_standing.txt", &app->robotScene.rocky))
 				                initRockyStandingPosition(app);
 				            break;
 
@@ -3210,12 +3239,12 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
 				            // the load on top only overwrites whichever keys
 				            // the file actually has.
 				            initStiloStandingPosition(app);
-				            loadStiloPoseFromFile("stilo_standing.txt", &app->robotScene.stilo);
+				            loadStiloPoseFromFile("Poses\\stilo_standing.txt", &app->robotScene.stilo);
 				            break;
 
 				        case ROBOT_KIND_SEMNI:
 				        default:
-				            if (!loadRobotPoseFromFile("semni_standing.txt", &app->robotScene.robot))
+				            if (!loadRobotPoseFromFile("Poses\\semni_standing.txt", &app->robotScene.robot))
 				                initStandingPosition(app);
 				            break;
 				    }
@@ -3229,7 +3258,7 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
 				    switch (app->robotScene.activeKind)
 				    {
 				        case ROBOT_KIND_ROCKY:
-				            if (!loadRockyPoseFromFile("rocky_home.txt", &app->robotScene.rocky))
+				            if (!loadRockyPoseFromFile("Poses\\rocky_home.txt", &app->robotScene.rocky))
 				                initRockyHomePosition(app);
 				            break;
 
@@ -3239,12 +3268,12 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
 				            // reason (an older stilo_home.txt predating
 				            // Stilo's knee stage is missing those keys).
 				            initStiloHomePosition(app);
-				            loadStiloPoseFromFile("stilo_home.txt", &app->robotScene.stilo);
+				            loadStiloPoseFromFile("Poses\\stilo_home.txt", &app->robotScene.stilo);
 				            break;
 
 				        case ROBOT_KIND_SEMNI:
 				        default:
-				            if (!loadRobotPoseFromFile("semni_home.txt", &app->robotScene.robot))
+				            if (!loadRobotPoseFromFile("Poses\\semni_home.txt", &app->robotScene.robot))
 				                initHomePosition(app);
 				            break;
 				    }
@@ -3257,40 +3286,48 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
 				    // is on screen right now) as the new Standing target for
 				    // whichever robot is active, persisted to its own file
 				    // so ID_STANDING_POSITION_BUTTON above picks it up from
-				    // now on, including after restarting the app.
+				    // now on, including after restarting the app. All 6
+				    // pose files (Standing/Home x Semni/Rocky/Stilo) now
+				    // live in one Poses folder instead of loose in the
+				    // working directory -- CreateDirectory is a no-op
+				    // (returns FALSE, GetLastError() == ERROR_ALREADY_EXISTS)
+				    // once it already exists, safe to ignore.
+				    CreateDirectoryA("Poses", NULL);
 				    switch (app->robotScene.activeKind)
 				    {
 				        case ROBOT_KIND_ROCKY:
-				            saveRockyAsEquations("rocky_standing.txt", app);
+				            saveRockyAsEquations("Poses\\rocky_standing.txt", app);
 				            break;
 
 				        case ROBOT_KIND_STILO:
-				            saveStiloAsEquations("stilo_standing.txt", app);
+				            saveStiloAsEquations("Poses\\stilo_standing.txt", app);
 				            break;
 
 				        case ROBOT_KIND_SEMNI:
 				        default:
-				            saveRobotAsEquations("semni_standing.txt", app);
+				            saveRobotAsEquations("Poses\\semni_standing.txt", app);
 				            break;
 				    }
 				    SetFocus(app->hwndMain);
 				    break;
 
 				case ID_SET_HOME_BUTTON:
-				    // Same idea as Set Standing above, for Home.
+				    // Same idea as Set Standing above, for Home -- same
+				    // Poses folder, same no-op-if-it-exists CreateDirectory.
+				    CreateDirectoryA("Poses", NULL);
 				    switch (app->robotScene.activeKind)
 				    {
 				        case ROBOT_KIND_ROCKY:
-				            saveRockyAsEquations("rocky_home.txt", app);
+				            saveRockyAsEquations("Poses\\rocky_home.txt", app);
 				            break;
 
 				        case ROBOT_KIND_STILO:
-				            saveStiloAsEquations("stilo_home.txt", app);
+				            saveStiloAsEquations("Poses\\stilo_home.txt", app);
 				            break;
 
 				        case ROBOT_KIND_SEMNI:
 				        default:
-				            saveRobotAsEquations("semni_home.txt", app);
+				            saveRobotAsEquations("Poses\\semni_home.txt", app);
 				            break;
 				    }
 				    SetFocus(app->hwndMain);
