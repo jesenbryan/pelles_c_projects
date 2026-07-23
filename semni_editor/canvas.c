@@ -1499,6 +1499,36 @@ void canvasRenderFrame(float dimAmount)
     glCallLists((GLsizei)strlen(zoomStr), GL_UNSIGNED_BYTE, zoomStr);
     glPopAttrib();
 
+    // 'P' toggle (app.showPixelCoords, see main.c's WndProcShared
+    // WM_KEYDOWN) -- exact client-area pixel position of the cursor, same
+    // bottom-right column as the zoom readout just above, stacked directly
+    // above it (y = 40 vs the zoom line's y = 20, one text row's worth of
+    // clearance) so the two never overlap. Read fresh via GetCursorPos/
+    // ScreenToClient every frame instead of threading it through
+    // WM_MOUSEMOVE, since WM_MOUSEMOVE only ever reaches whichever
+    // subsystem (WndProcGL here, or handleInput) is currently active (see
+    // WndProcShared's mode-gated dispatch) -- reading the cursor position
+    // directly here means one implementation works identically in both
+    // Design > Robot and Design > Environment, with no mouse-move hook
+    // needed in either one. Same "always full opacity" reasoning as the
+    // zoom readout above -- global HUD, not ArcSpline-specific content.
+    if (app.showPixelCoords)
+    {
+        POINT pt;
+        GetCursorPos(&pt);
+        ScreenToClient(hWndGL, &pt);
+
+        char pixelStr[32];
+        wsprintfA(pixelStr, "Pixel: (%d, %d)", (int)pt.x, (int)pt.y);
+
+        glColor4f(0.3f, 0.3f, 0.3f, 1.0f);
+        glRasterPos2i(glWindowWidth - 160, 40);
+        glPushAttrib(GL_LIST_BIT);
+        glListBase(fontBase - 32);
+        glCallLists((GLsizei)strlen(pixelStr), GL_UNSIGNED_BYTE, pixelStr);
+        glPopAttrib();
+    }
+
     // NEW: persistent top-left mode/layer indicator - otherwise the
     // only way to tell Design/Robot/Environment apart is to open the
     // Mode menu and see which item is checked.

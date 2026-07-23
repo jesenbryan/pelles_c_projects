@@ -141,6 +141,26 @@ LRESULT CALLBACK WndProcShared(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
             InvalidateRect(hwnd, NULL, TRUE);
             return 0;
         }
+
+        // 'P' toggles the exact-pixel-position readout (app.showPixelCoords,
+        // drawn by canvas.c's canvasRenderFrame) -- handled here rather than
+        // in handleInput/WndProcGL individually so it's a single flag that
+        // behaves identically and stays on/off across both Design > Robot
+        // and Design > Environment. lParam bit 30 is set on every repeated
+        // WM_KEYDOWN while the key is held down, clear only on the very
+        // first press -- same repeat-safe-toggle guard canvas.c's Shift+G
+        // auto-gravity uses, so holding P doesn't flicker the readout
+        // on/off/on/... instead of toggling once per press.
+        if (wParam == 'P')
+        {
+            BOOL isAutoRepeat = (lParam & 0x40000000) != 0;
+            if (!isAutoRepeat)
+            {
+                app.showPixelCoords = !app.showPixelCoords;
+                InvalidateRect(hwnd, NULL, TRUE);
+            }
+            return 0;
+        }
         break;
 
     case WM_DESTROY:
