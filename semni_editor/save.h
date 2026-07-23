@@ -17,8 +17,8 @@ int saveCanvasAsBMP(const char* filename, HWND hwnd, AppState* app);
 int saveRobotAsEquations(const char* filename, AppState* app);
 
 // Same idea as saveRobotAsEquations, for Rocky's/Stilo's own fields --
-// see input.c's ID_SAVE_BUTTON handling, which picks the filename and
-// which of these three to call based on app->robotScene.activeKind.
+// see canvas.c's File > Save handling (ID_SAVE), which picks the filename
+// and which of these three to call based on app->robotScene.activeKind.
 int saveRockyAsEquations(const char* filename, AppState* app);
 int saveStiloAsEquations(const char* filename, AppState* app);
 

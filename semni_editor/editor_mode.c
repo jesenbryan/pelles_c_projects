@@ -68,8 +68,6 @@ void applyEditorModeVisibility(EditorModeState* modeState)
         ShowWindow(app.ui.hSetStandingButton, semniActive ? SW_SHOW : SW_HIDE);
     if (app.ui.hSetHomeButton)
         ShowWindow(app.ui.hSetHomeButton, semniActive ? SW_SHOW : SW_HIDE);
-    if (app.ui.hSaveButton)
-        ShowWindow(app.ui.hSaveButton, semniActive ? SW_SHOW : SW_HIDE);
     if (app.ui.hMirrorButton)
         ShowWindow(app.ui.hMirrorButton, semniActive ? SW_SHOW : SW_HIDE);
     if (app.ui.hMirrorButton2)

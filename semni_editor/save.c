@@ -638,8 +638,8 @@ int saveRockyAsRobArm(AppState* app)
     Rocky* r = &app->robotScene.rocky;
 
     // Both files go in one RockyExport folder alongside rocky.bmp/
-    // rocky.txt (see input.c's ID_SAVE_BUTTON, which creates this same
-    // folder before calling this function) -- also created here so this
+    // rocky.txt (see canvas.c's File > Save handler (ID_SAVE), which
+    // creates this same folder before calling this function) -- also created here so this
     // function is self-contained if it's ever called from anywhere else.
     // A no-op once the folder already exists (CreateDirectoryA returns
     // FALSE, GetLastError() == ERROR_ALREADY_EXISTS), safe to ignore.

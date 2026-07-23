@@ -10,8 +10,11 @@
 #include "robot.h"         // For translateRobot -- dragging the robot into position in Simulation mode
 #include "config.h"        // For INACTIVE_MODE_DIM_ALPHA
 #include "sim_camera.h"    // Simulation mode's own independent zoom/pan (see sim_camera.h)
+#include "save.h"          // For saveCanvasAsBMP/saveRobotAsEquations/saveRockyAsEquations/saveStiloAsEquations/saveRockyAsRobArm -- File > Save (ID_SAVE below) now dispatches to these directly, folded in from the old Robot editor Save button
 #include <math.h>
 #include <string.h>
+#include <stdlib.h>        // For wcstod (Rocky's Body/Leg Weight edit boxes, read in ID_SAVE below)
+#include <wchar.h>
 
 HWND hWndGL = NULL;
 int glWindowWidth = 800;
@@ -1282,7 +1285,13 @@ void canvasRenderFrame(float dimAmount)
 	        // canvas_bridge.c), so the reconstruction respects each stroke's
 	        // actual original thickness instead of rendering every segment
 	        // at the same made-up width regardless of how thick it really was.
-	        float ghostHalfW = (segmentAvgRadiusPx[s] * canvas.zoom) / (float)glWindowWidth;
+	        // 2x'd on top of the recovered original thickness -- this ribbon
+	        // (not the dashed ghost CIRCLE outline further below) is the
+	        // actual colorful reconstructed line the user sees for View
+	        // Segments/Comparison Mode, and at its original 1x width the
+	        // hovered segment's highlight color was hard to make out against
+	        // its neighbors.
+	        float ghostHalfW = (segmentAvgRadiusPx[s] * canvas.zoom) / (float)glWindowWidth * 2.0f;
 	        float halfW = isHovered ? ghostHalfW * 1.5f : ghostHalfW;
 
 	        glBegin(GL_TRIANGLE_STRIP);
@@ -1819,6 +1828,54 @@ static void updateDrawingPoint(HWND hWnd, int mx, int my, BOOL shiftHeld, BOOL c
         points[canvas.pointCount++] = ny;
         InvalidateRect(hWnd, NULL, FALSE);
     }
+}
+
+// Writes the Environment layer's currently fitted arc segments
+// (segmentPointsWorld/segmentStarts/segmentCounts, set by the last Trace/
+// Compare pass -- see canvas_bridge.c's setSegmentOverlay) to a plain-text
+// file, one line per segment: start.x start.y end.x end.y mid.x mid.y --
+// the exact same "start, end, a THIRD POINT THAT ACTUALLY LIES ON THE
+// ARC's curve between them" convention save.c's saveRockyAsRobArm uses for
+// Arm.txt, so an external consumer reading both files can rely on one
+// shared format. The "mid" point here is simply the segment's own
+// middle SAMPLED point (index count/2) rather than a freshly-computed
+// arc-midpoint angle like Arm.txt's -- segmentPointsWorld already IS a
+// dense poly-line sample of the fitted arc (or straight line -- see
+// canvas_bridge.c's comment on segmentCircleRadiusWorld == 0), so its own
+// middle sample is already a genuine point on the curve, no extra
+// geometry needed.
+//
+// If nothing has ever been traced (canvas.segmentResultCount == 0), still
+// writes a valid (empty) file rather than skipping it, so Env.txt always
+// exists alongside Env.bmp after a Save -- same "always produce every
+// promised file" spirit as saveRockyAsRobArm always writing both Rob.txt
+// and Arm.txt.
+static int saveEnvironmentSegmentsAsTxt(const char* filename)
+{
+    FILE* f = fopen(filename, "w");
+    if (!f)
+        return 0;
+
+    for (int s = 0; s < canvas.segmentResultCount; s++)
+    {
+        int start = segmentStarts[s];
+        int count = segmentCounts[s];
+        if (count < 2)
+            continue;
+
+        float startX = segmentPointsWorld[start * 2];
+        float startY = segmentPointsWorld[start * 2 + 1];
+        float endX   = segmentPointsWorld[(start + count - 1) * 2];
+        float endY   = segmentPointsWorld[(start + count - 1) * 2 + 1];
+        int midIdx   = start + count / 2;
+        float midX   = segmentPointsWorld[midIdx * 2];
+        float midY   = segmentPointsWorld[midIdx * 2 + 1];
+
+        fprintf(f, "%.6f %.6f %.6f %.6f %.6f %.6f\n", startX, startY, endX, endY, midX, midY);
+    }
+
+    fclose(f);
+    return 1;
 }
 
 LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
@@ -2910,44 +2967,128 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	    }
 	    else if (LOWORD(wParam) == ID_SAVE)
 	    {
-	        // If comparison mode is on and segments exist, save reconstructed drawing
-	        if (canvas.comparisonMode && canvas.segmentResultCount > 0)
+	        // Single File > Save entry point for the whole app -- folded in
+	        // from what used to be two separate things: this dialog-based
+	        // ArcSpline-only save, and the Robot editor's own "Save" button
+	        // (input.c's now-removed ID_SAVE_BUTTON). Which one fires now
+	        // depends on which half of the app is actually showing:
+	        // editorModeState.currentMode == EDITOR_MODE_SEMNI means the
+	        // Robot editor is what's on screen (Design > Robot), anything
+	        // else (ArcSpline design layer, or Simulation) means the
+	        // Environment canvas is -- same test applyEditorModeVisibility
+	        // itself uses to decide which side's controls are visible.
+	        if (editorModeState.currentMode == EDITOR_MODE_SEMNI)
 	        {
-	            Image* img = (Image*)malloc(sizeof(Image));
-	            if (img)
+	            // Robot mode -- save ONLY the currently active robot kind
+	            // (app.robotScene.activeKind), each into its own export
+	            // folder so posing one robot never overwrites another's
+	            // saved files. Exact same per-kind logic the old Robot
+	            // editor Save button used.
+	            switch (app.robotScene.activeKind)
 	            {
-	                img->width = glWindowWidth;
-	                img->height = glWindowHeight;
-	                img->data = (uint8_t*)malloc((size_t)img->width * img->height * 3);
-	                img->bin = NULL;
-	                
-	                if (img->data)
+	                case ROBOT_KIND_ROCKY:
 	                {
-	                    renderSegmentsToImage(img, segmentPointsWorld, segmentStarts, segmentCounts,
-	                                         segmentAvgRadiusPx, canvas.segmentResultCount,
-	                                         img->width, img->height);
-	                    saveBMP_UI("", img, NULL, BMP_RGB);
+	                    CreateDirectoryA("RockyExport", NULL);
+
+	                    saveCanvasAsBMP("RockyExport\\rocky.bmp", app.hwndMain, &app);
+	                    saveRockyAsEquations("RockyExport\\rocky.txt", &app);
+
+	                    // Rob.txt/Arm.txt export (see save.c's
+	                    // saveRockyAsRobArm) -- reads the Body/Leg Weight
+	                    // edit boxes right before saving so whatever's
+	                    // currently typed in is what gets written.
+	                    wchar_t weightBuf[64];
+	                    GetWindowText(app.ui.hBodyWeightEdit, weightBuf, 64);
+	                    app.robotScene.rocky.bodyWeight = (float)wcstod(weightBuf, NULL);
+	                    GetWindowText(app.ui.hLegWeightEdit, weightBuf, 64);
+	                    app.robotScene.rocky.legWeight = (float)wcstod(weightBuf, NULL);
+
+	                    saveRockyAsRobArm(&app);
+	                    break;
 	                }
-	                
-	                free(img->data);
-	                free(img);
+
+	                case ROBOT_KIND_STILO:
+	                    CreateDirectoryA("StiloExport", NULL);
+	                    saveCanvasAsBMP("StiloExport\\stilo.bmp", app.hwndMain, &app);
+	                    saveStiloAsEquations("StiloExport\\stilo.txt", &app);
+	                    break;
+
+	                case ROBOT_KIND_SEMNI:
+	                default:
+	                    CreateDirectoryA("SemniExport", NULL);
+	                    saveCanvasAsBMP("SemniExport\\semni.bmp", app.hwndMain, &app);
+	                    saveRobotAsEquations("SemniExport\\semni.txt", &app);
+	                    break;
 	            }
+
+	            SetFocus(app.hwndMain);
 	        }
 	        else
 	        {
-	            // Save original drawing
-	            Image* img = canvasToImage();
-	            if (img)
+	            // Environment mode -- one EnvExport folder holding Env.bmp
+	            // (same rendered image the old dialog-based Save produced:
+	            // the arc-fitted reconstruction if Comparison Mode has
+	            // results, otherwise the raw hand-drawn canvas) and Env.txt
+	            // (the currently fitted arc segments -- see
+	            // saveEnvironmentSegmentsAsTxt above).
+	            //
+	            // Env.txt's segments come from canvas.segmentResultCount,
+	            // which is normally only produced by a manual Trace press
+	            // (the Environment panel's own button) -- easy to forget
+	            // before saving, and stale the moment another stroke is
+	            // drawn afterward. Re-tracing right here, unconditionally,
+	            // every time Save runs, closes both gaps for free -- same
+	            // reasoning (and same RunTracePipeline call) the
+	            // ID_MODE_SIMULATION handler above already uses so
+	            // ground-collision data is always current on entry.
+	            // Without this, Env.txt came out empty whenever the user
+	            // saved without having pressed Trace/View Segments/Compare
+	            // first.
+	            RunTracePipeline();
+
+	            CreateDirectoryA("EnvExport", NULL);
+
+	            // If comparison mode is on and segments exist, save reconstructed drawing
+	            if (canvas.comparisonMode && canvas.segmentResultCount > 0)
 	            {
-	                saveBMP_UI("", img, img->bin, BMP_RGB);
-	                free(img->data);
-	                free(img->bin);
-	                free(img);
+	                Image* img = (Image*)malloc(sizeof(Image));
+	                if (img)
+	                {
+	                    img->width = glWindowWidth;
+	                    img->height = glWindowHeight;
+	                    img->data = (uint8_t*)malloc((size_t)img->width * img->height * 3);
+	                    img->bin = NULL;
+
+	                    if (img->data)
+	                    {
+	                        renderSegmentsToImage(img, segmentPointsWorld, segmentStarts, segmentCounts,
+	                                             segmentAvgRadiusPx, canvas.segmentResultCount,
+	                                             img->width, img->height);
+	                        saveBMP_UI("EnvExport\\Env.bmp", img, NULL, BMP_RGB);
+	                    }
+
+	                    free(img->data);
+	                    free(img);
+	                }
 	            }
 	            else
 	            {
-	                MessageBox(hWnd, L"Canvas is empty. Draw something first.", L"Save Error", MB_OK | MB_ICONWARNING);
+	                // Save original drawing
+	                Image* img = canvasToImage();
+	                if (img)
+	                {
+	                    saveBMP_UI("EnvExport\\Env.bmp", img, img->bin, BMP_RGB);
+	                    free(img->data);
+	                    free(img->bin);
+	                    free(img);
+	                }
+	                else
+	                {
+	                    MessageBox(hWnd, L"Canvas is empty. Draw something first.", L"Save Error", MB_OK | MB_ICONWARNING);
+	                }
 	            }
+
+	            saveEnvironmentSegmentsAsTxt("EnvExport\\Env.txt");
 	        }
 	    }
 	    return 0;

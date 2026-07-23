@@ -4,7 +4,11 @@
 
 #include "geometry.h"
 
-#define ID_SAVE_BUTTON 1001
+// ID_SAVE_BUTTON (1001) used to be its own button in this control panel --
+// removed; saving is now a single File > Save menu item (ID_SAVE, see
+// ui_state.h and canvas.c's WM_COMMAND) that dispatches on
+// editorModeState.currentMode/app->robotScene.activeKind, the same
+// dispatch this button used to do.
 #define ID_MIRROR_LEG_BUTTON 1002
 #define ID_STANDING_POSITION_BUTTON 1003
 #define ID_HOME_POSITION_BUTTON 1004
@@ -22,16 +26,18 @@
 #define ID_MIRROR_LEG2_BUTTON 1011
 
 // Body/Leg Weight edit boxes (see hBodyWeightEdit/hLegWeightEdit below) --
-// read via GetWindowText on ID_SAVE_BUTTON rather than driven by a
-// WM_COMMAND notification, so these don't strictly need control IDs the
+// read via GetWindowText from the File > Save handler (canvas.c) rather
+// than driven by a WM_COMMAND notification, so these don't strictly need
+// control IDs the
 // way the buttons/combobox above do, but every other control here has one
 // for consistency and in case EN_CHANGE handling is ever added.
 #define ID_BODY_WEIGHT_EDIT 1012
 #define ID_LEG_WEIGHT_EDIT 1013
 
 // dropdown at the top of the control panel that picks which of the three
-// robots (Semni/Rocky/Stilo) the Standing/Home/Save/Mirror/Debug Log
-// buttons below it act on -- see input.c's WM_CREATE/WM_COMMAND.
+// robots (Semni/Rocky/Stilo) the Standing/Home/Mirror/Debug Log buttons
+// below it act on, and which one File > Save (canvas.c) exports -- see
+// input.c's WM_CREATE/WM_COMMAND.
 #define ID_ROBOT_SELECTOR 1008
 
 // Which side of Rocky's rectangle the mouse is near/dragging (see
@@ -260,7 +266,6 @@ typedef struct {
     // selects.
     HWND hRobotSelector;
 
-    HWND hSaveButton;
     HWND hMirrorButton;
 
     // Mirrors Stilo's leg 2 only (see ID_MIRROR_LEG2_BUTTON) -- created and
@@ -283,7 +288,8 @@ typedef struct {
 
     // Body/Leg Weight input boxes -- only meaningful for Rocky (see
     // Rocky's own bodyWeight/legWeight fields and save.c's
-    // saveRockyAsRobArm, which reads them via ID_SAVE_BUTTON), same
+    // saveRockyAsRobArm, which reads them via canvas.c's File > Save
+    // handler), same
     // "harmlessly inert for other robot kinds" convention as
     // hMirrorButton2/hViewSegmentsButton. Label + edit box per weight,
     // same pairing as hScaleLabel/hScaleSlider above.

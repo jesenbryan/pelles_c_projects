@@ -2565,7 +2565,7 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             int relYSelector = relYTitle    + titleH    + rowGap;  // robot picker (Semni/Rocky/Stilo)
             int relYRow1     = relYSelector + comboRowH + rowGap;  // Home | Standing
             int relYRow1b    = relYRow1     + btnH      + rowGap;  // Set Home | Set Standing
-            int relYRow2     = relYRow1b    + btnH      + rowGap;  // Save | Mirror Leg
+            int relYRow2     = relYRow1b    + btnH      + rowGap;  // Mirror Leg (own full-width row -- used to share this row with the now-removed Save button, see canvas.c's ID_SAVE for where Save moved)
             int relYMirror2  = relYRow2     + btnH      + rowGap;  // Mirror Leg 2 (Stilo only, inert otherwise)
             int relYWeight   = relYMirror2  + btnH      + rowGap;  // Body Wt | Leg Wt (Rocky only, inert otherwise)
             int relYSize     = relYWeight   + btnH      + rowGap;  // Size: W x H mm (live readout, all robot kinds)
@@ -2622,12 +2622,10 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                  col2X, panelY + relYRow1b, colW, btnH,
                  SWP_NOZORDER);
 
-            SetWindowPos(app->ui.hSaveButton, NULL,
-                 col1X, panelY + relYRow2, colW, btnH,
-                 SWP_NOZORDER);
-
+            // Now the row's only occupant (Save moved to File > Save) --
+            // full content width instead of sharing col1X/col2X with it.
             SetWindowPos(app->ui.hMirrorButton, NULL,
-                 col2X, panelY + relYRow2, colW, btnH,
+                 col1X, panelY + relYRow2, contentW, btnH,
                  SWP_NOZORDER);
 
             // Full content width, own row -- only meaningful for Stilo
@@ -2733,7 +2731,6 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 app->ui.hHomePositionButton,
                 app->ui.hSetStandingButton,
                 app->ui.hSetHomeButton,
-                app->ui.hSaveButton,
                 app->ui.hMirrorButton,
                 app->ui.hMirrorButton2,
                 app->ui.hBodyWeightLabel,
@@ -2878,18 +2875,11 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             );
              SendMessage(app->ui.hSetHomeButton, WM_SETFONT, (WPARAM)g_semniUIFont, TRUE);
 
-             app->ui.hSaveButton = CreateWindow(
-                L"BUTTON",
-                L"Save",
-                WS_VISIBLE | WS_CHILD,
-                0, 0, 10, 10,
-                hwnd,
-                (HMENU)ID_SAVE_BUTTON,
-                NULL,
-                NULL
-            );
-             SendMessage(app->ui.hSaveButton, WM_SETFONT, (WPARAM)g_semniUIFont, TRUE);
-
+             // Save itself is no longer a button here -- it's been folded
+             // into the shared File > Save menu item (see canvas.c's
+             // WM_COMMAND ID_SAVE handling), which now dispatches on
+             // editorModeState.currentMode/app->robotScene.activeKind the
+             // same way this button used to.
              app->ui.hMirrorButton = CreateWindow(
                 L"BUTTON",
                 L"Mirror Leg",
@@ -2921,9 +2911,9 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
 
              // Body/Leg Weight: plain text entry boxes feeding Rocky's own
              // bodyWeight/legWeight fields (see app.h's Rocky comment) --
-             // read via GetWindowText on ID_SAVE_BUTTON below rather than
-             // an EN_CHANGE handler, since the only thing that ever reads
-             // them is the save-to-Rob.txt/Arm.txt path (save.c's
+             // read via GetWindowText from the File > Save handler
+             // (canvas.c) rather than an EN_CHANGE handler, since the only
+             // thing that ever reads them is the save-to-Rob.txt/Arm.txt path (save.c's
              // saveRockyAsRobArm). Harmlessly inert for Semni/Stilo, same
              // "always created, only meaningful for one robot kind"
              // convention as hMirrorButton2/hViewSegmentsButton.
@@ -3152,65 +3142,6 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                         SetFocus(app->hwndMain);
                         InvalidateRect(hwnd, NULL, TRUE);
                     }
-                    break;
-
-                case ID_SAVE_BUTTON:
-                    // Save both the robot image and its mathematical
-                    // equations, under a filename that matches whichever
-                    // robot is currently active so editing one never
-                    // overwrites another's saved pose.
-                    switch (app->robotScene.activeKind)
-                    {
-                        case ROBOT_KIND_ROCKY:
-                        {
-                            // Everything this button produces for Rocky
-                            // (image, equations, Rob.txt/Arm.txt) now goes
-                            // into one RockyExport folder instead of being
-                            // scattered loose in the working directory --
-                            // CreateDirectory is a no-op (returns FALSE,
-                            // GetLastError() == ERROR_ALREADY_EXISTS) once
-                            // the folder already exists, which is fine to
-                            // just ignore here.
-                            CreateDirectoryA("RockyExport", NULL);
-
-                            saveCanvasAsBMP("RockyExport\\rocky.bmp", app->hwndMain, app);
-                            saveRockyAsEquations("RockyExport\\rocky.txt", app);
-
-                            // Rob.txt/Arm.txt export (see save.c's
-                            // saveRockyAsRobArm) -- reads the Body/Leg
-                            // Weight edit boxes right before saving so
-                            // whatever's currently typed in is what gets
-                            // written, same "pull from the control at the
-                            // moment of the action" pattern
-                            // ID_SCALE_SLIDER's WM_HSCROLL already uses.
-                            wchar_t weightBuf[64];
-
-                            // wcstod (standard C, <wchar.h>) instead of the
-                            // MS-specific _wtof -- Pelles C's headers don't
-                            // declare _wtof, which silently assumed an
-                            // "extern int" return and warned at compile time.
-                            GetWindowText(app->ui.hBodyWeightEdit, weightBuf, 64);
-                            app->robotScene.rocky.bodyWeight = (float)wcstod(weightBuf, NULL);
-
-                            GetWindowText(app->ui.hLegWeightEdit, weightBuf, 64);
-                            app->robotScene.rocky.legWeight = (float)wcstod(weightBuf, NULL);
-
-                            saveRockyAsRobArm(app);
-                            break;
-                        }
-
-                        case ROBOT_KIND_STILO:
-                            saveCanvasAsBMP("stilo.bmp", app->hwndMain, app);
-                            saveStiloAsEquations("stilo.txt", app);
-                            break;
-
-                        case ROBOT_KIND_SEMNI:
-                        default:
-                            saveCanvasAsBMP("semni.bmp", app->hwndMain, app);
-                            saveRobotAsEquations("semni.txt", app);
-                            break;
-                    }
-                    SetFocus(app->hwndMain);  // return focus to main window for keyboard input
                     break;
 
                 case ID_MIRROR_LEG_BUTTON:
