@@ -456,13 +456,13 @@ int loadStiloPoseFromFile(const char* filename, Stilo* out)
 // and the shape's own parts as a list of (start, end, center) point
 // triples. Rob.txt is Rocky's rectangular body (4 straight edges). Arm.txt
 // is its single leg (kneeCircle -> 2 shin fillets -> footCircle), written
-// as 6 segments matching how it's actually drawn (renderer.c's
-// drawRockyLeg): the knee circle and foot circle each as a FULL circle --
-// split into 2 arcs apiece, since one (start, end, center) triple can't
-// describe a full 360 -- plus the 2 shin fillets connecting them. NOT a
-// pre-trimmed outline of just the visible silhouette (an earlier version
-// of this wrote that instead, as 4 segments -- changed on request, since
-// it didn't match how Rocky's leg is actually rendered).
+// as 4 segments tracing the leg's trimmed outline as ONE continuous closed
+// loop: the knee circle's own visible arc, a shin fillet connector, the
+// foot circle's own visible arc, and the other shin fillet connector --
+// see the Arm.txt block's own comment below. (A 6-segment version -- both
+// circles written in full, split into 2 arcs apiece, plus the 2
+// connectors -- was tried in between; this 4-segment outline is simpler
+// and is what's wanted for now.)
 //
 // The two files do NOT share one frame -- each uses whatever origin is
 // natural for its own shape, and the "joint location" line says where the
@@ -479,12 +479,16 @@ int loadStiloPoseFromFile(const char* filename, Stilo* out)
 // one's a leg, and the joint is simply the one natural reference point for
 // an irregular arc shape the way a corner is for a rectangle.
 //
-// Both files write raw world-unit coordinates, NOT millimeters -- no
-// MM_PER_WORLD_UNIT conversion here (config.h's constant is still used
-// elsewhere, e.g. input.c's on-screen size readout, just not in this
-// export). Like saveRockyAsEquations above, this uses Rocky's RAW local
-// (pre-whole-body-angle, pre-kneeAngle) fields, not the current on-screen
-// rotated pose -- same convention the rest of this file already follows.
+// Both files' lengths are scaled by config.h's ROCKY_EXPORT_SCALE right
+// before writing -- an empirically-calibrated factor for this specific
+// external consumer's own unit system, NOT millimeters (MM_PER_WORLD_UNIT
+// is a different, unrelated constant used elsewhere, e.g. input.c's
+// on-screen size readout). See ROCKY_EXPORT_SCALE's own comment for the
+// calibration. Applied identically to both files since they share one
+// joint/unit system by construction. Like saveRockyAsEquations above,
+// this uses Rocky's RAW local (pre-whole-body-angle, pre-kneeAngle)
+// fields, not the current on-screen rotated pose -- same convention the
+// rest of this file already follows.
 //
 // Straight edges (Rob.txt's 4 rectangle sides) are written in the exact
 // same "start, end, center" shape as a circular arc, just with a degenerate
@@ -725,17 +729,17 @@ int saveRockyAsRobArm(AppState* app)
             massCenter.y = (r->bodyWeight * rectCentroid.y + r->legWeight * legCentroidInRob.y) / totalWeight;
         }
 
-        // ROB_EXPORT_SCALE (config.h) applied here, right before writing --
-        // everything above this point stays in plain world units so the
+        // ROCKY_EXPORT_SCALE (config.h) applied here, right before writing
+        // -- everything above this point stays in plain world units so the
         // combined-COM math above reads naturally; only the numbers
         // actually written to Rob.txt get scaled. Weight is left alone,
         // it's not a length.
-        bl.x *= ROB_EXPORT_SCALE; bl.y *= ROB_EXPORT_SCALE;
-        tl.x *= ROB_EXPORT_SCALE; tl.y *= ROB_EXPORT_SCALE;
-        tr.x *= ROB_EXPORT_SCALE; tr.y *= ROB_EXPORT_SCALE;
-        br.x *= ROB_EXPORT_SCALE; br.y *= ROB_EXPORT_SCALE;
-        jointInRob.x *= ROB_EXPORT_SCALE; jointInRob.y *= ROB_EXPORT_SCALE;
-        massCenter.x *= ROB_EXPORT_SCALE; massCenter.y *= ROB_EXPORT_SCALE;
+        bl.x *= ROCKY_EXPORT_SCALE; bl.y *= ROCKY_EXPORT_SCALE;
+        tl.x *= ROCKY_EXPORT_SCALE; tl.y *= ROCKY_EXPORT_SCALE;
+        tr.x *= ROCKY_EXPORT_SCALE; tr.y *= ROCKY_EXPORT_SCALE;
+        br.x *= ROCKY_EXPORT_SCALE; br.y *= ROCKY_EXPORT_SCALE;
+        jointInRob.x *= ROCKY_EXPORT_SCALE; jointInRob.y *= ROCKY_EXPORT_SCALE;
+        massCenter.x *= ROCKY_EXPORT_SCALE; massCenter.y *= ROCKY_EXPORT_SCALE;
 
         FILE* f = fopen("RockyExport\\Rob.txt", "w");
         if (!f)
@@ -766,57 +770,90 @@ int saveRockyAsRobArm(AppState* app)
         fclose(f);
     }
 
-    // ---- Arm.txt: single leg (kneeCircle -> 2 shin fillets -> footCircle) ----
+    // ---- Arm.txt: knee circle + shin arc 1 + shin arc 2 + foot circle ----
+    //
+    // 6 lines total, all genuine 3-point arcs -- start, end, and a THIRD
+    // POINT THAT ACTUALLY LIES ON THE ARC's curve between them -- the same
+    // convention this app's own drawArc calls already use elsewhere
+    // (renderer.c), rather than the (start, end, CENTER) triples this file
+    // used everywhere else (Rob.txt's edges, and this same Arm.txt block's
+    // own 4/6-segment versions before this one):
+    //   1-2: knee circle, split into its 2 halves at shin2KneeTangent/
+    //        shin1KneeTangent (same points the connectors tangent it at)
+    //   3:   shin arc 1 (the convex connector, knee -> foot)
+    //   4:   shin arc 2 (the concave connector, knee -> foot)
+    //   5-6: foot circle, split the same way as the knee, at
+    //        shin1FootTangent/shin2FootTangent
     {
-        // 6 written segments, NOT the trimmed 4-arc outline this used to
-        // write: each of the 2 circles (knee, foot) as a PAIR of arcs that
-        // together sweep the full 360 degrees (split at the 2 points where
-        // the shin fillets tangent it), plus the 2 fillets themselves --
-        // matches how drawRockyLeg actually renders this leg (renderer.c
-        // draws the full knee/foot circles via drawCircle, then the 2
-        // fillets on top), rather than a pre-trimmed silhouette. First the
-        // 2 full circles (4 segments), then the 2 connecting arcs, same
-        // "4 for 2 full circles, and 2 for 2 arc connection" grouping this
-        // was requested in. Each circle's own 2 arcs still chain end-to-
-        // start with each other (completing that circle), but the overall
-        // 6 don't form one single continuous loop any more -- unlike the
-        // old trimmed outline, that's not topologically possible once both
-        // circles are drawn in full (the two fillets tangent each circle
-        // at two different points, not one shared point), and doesn't
-        // matter here since this is just a flat list of the leg's parts.
-        RobArmSegment segs[6] = {
-            { shin1KneeTangent, shin2KneeTangent, r->kneeCircle },
-            { shin2KneeTangent, shin1KneeTangent, r->kneeCircle },
-            { shin1FootTangent, shin2FootTangent, r->footCircle },
-            { shin2FootTangent, shin1FootTangent, r->footCircle },
-            { shin1KneeTangent, shin1FootTangent, shin1Fillet.center },
-            { shin2FootTangent, shin2KneeTangent, shin2Fillet.center },
-        };
+        // ---- knee circle, halved ----
+        // shinArc1Angle/shinArc2Angle are the exact angles circleEdge
+        // already placed shin1KneeTangent/shin2KneeTangent at, so the two
+        // halves' own arc-midpoints fall right out of them: sweeping from
+        // kneeAngle1 to kneeAngle2 the increasing-angle way covers "da"
+        // degrees, continuing the same direction the rest of the way
+        // around covers the complementary (360-da) -- together the two
+        // exactly complete the circle.
+        float kneeAngle1 = r->shinArc2Angle;
+        float kneeAngle2 = r->shinArc1Angle;
+        float kneeDa = robArmWrap360(kneeAngle2 - kneeAngle1);
+        PointF kneeMidHalf1 = circleEdge(r->kneeCircle, r->kneeRadius, kneeAngle1 + kneeDa * 0.5f);
+        PointF kneeMidHalf2 = circleEdge(r->kneeCircle, r->kneeRadius, kneeAngle1 + (kneeDa - 360.0f) * 0.5f);
+
+        // ---- foot circle, halved the same way ----
+        // shin1FootTangent/shin2FootTangent weren't placed via a stored
+        // angle parameter the way the knee's own tangent points were (they
+        // came out of internalTangentPoint/circleTowardPoint instead), so
+        // their angles around footCircle have to be measured directly.
+        float footAngle1 = robArmAngleAroundDeg(r->footCircle, shin1FootTangent);
+        float footAngle2 = robArmAngleAroundDeg(r->footCircle, shin2FootTangent);
+        float footDa = robArmWrap360(footAngle2 - footAngle1);
+        PointF footMidHalf1 = circleEdge(r->footCircle, r->footRadius, footAngle1 + footDa * 0.5f);
+        PointF footMidHalf2 = circleEdge(r->footCircle, r->footRadius, footAngle1 + (footDa - 360.0f) * 0.5f);
+
+        // joint-relative + ROCKY_EXPORT_SCALE (config.h), same convention
+        // as everything else this function writes -- has to match Rob.txt's
+        // own scale since the joint is the literal same physical point in
+        // both files.
+#define ARM_PT(p) { ((p).x - joint.x) * ROCKY_EXPORT_SCALE, ((p).y - joint.y) * ROCKY_EXPORT_SCALE }
+        PointF kneeP1 = ARM_PT(shin2KneeTangent);
+        PointF kneeP2 = ARM_PT(shin1KneeTangent);
+        PointF kneeM1 = ARM_PT(kneeMidHalf1);
+        PointF kneeM2 = ARM_PT(kneeMidHalf2);
+
+        PointF shin1Start = ARM_PT(shin1KneeTangent);
+        PointF shin1End   = ARM_PT(shin1FootTangent);
+        PointF shin1Mid_  = ARM_PT(shin1Mid);
+
+        PointF shin2Start = ARM_PT(shin2KneeTangent);
+        PointF shin2End   = ARM_PT(shin2FootTangent);
+        PointF shin2Mid_  = ARM_PT(shin2Mid);
+
+        PointF footP1 = ARM_PT(shin1FootTangent);
+        PointF footP2 = ARM_PT(shin2FootTangent);
+        PointF footM1 = ARM_PT(footMidHalf1);
+        PointF footM2 = ARM_PT(footMidHalf2);
+#undef ARM_PT
 
         // legCentroidRelJoint was already computed above (needed earlier,
-        // for Rob.txt's own combined-system mass center) -- this is that
-        // same leg-only centroid, just written here as Arm.txt's own mass
-        // center, unchanged from before.
+        // for Rob.txt's own combined-system mass center) from the FULL
+        // leg's true outline (knee + foot + both connectors) -- still the
+        // whole leg's center of mass, same meaning as before.
         FILE* f = fopen("RockyExport\\Arm.txt", "w");
         if (!f)
             return 0;
 
         fprintf(f, "%.6f %.6f %.6f\n",
-            legCentroidRelJoint.x,
-            legCentroidRelJoint.y,
+            legCentroidRelJoint.x * ROCKY_EXPORT_SCALE,
+            legCentroidRelJoint.y * ROCKY_EXPORT_SCALE,
             r->legWeight);
         fprintf(f, "%.6f %.6f\n", 0.0f, 0.0f);
 
-        for (int i = 0; i < 6; i++)
-        {
-            PointF s = { segs[i].start.x - joint.x, segs[i].start.y - joint.y };
-            PointF e = { segs[i].end.x - joint.x, segs[i].end.y - joint.y };
-            PointF c = { segs[i].center.x - joint.x, segs[i].center.y - joint.y };
-            fprintf(f, "%.6f %.6f %.6f %.6f %.6f %.6f\n",
-                s.x, s.y,
-                e.x, e.y,
-                c.x, c.y);
-        }
+        fprintf(f, "%.6f %.6f %.6f %.6f %.6f %.6f\n", kneeP1.x, kneeP1.y, kneeP2.x, kneeP2.y, kneeM1.x, kneeM1.y);
+        fprintf(f, "%.6f %.6f %.6f %.6f %.6f %.6f\n", kneeP1.x, kneeP1.y, kneeP2.x, kneeP2.y, kneeM2.x, kneeM2.y);
+        fprintf(f, "%.6f %.6f %.6f %.6f %.6f %.6f\n", shin1Start.x, shin1Start.y, shin1End.x, shin1End.y, shin1Mid_.x, shin1Mid_.y);
+        fprintf(f, "%.6f %.6f %.6f %.6f %.6f %.6f\n", shin2Start.x, shin2Start.y, shin2End.x, shin2End.y, shin2Mid_.x, shin2Mid_.y);
+        fprintf(f, "%.6f %.6f %.6f %.6f %.6f %.6f\n", footP1.x, footP1.y, footP2.x, footP2.y, footM1.x, footM1.y);
+        fprintf(f, "%.6f %.6f %.6f %.6f %.6f %.6f\n", footP1.x, footP1.y, footP2.x, footP2.y, footM2.x, footM2.y);
 
         fclose(f);
     }

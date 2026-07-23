@@ -359,6 +359,8 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             app->draggingRockyEdge = ROCKY_EDGE_NONE;
             app->draggingRockyKnee = 0;
             app->draggingRockyFoot = 0;
+            app->draggingRockyShin1 = 0;
+            app->draggingRockyShin2 = 0;
             app->draggingStiloSeamArc1 = 0;
             app->draggingStiloSeamArc2 = 0;
             app->draggingStiloHip1 = 0;
@@ -393,6 +395,42 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 PointF kneeWorld = rotatePoint(app->robotScene.rocky.kneeCircle, rockyCenter, app->robotScene.rocky.angle);
                 PointF footWorld = jointToWorld(app->robotScene.rocky.footCircle, app->robotScene.rocky.kneeCircle, app->robotScene.rocky.kneeAngle, rockyCenter, app->robotScene.rocky.angle);
 
+                // Shin connector-arc handle positions -- same
+                // circleAtAxisMid construction as renderer.c's drawRocky
+                // (where these handles are actually drawn), so the hit-test
+                // always lines up with what's on screen.
+                PointF rockyShinAxisMidLocal = { (app->robotScene.rocky.kneeCircle.x + app->robotScene.rocky.footCircle.x) * 0.5f,
+                                                  (app->robotScene.rocky.kneeCircle.y + app->robotScene.rocky.footCircle.y) * 0.5f };
+
+                Fillet rockyShin1Fillet = filletFromAttachAngle(app->robotScene.rocky.kneeCircle, app->robotScene.rocky.kneeRadius,
+                                                                 app->robotScene.rocky.footCircle, app->robotScene.rocky.footRadius,
+                                                                 app->robotScene.rocky.shinArc1Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC_R);
+                PointF rockyShin1NearLocal = circleTowardPoint(rockyShin1Fillet.center, rockyShin1Fillet.radius, rockyShinAxisMidLocal);
+                PointF rockyShin1MidLocal = circleAtAxisMid(rockyShin1Fillet.center, rockyShin1Fillet.radius, app->robotScene.rocky.kneeCircle, app->robotScene.rocky.footCircle, rockyShin1NearLocal);
+
+                Fillet rockyShin2Fillet = filletFromAttachAngleConcave(app->robotScene.rocky.kneeCircle, app->robotScene.rocky.kneeRadius,
+                                                                        app->robotScene.rocky.footCircle, app->robotScene.rocky.footRadius,
+                                                                        app->robotScene.rocky.shinArc2Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC2_CONCAVE_R);
+                PointF rockyShin2NearLocal = circleTowardPoint(rockyShin2Fillet.center, rockyShin2Fillet.radius, rockyShinAxisMidLocal);
+                PointF rockyShin2MidLocal = circleAtAxisMid(rockyShin2Fillet.center, rockyShin2Fillet.radius, app->robotScene.rocky.kneeCircle, app->robotScene.rocky.footCircle, rockyShin2NearLocal);
+
+                PointF rockyShin1World = jointToWorld(rockyShin1MidLocal, app->robotScene.rocky.kneeCircle, app->robotScene.rocky.kneeAngle, rockyCenter, app->robotScene.rocky.angle);
+                PointF rockyShin2World = jointToWorld(rockyShin2MidLocal, app->robotScene.rocky.kneeCircle, app->robotScene.rocky.kneeAngle, rockyCenter, app->robotScene.rocky.angle);
+
+                // shin-local frame: undo the whole-body angle first (same
+                // as the "localMouse" WM_MOUSEMOVE computes and reuses for
+                // this exact purpose), then kneeAngle on top of that --
+                // Rocky only has these 2 nested rotations (no separate hip
+                // stage the way Semni's own legLocalMouseDown/
+                // shinLocalMouseDown chain has to undo 3), but skipping
+                // the body-angle step here would only happen to work while
+                // rocky.angle is 0 and silently break as soon as the whole
+                // body is rotated. Needed so the drag-start perpendicular-
+                // offset capture reads the mouse in the same frame
+                // WM_MOUSEMOVE's own update math (rockyShinLocalMouse) uses.
+                PointF rockyBodyLocalMouseDown = inverseRotate(app->mouseGL, rockyCenter, app->robotScene.rocky.angle);
+                PointF rockyShinLocalMouseDown = inverseRotate(rockyBodyLocalMouseDown, app->robotScene.rocky.kneeCircle, app->robotScene.rocky.kneeAngle);
+
                 if (isNear(app->mouseGL, rockyCenter, HIP_HANDLE_RADIUS))
                 {
                     app->draggingRockyBody = 1;
@@ -425,12 +463,30 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     // foot, same as Semni's own draggingFoot
                     app->draggingRockyFoot = 1;
                 }
+                else if (isNear(app->mouseGL, rockyShin1World, SHIN_HANDLE_RADIUS))
+                {
+                    app->draggingRockyShin1 = 1;
+
+                    // remember where the drag started (mouse's
+                    // perpendicular-to-axis offset, relative to the knee->
+                    // foot axis + the current angle), same idea as Semni's
+                    // own shinArcDragStartPerp/shinArcDragStartAngle
+                    app->rockyShinArcDragStartPerp = perpOffsetOnAxis(rockyShinLocalMouseDown, app->robotScene.rocky.kneeCircle, app->robotScene.rocky.footCircle);
+                    app->rockyShinArcDragStartAngle = app->robotScene.rocky.shinArc1Angle;
+                }
+                else if (isNear(app->mouseGL, rockyShin2World, SHIN_HANDLE_RADIUS))
+                {
+                    app->draggingRockyShin2 = 1;
+
+                    app->rockyShinArcDragStartPerp = perpOffsetOnAxis(rockyShinLocalMouseDown, app->robotScene.rocky.kneeCircle, app->robotScene.rocky.footCircle);
+                    app->rockyShinArcDragStartAngle = app->robotScene.rocky.shinArc2Angle;
+                }
                 else
                 {
-                    // Not on the move-handle, knee handle, or foot handle
-                    // -- check the 4 edge midpoints instead, in the
-                    // rectangle's own local (unrotated) frame, same as
-                    // hitTestRockyEdge expects.
+                    // Not on the move-handle, knee handle, foot handle, or
+                    // either shin handle -- check the 4 edge midpoints
+                    // instead, in the rectangle's own local (unrotated)
+                    // frame, same as hitTestRockyEdge expects.
                     PointF localMouseDown = inverseRotate(app->mouseGL, rockyCenter, app->robotScene.rocky.angle);
                     app->draggingRockyEdge = hitTestRockyEdge(app->robotScene.rocky, localMouseDown);
                 }
@@ -822,6 +878,8 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             app->draggingRockyEdge = ROCKY_EDGE_NONE;
             app->draggingRockyKnee = 0;
             app->draggingRockyFoot = 0;
+            app->draggingRockyShin1 = 0;
+            app->draggingRockyShin2 = 0;
             app->draggingStiloSeamArc1 = 0;
             app->draggingStiloSeamArc2 = 0;
             app->draggingStiloHip1 = 0;
@@ -887,6 +945,30 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 app->hoverRockyFoot = !app->hoverRockyBody && !app->hoverRockyKnee && isNear(app->mouseGL, footWorld, FOOT_HANDLE_RADIUS);
                 app->hoverRockyEdge = (app->hoverRockyBody || app->hoverRockyKnee || app->hoverRockyFoot) ? ROCKY_EDGE_NONE : hitTestRockyEdge(app->robotScene.rocky, localMouse);
 
+                // Shin connector-arc handle positions, for the hover label
+                // below and the drag-update math further down -- same
+                // circleAtAxisMid construction as renderer.c's drawRocky
+                // and this same WM_MOUSEMOVE's own WM_LBUTTONDOWN hit-test.
+                // No stored hoverRockyShin1/2 flag, same as Semni's own
+                // shin handles -- just a direct isNear check for the label.
+                PointF rockyShinAxisMidLocal = { (app->robotScene.rocky.kneeCircle.x + app->robotScene.rocky.footCircle.x) * 0.5f,
+                                                  (app->robotScene.rocky.kneeCircle.y + app->robotScene.rocky.footCircle.y) * 0.5f };
+
+                Fillet rockyShin1Fillet = filletFromAttachAngle(app->robotScene.rocky.kneeCircle, app->robotScene.rocky.kneeRadius,
+                                                                 app->robotScene.rocky.footCircle, app->robotScene.rocky.footRadius,
+                                                                 app->robotScene.rocky.shinArc1Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC_R);
+                PointF rockyShin1NearLocal = circleTowardPoint(rockyShin1Fillet.center, rockyShin1Fillet.radius, rockyShinAxisMidLocal);
+                PointF rockyShin1MidLocal = circleAtAxisMid(rockyShin1Fillet.center, rockyShin1Fillet.radius, app->robotScene.rocky.kneeCircle, app->robotScene.rocky.footCircle, rockyShin1NearLocal);
+
+                Fillet rockyShin2Fillet = filletFromAttachAngleConcave(app->robotScene.rocky.kneeCircle, app->robotScene.rocky.kneeRadius,
+                                                                        app->robotScene.rocky.footCircle, app->robotScene.rocky.footRadius,
+                                                                        app->robotScene.rocky.shinArc2Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC2_CONCAVE_R);
+                PointF rockyShin2NearLocal = circleTowardPoint(rockyShin2Fillet.center, rockyShin2Fillet.radius, rockyShinAxisMidLocal);
+                PointF rockyShin2MidLocal = circleAtAxisMid(rockyShin2Fillet.center, rockyShin2Fillet.radius, app->robotScene.rocky.kneeCircle, app->robotScene.rocky.footCircle, rockyShin2NearLocal);
+
+                PointF rockyShin1World = jointToWorld(rockyShin1MidLocal, app->robotScene.rocky.kneeCircle, app->robotScene.rocky.kneeAngle, rockyCenter, app->robotScene.rocky.angle);
+                PointF rockyShin2World = jointToWorld(rockyShin2MidLocal, app->robotScene.rocky.kneeCircle, app->robotScene.rocky.kneeAngle, rockyCenter, app->robotScene.rocky.angle);
+
                 const wchar_t* rockyHoverLabel = L"";
                 if (app->hoverRockyBody)
                     rockyHoverLabel = L"Body";
@@ -894,6 +976,10 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     rockyHoverLabel = L"Knee";
                 else if (app->hoverRockyFoot)
                     rockyHoverLabel = L"Foot";
+                else if (isNear(app->mouseGL, rockyShin1World, SHIN_HANDLE_RADIUS))
+                    rockyHoverLabel = L"Shin Arc 1";
+                else if (isNear(app->mouseGL, rockyShin2World, SHIN_HANDLE_RADIUS))
+                    rockyHoverLabel = L"Shin Arc 2";
                 else if (app->hoverRockyEdge == ROCKY_EDGE_LEFT || app->hoverRockyEdge == ROCKY_EDGE_RIGHT)
                     rockyHoverLabel = L"Body Width";
                 else if (app->hoverRockyEdge == ROCKY_EDGE_TOP || app->hoverRockyEdge == ROCKY_EDGE_BOTTOM)
@@ -963,6 +1049,63 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     // fillet solve did too -- re-validate their existing
                     // angles against it, same as Semni's own adjustShinArcs
                     adjustRockyShinArcs(app);
+                }
+                else if (app->draggingRockyShin1)
+                {
+                    // Same incremental, perpendicular-offset drag math as
+                    // Semni's own draggingShin1 (see this file's
+                    // ROBOT_KIND_SEMNI block) -- reads the mouse's
+                    // perpendicular movement relative to the knee->foot
+                    // axis (in the shin-local frame, kneeAngle undone) and
+                    // nudges shinArc1Angle from wherever the drag started,
+                    // clamped to the convex fillet's own safe range so it
+                    // can't flatten into a line or flip to the other side.
+                    PointF rockyShinLocalMouse = inverseRotate(localMouse, app->robotScene.rocky.kneeCircle, app->robotScene.rocky.kneeAngle);
+
+                    SafeAngleRange range = filletSafeAngleRange(app->robotScene.rocky.kneeCircle, app->robotScene.rocky.kneeRadius,
+                                                                 app->robotScene.rocky.footCircle, app->robotScene.rocky.footRadius,
+                                                                 MAX_SHIN_ARC_R);
+                    float maxDelta = range.halfWidthDeg - SHIN_ARC_ANGLE_MARGIN_DEG;
+                    if (maxDelta < SHIN_ARC_SIDE_MARGIN_DEG) maxDelta = SHIN_ARC_SIDE_MARGIN_DEG;
+
+                    float perpNow = perpOffsetOnAxis(rockyShinLocalMouse, app->robotScene.rocky.kneeCircle, app->robotScene.rocky.footCircle);
+                    float raw = app->rockyShinArcDragStartAngle + (perpNow - app->rockyShinArcDragStartPerp) * SHIN_ARC_DRAG_SENSITIVITY_DEG_PER_UNIT;
+
+                    float delta = raw - range.centerDeg;
+                    while (delta > 180.0f) delta -= 360.0f;
+                    while (delta < -180.0f) delta += 360.0f;
+
+                    if (delta > -SHIN_ARC_SIDE_MARGIN_DEG) delta = -SHIN_ARC_SIDE_MARGIN_DEG;
+                    if (delta < -maxDelta) delta = -maxDelta;
+
+                    app->robotScene.rocky.shinArc1Angle = range.centerDeg + delta;
+                }
+                else if (app->draggingRockyShin2)
+                {
+                    // Concave counterpart, same as Semni's own
+                    // draggingShin2 -- its own disjoint safe range
+                    // (filletSafeAngleRangeConcave), no one-sided lock
+                    // needed since it doesn't share shinArc1Angle's
+                    // degenerate center.
+                    PointF rockyShinLocalMouse = inverseRotate(localMouse, app->robotScene.rocky.kneeCircle, app->robotScene.rocky.kneeAngle);
+
+                    SafeAngleRange range = filletSafeAngleRangeConcave(app->robotScene.rocky.kneeCircle, app->robotScene.rocky.kneeRadius,
+                                                                        app->robotScene.rocky.footCircle, app->robotScene.rocky.footRadius,
+                                                                        MAX_SHIN_ARC2_CONCAVE_R);
+                    float maxDelta = range.halfWidthDeg - SHIN_ARC_ANGLE_MARGIN_DEG;
+                    if (maxDelta < 0.0f) maxDelta = 0.0f;
+
+                    float perpNow = perpOffsetOnAxis(rockyShinLocalMouse, app->robotScene.rocky.kneeCircle, app->robotScene.rocky.footCircle);
+                    float raw = app->rockyShinArcDragStartAngle + (perpNow - app->rockyShinArcDragStartPerp) * SHIN_ARC_DRAG_SENSITIVITY_DEG_PER_UNIT;
+
+                    float delta = raw - range.centerDeg;
+                    while (delta > 180.0f) delta -= 360.0f;
+                    while (delta < -180.0f) delta += 360.0f;
+
+                    if (delta > maxDelta) delta = maxDelta;
+                    if (delta < -maxDelta) delta = -maxDelta;
+
+                    app->robotScene.rocky.shinArc2Angle = range.centerDeg + delta;
                 }
                 else if (app->draggingRockyEdge == ROCKY_EDGE_LEFT || app->draggingRockyEdge == ROCKY_EDGE_RIGHT)
                 {

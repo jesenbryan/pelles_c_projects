@@ -406,6 +406,32 @@ typedef struct {
     int hoverRockyFoot;
     int draggingRockyFoot;
 
+    // Rocky's 2 shin connector-arc handles (the fillets between kneeCircle
+    // and footCircle, shinArc1Angle/shinArc2Angle) -- mirrors Semni's own
+    // draggingShin1/draggingShin2 treatment: drag-only highlight, no
+    // separate hover-highlight state at all (Semni's own shin handles
+    // don't track a hoverShin1/hoverShin2 either -- see renderer.c's
+    // drawShinHandles, which only lights up on rs->draggingShin1/
+    // draggingShin2, and input.c's hover-label block, which just runs
+    // isNear directly against the handle position rather than reading a
+    // stored flag). Kept as Rocky-specific fields rather than reusing
+    // Semni's draggingShin1/draggingShin2, same "separate struct being
+    // edited" reasoning as hoverRockyBody/draggingRockyBody above.
+    int draggingRockyShin1;
+    int draggingRockyShin2;
+
+    // captured once, when a Rocky shin arc drag starts: the mouse's
+    // perpendicular-to-axis offset (relative to the knee->foot axis) and
+    // the arc's own angle at that moment, so WM_MOUSEMOVE can nudge the
+    // angle incrementally from here -- same idea as shinArcDragStartPerp/
+    // shinArcDragStartAngle below, just a separate copy since Rocky's
+    // shin1/shin2 drags are independent of Semni's own (could in principle
+    // be dragging one of each if the app allowed switching robots mid-drag,
+    // which it doesn't, but keeping them separate costs nothing and
+    // matches this file's existing per-robot-kind convention).
+    float rockyShinArcDragStartPerp;
+    float rockyShinArcDragStartAngle;
+
     // captured once, when a Rocky body drag starts: kneeCircle's and
     // footCircle's fixed offsets from (bodyX, bodyY) at that moment --
     // same "re-applied fresh every WM_MOUSEMOVE" pattern as

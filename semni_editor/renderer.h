@@ -38,6 +38,13 @@ typedef struct {
     int hoverRockyFoot;
     int draggingRockyFoot;
 
+    // Rocky's 2 shin connector-arc handles -- mirrors app->
+    // draggingRockyShin1/draggingRockyShin2, same drag-only-highlight role
+    // as Semni's own draggingShin1/draggingShin2 above (no separate hover-
+    // only state needed here, same reasoning as those).
+    int draggingRockyShin1;
+    int draggingRockyShin2;
+
     // hover-only state for the joint circle handles (hip/knee/foot/
     // head/butt), so they can highlight from a hover, not just a drag
     int hoverHip;

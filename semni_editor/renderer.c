@@ -950,6 +950,31 @@ void drawRocky(Rocky b, RenderState* rs, int includeHandles, float opacity)
         PointF footWorld = jointToWorld(b.footCircle, b.kneeCircle, b.kneeAngle, center, b.angle);
         drawHandle(footWorld, rs->draggingRockyFoot || rs->hoverRockyFoot, FOOT_HANDLE_RADIUS, opacity);
 
+        // Shin connector-arc handles -- same circleAtAxisMid construction
+        // (pinned to the exact middle of the knee->foot axis) Semni's own
+        // drawShinHandles uses for its shin1MidLocal/shin2MidLocal, NOT
+        // drawRockyLeg's own circleTowardPoint bulge point (that one's for
+        // where the curve is actually DRAWN, this one's for where the
+        // handle DOT sits -- Semni keeps that same distinction). Drag-only
+        // highlight, no separate hover state, same as Semni's shin handles.
+        {
+            PointF shinAxisMidLocal = { (b.kneeCircle.x + b.footCircle.x) * 0.5f, (b.kneeCircle.y + b.footCircle.y) * 0.5f };
+
+            Fillet shin1Fillet = filletFromAttachAngle(b.kneeCircle, b.kneeRadius, b.footCircle, b.footRadius, b.shinArc1Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC_R);
+            PointF shin1NearLocal = circleTowardPoint(shin1Fillet.center, shin1Fillet.radius, shinAxisMidLocal);
+            PointF shin1MidLocal = circleAtAxisMid(shin1Fillet.center, shin1Fillet.radius, b.kneeCircle, b.footCircle, shin1NearLocal);
+
+            Fillet shin2Fillet = filletFromAttachAngleConcave(b.kneeCircle, b.kneeRadius, b.footCircle, b.footRadius, b.shinArc2Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC2_CONCAVE_R);
+            PointF shin2NearLocal = circleTowardPoint(shin2Fillet.center, shin2Fillet.radius, shinAxisMidLocal);
+            PointF shin2MidLocal = circleAtAxisMid(shin2Fillet.center, shin2Fillet.radius, b.kneeCircle, b.footCircle, shin2NearLocal);
+
+            PointF shin1World = jointToWorld(shin1MidLocal, b.kneeCircle, b.kneeAngle, center, b.angle);
+            PointF shin2World = jointToWorld(shin2MidLocal, b.kneeCircle, b.kneeAngle, center, b.angle);
+
+            drawHandle(shin1World, rs->draggingRockyShin1, SHIN_HANDLE_RADIUS, opacity);
+            drawHandle(shin2World, rs->draggingRockyShin2, SHIN_HANDLE_RADIUS, opacity);
+        }
+
         // One small handle at the midpoint of each of the 4 edges --
         // marks where hovering + dragging resizes just that side (see
         // input.c's hitTestRockyEdge), same idea as the body handle
@@ -1252,6 +1277,8 @@ static void renderRobot(AppState* app, int includeHandles, float opacity)
     rs.draggingRockyKnee = app->draggingRockyKnee;
     rs.hoverRockyFoot = app->hoverRockyFoot;
     rs.draggingRockyFoot = app->draggingRockyFoot;
+    rs.draggingRockyShin1 = app->draggingRockyShin1;
+    rs.draggingRockyShin2 = app->draggingRockyShin2;
 
     rs.hoverHip = app->hoverHip;
     rs.hoverKnee = app->hoverKnee;

@@ -270,27 +270,32 @@
 // zoom/pan, hit-test radii, etc. are all untouched) -- it's purely a
 // read-only conversion factor. Currently only used by input.c's live robot
 // size readout (hRobotSizeLabel) -- NOT used by save.c's saveRockyAsRobArm
-// Rob.txt/Arm.txt export any more (see ROB_EXPORT_SCALE below, a separate,
-// unrelated conversion for that specific external consumer).
+// Rob.txt/Arm.txt export any more (see ROCKY_EXPORT_SCALE below, a
+// separate, unrelated conversion for that specific external consumer).
 #define MM_PER_WORLD_UNIT 37.5f
 
-// Rob.txt export scale (see save.c's saveRockyAsRobArm) -- converts our
-// world units into whatever unit the specific external "his program"
-// consumer of Rob.txt expects, so a rectangle sized to look right in OUR
-// editor doesn't come out "way smaller" once loaded there. This is NOT
-// derived from any documented spec (unlike MM_PER_WORLD_UNIT above) --
-// it's purely empirical, calibrated from one side-by-side comparison: a
-// rectangle eyeballed to visually match between the two editors measured
-// 0.312224 x 1.169654 in our world units, and 0.825 x 3.25 in his
-// program's own units, giving a ratio of 2.6423 (width) vs 2.7786
-// (height) -- about 5% apart, most likely just eyeballing imprecision
-// rather than a real non-uniform scale, since both axes should logically
-// share one scale. This constant is their average (2.7105); recalibrate
-// if a more precise reference measurement becomes available. Applied to
-// Rob.txt's lengths only (mass center, joint, corners) -- NOT weight, and
-// NOT Arm.txt, since only Rob.txt has been calibrated against this
-// specific external program so far.
-#define ROB_EXPORT_SCALE 2.7105f
+// Rob.txt/Arm.txt export scale (see save.c's saveRockyAsRobArm) -- converts
+// our world units into whatever unit the specific external "his program"
+// consumer expects, so a shape sized to look right in OUR editor doesn't
+// come out "way smaller" once loaded there. This is NOT derived from any
+// documented spec (unlike MM_PER_WORLD_UNIT above) -- it's purely
+// empirical, calibrated from one side-by-side comparison: a rectangle
+// eyeballed to visually match between the two editors measured 0.312224 x
+// 1.169654 in our world units, and 0.825 x 3.25 in his program's own
+// units, giving a ratio of 2.6423 (width) vs 2.7786 (height) -- about 5%
+// apart, most likely just eyeballing imprecision rather than a real
+// non-uniform scale, since both axes should logically share one scale.
+// This constant is their average (2.7105); recalibrate if a more precise
+// reference measurement becomes available.
+//
+// Applied to BOTH files' lengths (mass centers, joint, corners/arc
+// points) -- NOT weight. Originally Rob.txt-only (named ROB_EXPORT_SCALE),
+// but Rob.txt and Arm.txt share one joint/unit system by construction (the
+// joint is the literal same physical point in both), so using a different
+// scale for each would leave the leg wildly mismatched in size relative to
+// the body once his program reassembles them -- renamed and extended to
+// Arm.txt once that mismatch showed up.
+#define ROCKY_EXPORT_SCALE 2.7105f
 
 // Both editor subsystems (ArcSpline canvas, Semni robot editor) now draw
 // into the same shared window every frame instead of only one being drawn
