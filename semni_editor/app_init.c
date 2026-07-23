@@ -194,9 +194,9 @@ void initStiloHomePosition(AppState* app)
 
 void initAppState(AppState* app)
 {
-	initStandingPosition(app);
-	initRockyStandingPosition(app);
-	initStiloStandingPosition(app);
+	initHomePosition(app);
+	initRockyHomePosition(app);
+	initStiloHomePosition(app);
 	app->robotScene.activeKind = ROBOT_KIND_SEMNI;
 
 	// Rob.txt/Arm.txt export weights (see app.h's Rocky.bodyWeight/

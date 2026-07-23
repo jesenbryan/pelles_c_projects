@@ -87,6 +87,24 @@ void applyEditorModeVisibility(EditorModeState* modeState)
     if (app.ui.hHoverLabel)
         ShowWindow(app.ui.hHoverLabel, semniActive ? SW_SHOW : SW_HIDE);
 
+    // Rocky's Body/Leg Weight edit boxes + the live "Size: W x H mm"
+    // readout (see app.h's hBodyWeightLabel/hBodyWeightEdit/hLegWeightLabel/
+    // hLegWeightEdit/hRobotSizeLabel) -- these were missing from this
+    // function entirely, so once created (input.c's WM_CREATE) they stayed
+    // visible in EVERY mode, including the ArcSpline ("Environment")
+    // canvas. Gated the same as the rest of Semni's own child controls
+    // above.
+    if (app.ui.hBodyWeightLabel)
+        ShowWindow(app.ui.hBodyWeightLabel, semniActive ? SW_SHOW : SW_HIDE);
+    if (app.ui.hBodyWeightEdit)
+        ShowWindow(app.ui.hBodyWeightEdit, semniActive ? SW_SHOW : SW_HIDE);
+    if (app.ui.hLegWeightLabel)
+        ShowWindow(app.ui.hLegWeightLabel, semniActive ? SW_SHOW : SW_HIDE);
+    if (app.ui.hLegWeightEdit)
+        ShowWindow(app.ui.hLegWeightEdit, semniActive ? SW_SHOW : SW_HIDE);
+    if (app.ui.hRobotSizeLabel)
+        ShowWindow(app.ui.hRobotSizeLabel, semniActive ? SW_SHOW : SW_HIDE);
+
     // The ArcSpline canvas's floating tool panel manages its own show/fade
     // via the hover hot-zone timer (see canvas.c's WM_TIMER), but force it
     // hidden immediately when entering Semni mode so it doesn't linger on
