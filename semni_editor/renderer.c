@@ -910,13 +910,18 @@ static void drawRockyLeg(Rocky b, RenderState* rs, float opacity)
     // (they attach to footCircle, which just moved along the knee->foot
     // axis -- see WM_MOUSEMOVE's draggingRockyFoot/constrainToAxis
     // handling), same "carries the other visibly-reacting parts along"
-    // idea as Semni's own drawShin.
-    setColor(rs, rockyShinAffected || rs->draggingRockyFoot, 0.2f, 0.4f, 1.0f, opacity);
+    // idea as Semni's own drawShin. Each arc also lights up while ITS OWN
+    // handle is being dragged (rs->draggingRockyShin1/draggingRockyShin2,
+    // mirrored from app->draggingRockyShin1/draggingRockyShin2 by
+    // renderApp/renderRobotScene's frame-populate step) -- this was
+    // missing before, unlike Semni's drawShin, which already includes its
+    // own draggingShin1/draggingShin2 in this same setColor call.
+    setColor(rs, rockyShinAffected || rs->draggingRockyFoot || rs->draggingRockyShin1, 0.2f, 0.4f, 1.0f, opacity);
     drawArc(jointToWorld(shin1KneeTangentLocal, b.kneeCircle, b.kneeAngle, center, angle),
             jointToWorld(shin1NearLocal, b.kneeCircle, b.kneeAngle, center, angle),
             jointToWorld(shin1FootTangentLocal, b.kneeCircle, b.kneeAngle, center, angle));
 
-    setColor(rs, rockyShinAffected || rs->draggingRockyFoot, 0.2f, 0.4f, 1.0f, opacity);
+    setColor(rs, rockyShinAffected || rs->draggingRockyFoot || rs->draggingRockyShin2, 0.2f, 0.4f, 1.0f, opacity);
     drawArc(jointToWorld(shin2KneeTangentLocal, b.kneeCircle, b.kneeAngle, center, angle),
             jointToWorld(shin2NearLocal, b.kneeCircle, b.kneeAngle, center, angle),
             jointToWorld(shin2FootTangentLocal, b.kneeCircle, b.kneeAngle, center, angle));
