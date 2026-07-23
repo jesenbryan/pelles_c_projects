@@ -262,6 +262,36 @@
 #define ROBOT_SCALE_MIN 0.25f
 #define ROBOT_SCALE_MAX 1.0f
 
+// Real-world size conversion: a full 16:9 screen is defined as representing
+// a 1200mm x 675mm physical area, laid out on a 32 x 18 unit grid (32:18
+// reduces to 16:9, same ratio) -- 1200/32 == 675/18 == 37.5, so that's a
+// single uniform scale, independent of X vs Y. This does NOT change any
+// existing world-unit coordinate (robot/environment geometry, camera
+// zoom/pan, hit-test radii, etc. are all untouched) -- it's purely a
+// read-only conversion factor. Currently only used by input.c's live robot
+// size readout (hRobotSizeLabel) -- NOT used by save.c's saveRockyAsRobArm
+// Rob.txt/Arm.txt export any more (see ROB_EXPORT_SCALE below, a separate,
+// unrelated conversion for that specific external consumer).
+#define MM_PER_WORLD_UNIT 37.5f
+
+// Rob.txt export scale (see save.c's saveRockyAsRobArm) -- converts our
+// world units into whatever unit the specific external "his program"
+// consumer of Rob.txt expects, so a rectangle sized to look right in OUR
+// editor doesn't come out "way smaller" once loaded there. This is NOT
+// derived from any documented spec (unlike MM_PER_WORLD_UNIT above) --
+// it's purely empirical, calibrated from one side-by-side comparison: a
+// rectangle eyeballed to visually match between the two editors measured
+// 0.312224 x 1.169654 in our world units, and 0.825 x 3.25 in his
+// program's own units, giving a ratio of 2.6423 (width) vs 2.7786
+// (height) -- about 5% apart, most likely just eyeballing imprecision
+// rather than a real non-uniform scale, since both axes should logically
+// share one scale. This constant is their average (2.7105); recalibrate
+// if a more precise reference measurement becomes available. Applied to
+// Rob.txt's lengths only (mass center, joint, corners) -- NOT weight, and
+// NOT Arm.txt, since only Rob.txt has been calibrated against this
+// specific external program so far.
+#define ROB_EXPORT_SCALE 2.7105f
+
 // Both editor subsystems (ArcSpline canvas, Semni robot editor) now draw
 // into the same shared window every frame instead of only one being drawn
 // at a time -- switching Design Mode just decides which one is fully

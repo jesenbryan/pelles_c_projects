@@ -96,6 +96,105 @@ static void adjustStiloThigh2Arcs(AppState* app)
     app->robotScene.stilo.thigh2Arc2Angle = clampToSafeAngleRange(app->robotScene.stilo.thigh2Arc2Angle, range2, THIGH_ARC_ANGLE_MARGIN_DEG);
 }
 
+// Axis-aligned bounding box (in whichever robot's own RAW local, pre-
+// rotation/pre-joint-angle fields -- same convention save.c's
+// save*AsEquations functions already use) enclosing whichever robot kind
+// is currently active, for updateRobotSizeLabel below. Approximates every
+// part as its full circle's extent (center +/- radius, or a bare point for
+// Rocky's rectangle corners via a 0 radius) rather than each part's exact
+// trimmed-arc outline -- a slight overestimate, but it's what lets one
+// function cover all three very differently-shaped robots instead of
+// needing bespoke exact-outline math per kind. Since this reads the raw
+// local fields, it reflects each robot's DESIGNED pose, not a mid-drag
+// bend from kneeAngle/hipAngle -- consistent with the rest of this file's
+// "raw fields, not the live rotated pose" convention, but means this
+// specific readout won't visibly react to a kneeAngle/hipAngle-only drag.
+static void robotBoundingBoxLocal(AppState* app, float* minX, float* maxX, float* minY, float* maxY)
+{
+    *minX = *minY = 1e9f;
+    *maxX = *maxY = -1e9f;
+
+#define ROBOT_BB_INCLUDE(cx, cy, rad) \
+    do { \
+        float _bbX = (cx); \
+        float _bbY = (cy); \
+        float _bbR = (rad); \
+        if (_bbX - _bbR < *minX) *minX = _bbX - _bbR; \
+        if (_bbX + _bbR > *maxX) *maxX = _bbX + _bbR; \
+        if (_bbY - _bbR < *minY) *minY = _bbY - _bbR; \
+        if (_bbY + _bbR > *maxY) *maxY = _bbY + _bbR; \
+    } while (0)
+
+    switch (app->robotScene.activeKind)
+    {
+        case ROBOT_KIND_SEMNI:
+        {
+            Semni* s = &app->robotScene.robot;
+            ROBOT_BB_INCLUDE(s->headX, s->y, s->headRadius);
+            ROBOT_BB_INCLUDE(s->buttX, s->y, s->buttRadius);
+            ROBOT_BB_INCLUDE(s->innerCircle.x, s->innerCircle.y, s->innerRadius);
+            ROBOT_BB_INCLUDE(s->kneeCircle.x, s->kneeCircle.y, s->kneeRadius);
+            ROBOT_BB_INCLUDE(s->footCircle.x, s->footCircle.y, s->footRadius);
+            break;
+        }
+
+        case ROBOT_KIND_ROCKY:
+        {
+            Rocky* r = &app->robotScene.rocky;
+            ROBOT_BB_INCLUDE(r->bodyX - r->bodyHalfWidth, r->bodyY - r->bodyHalfHeight, 0.0f);
+            ROBOT_BB_INCLUDE(r->bodyX + r->bodyHalfWidth, r->bodyY + r->bodyHalfHeight, 0.0f);
+            ROBOT_BB_INCLUDE(r->kneeCircle.x, r->kneeCircle.y, r->kneeRadius);
+            ROBOT_BB_INCLUDE(r->footCircle.x, r->footCircle.y, r->footRadius);
+            break;
+        }
+
+        case ROBOT_KIND_STILO:
+        {
+            Stilo* st = &app->robotScene.stilo;
+            ROBOT_BB_INCLUDE(st->headX, st->y, st->headRadius);
+            ROBOT_BB_INCLUDE(st->buttX, st->y, st->buttRadius);
+            ROBOT_BB_INCLUDE(st->hip1Circle.x, st->hip1Circle.y, st->hip1Radius);
+            ROBOT_BB_INCLUDE(st->feet1Circle.x, st->feet1Circle.y, st->feet1Radius);
+            ROBOT_BB_INCLUDE(st->hip2Circle.x, st->hip2Circle.y, st->hip2Radius);
+            ROBOT_BB_INCLUDE(st->feet2Circle.x, st->feet2Circle.y, st->feet2Radius);
+            break;
+        }
+
+        default:
+            break;
+    }
+
+#undef ROBOT_BB_INCLUDE
+}
+
+// Refreshes the "Size: W x H mm" control-panel label (app.h's
+// hRobotSizeLabel) from robotBoundingBoxLocal's bounding box, converted to
+// millimeters via config.h's MM_PER_WORLD_UNIT. Rounded to the nearest
+// whole mm and hand-split into an integer for wsprintf, same reason
+// WM_HSCROLL's own Scale label splits its float by hand just below --
+// wsprintf has no floating-point conversion at all.
+static void updateRobotSizeLabel(AppState* app)
+{
+    if (!app->ui.hRobotSizeLabel)
+        return;
+
+    float minX, maxX, minY, maxY;
+    robotBoundingBoxLocal(app, &minX, &maxX, &minY, &maxY);
+
+    if (maxX < minX || maxY < minY)
+    {
+        SetWindowText(app->ui.hRobotSizeLabel, L"Size: - mm");
+        return;
+    }
+
+    int widthMM = (int)((maxX - minX) * MM_PER_WORLD_UNIT + 0.5f);
+    int heightMM = (int)((maxY - minY) * MM_PER_WORLD_UNIT + 0.5f);
+
+    wchar_t buf[64];
+    wsprintf(buf, L"Size: %d x %d mm", widthMM, heightMM);
+    SetWindowText(app->ui.hRobotSizeLabel, buf);
+}
+
 // Keeps the knee handle honest whenever the rectangle's own size changes
 // (scroll on the body handle, or dragging an edge -- see WM_MOUSEWHEEL/
 // WM_MOUSEMOVE's ROBOT_KIND_ROCKY branches): shrinking the body can
@@ -734,6 +833,12 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             app->draggingStiloThigh2Arc1 = 0;
             app->draggingStiloThigh2Arc2 = 0;
             app->activeHandle = 0;
+
+            // Whatever handle was just released, the pose may have
+            // changed -- refresh the mm size readout. See
+            // updateRobotSizeLabel's own comment for why this only
+            // updates on release rather than live during the drag.
+            updateRobotSizeLabel(app);
         }
         break;
 
@@ -2130,6 +2235,13 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 graphicsZoom(factor);
             }
         }
+
+        // A view-only zoom (the "else" branch just above) doesn't change
+        // the robot's actual size, but every OTHER branch in this handler
+        // does (a radius nudge) -- cheaper to just always refresh than to
+        // thread a "did this actually change geometry" flag out of every
+        // branch above.
+        updateRobotSizeLabel(app);
         break;
 
         case WM_HSCROLL:
@@ -2313,7 +2425,8 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             int relYRow2     = relYRow1b    + btnH      + rowGap;  // Save | Mirror Leg
             int relYMirror2  = relYRow2     + btnH      + rowGap;  // Mirror Leg 2 (Stilo only, inert otherwise)
             int relYWeight   = relYMirror2  + btnH      + rowGap;  // Body Wt | Leg Wt (Rocky only, inert otherwise)
-            int relYScale    = relYWeight   + btnH       + rowGap; // Scale label + slider
+            int relYSize     = relYWeight   + btnH      + rowGap;  // Size: W x H mm (live readout, all robot kinds)
+            int relYScale    = relYSize     + btnH       + rowGap; // Scale label + slider
             int relYSeg      = relYScale    + sliderH    + rowGap; // View Segments
             int relYDebug    = relYSeg      + btnH       + rowGap; // Debug Log
             int panelH       = relYDebug    + btnH       + pad;
@@ -2405,6 +2518,10 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                  col2X + weightLabelW + colGap, panelY + relYWeight + (btnH - 22) / 2, weightEditW, 22,
                  SWP_NOZORDER);
 
+            SetWindowPos(app->ui.hRobotSizeLabel, NULL,
+                 col1X, panelY + relYSize + (btnH - 20) / 2, contentW, 20,
+                 SWP_NOZORDER);
+
             // Scale label + slider share the full content width, same as
             // the two-button rows above them.
             int scaleLabelWidth = 70;
@@ -2480,6 +2597,7 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 app->ui.hBodyWeightEdit,
                 app->ui.hLegWeightLabel,
                 app->ui.hLegWeightEdit,
+                app->ui.hRobotSizeLabel,
                 app->ui.hScaleLabel,
                 app->ui.hScaleSlider,
                 app->ui.hViewSegmentsButton,
@@ -2716,6 +2834,25 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             );
              SendMessage(app->ui.hLegWeightEdit, WM_SETFONT, (WPARAM)g_semniUIFont, TRUE);
 
+             // Live real-world size readout (see config.h's
+             // MM_PER_WORLD_UNIT and this file's updateRobotSizeLabel) --
+             // full content width, own row, refreshed once right below
+             // once app's fields have their real (post-initAppState)
+             // values rather than left showing whatever placeholder text
+             // it's created with.
+             app->ui.hRobotSizeLabel = CreateWindow(
+                L"STATIC",
+                L"Size: - mm",
+                WS_VISIBLE | WS_CHILD | SS_LEFT,
+                0, 0, 10, 10,
+                hwnd,
+                NULL,
+                NULL,
+                NULL
+            );
+             SendMessage(app->ui.hRobotSizeLabel, WM_SETFONT, (WPARAM)g_semniUIFont, TRUE);
+             updateRobotSizeLabel(app);
+
              // Robot size slider: 0.25 - 1.0 (see ROBOT_SCALE_MIN/MAX in
              // config.h), mapped to an integer trackbar range of 25-100
              // (WM_HSCROLL below divides the position back down by 100).
@@ -2865,6 +3002,10 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                         app->hoveredBodyCircle = -1;
                         SetWindowText(app->ui.hHoverLabel, L"");
 
+                        // Switching kind swaps in a differently-sized
+                        // robot entirely -- refresh the mm readout to match.
+                        updateRobotSizeLabel(app);
+
                         SetFocus(app->hwndMain);
                         InvalidateRect(hwnd, NULL, TRUE);
                     }
@@ -2879,8 +3020,18 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     {
                         case ROBOT_KIND_ROCKY:
                         {
-                            saveCanvasAsBMP("rocky.bmp", app->hwndMain, app);
-                            saveRockyAsEquations("rocky.txt", app);
+                            // Everything this button produces for Rocky
+                            // (image, equations, Rob.txt/Arm.txt) now goes
+                            // into one RockyExport folder instead of being
+                            // scattered loose in the working directory --
+                            // CreateDirectory is a no-op (returns FALSE,
+                            // GetLastError() == ERROR_ALREADY_EXISTS) once
+                            // the folder already exists, which is fine to
+                            // just ignore here.
+                            CreateDirectoryA("RockyExport", NULL);
+
+                            saveCanvasAsBMP("RockyExport\\rocky.bmp", app->hwndMain, app);
+                            saveRockyAsEquations("RockyExport\\rocky.txt", app);
 
                             // Rob.txt/Arm.txt export (see save.c's
                             // saveRockyAsRobArm) -- reads the Body/Leg
