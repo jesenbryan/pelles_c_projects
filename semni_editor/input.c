@@ -1,4 +1,6 @@
 ﻿#include <stdio.h>
+#include <stdlib.h>
+#include <wchar.h>
 #include <windows.h>
 #include <commctrl.h>
 #include <math.h>
@@ -2310,7 +2312,8 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             int relYRow1b    = relYRow1     + btnH      + rowGap;  // Set Home | Set Standing
             int relYRow2     = relYRow1b    + btnH      + rowGap;  // Save | Mirror Leg
             int relYMirror2  = relYRow2     + btnH      + rowGap;  // Mirror Leg 2 (Stilo only, inert otherwise)
-            int relYScale    = relYMirror2  + btnH       + rowGap; // Scale label + slider
+            int relYWeight   = relYMirror2  + btnH      + rowGap;  // Body Wt | Leg Wt (Rocky only, inert otherwise)
+            int relYScale    = relYWeight   + btnH       + rowGap; // Scale label + slider
             int relYSeg      = relYScale    + sliderH    + rowGap; // View Segments
             int relYDebug    = relYSeg      + btnH       + rowGap; // Debug Log
             int panelH       = relYDebug    + btnH       + pad;
@@ -2377,6 +2380,29 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             // above it.
             SetWindowPos(app->ui.hMirrorButton2, NULL,
                  col1X, panelY + relYMirror2, contentW, btnH,
+                 SWP_NOZORDER);
+
+            // Body Wt | Leg Wt -- each column holds its own short label +
+            // edit box pair (label width picked just wide enough for
+            // "Body Wt"/"Leg Wt" at this font, edit box takes the rest of
+            // the column), same two-column row as Home/Standing etc. above.
+            int weightLabelW = 50;
+            int weightEditW = colW - weightLabelW - colGap;
+
+            SetWindowPos(app->ui.hBodyWeightLabel, NULL,
+                 col1X, panelY + relYWeight + (btnH - 20) / 2, weightLabelW, 20,
+                 SWP_NOZORDER);
+
+            SetWindowPos(app->ui.hBodyWeightEdit, NULL,
+                 col1X + weightLabelW + colGap, panelY + relYWeight + (btnH - 22) / 2, weightEditW, 22,
+                 SWP_NOZORDER);
+
+            SetWindowPos(app->ui.hLegWeightLabel, NULL,
+                 col2X, panelY + relYWeight + (btnH - 20) / 2, weightLabelW, 20,
+                 SWP_NOZORDER);
+
+            SetWindowPos(app->ui.hLegWeightEdit, NULL,
+                 col2X + weightLabelW + colGap, panelY + relYWeight + (btnH - 22) / 2, weightEditW, 22,
                  SWP_NOZORDER);
 
             // Scale label + slider share the full content width, same as
@@ -2450,6 +2476,10 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 app->ui.hSaveButton,
                 app->ui.hMirrorButton,
                 app->ui.hMirrorButton2,
+                app->ui.hBodyWeightLabel,
+                app->ui.hBodyWeightEdit,
+                app->ui.hLegWeightLabel,
+                app->ui.hLegWeightEdit,
                 app->ui.hScaleLabel,
                 app->ui.hScaleSlider,
                 app->ui.hViewSegmentsButton,
@@ -2628,6 +2658,64 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             );
              SendMessage(app->ui.hMirrorButton2, WM_SETFONT, (WPARAM)g_semniUIFont, TRUE);
 
+             // Body/Leg Weight: plain text entry boxes feeding Rocky's own
+             // bodyWeight/legWeight fields (see app.h's Rocky comment) --
+             // read via GetWindowText on ID_SAVE_BUTTON below rather than
+             // an EN_CHANGE handler, since the only thing that ever reads
+             // them is the save-to-Rob.txt/Arm.txt path (save.c's
+             // saveRockyAsRobArm). Harmlessly inert for Semni/Stilo, same
+             // "always created, only meaningful for one robot kind"
+             // convention as hMirrorButton2/hViewSegmentsButton.
+             app->ui.hBodyWeightLabel = CreateWindow(
+                L"STATIC",
+                L"Body Wt",
+                WS_VISIBLE | WS_CHILD | SS_LEFT,
+                0, 0, 10, 10,
+                hwnd,
+                NULL,
+                NULL,
+                NULL
+            );
+             SendMessage(app->ui.hBodyWeightLabel, WM_SETFONT, (WPARAM)g_semniUIFont, TRUE);
+
+             app->ui.hBodyWeightEdit = CreateWindowEx(
+                WS_EX_CLIENTEDGE,
+                L"EDIT",
+                L"1.0",
+                WS_VISIBLE | WS_CHILD | ES_AUTOHSCROLL,
+                0, 0, 10, 10,
+                hwnd,
+                (HMENU)ID_BODY_WEIGHT_EDIT,
+                NULL,
+                NULL
+            );
+             SendMessage(app->ui.hBodyWeightEdit, WM_SETFONT, (WPARAM)g_semniUIFont, TRUE);
+
+             app->ui.hLegWeightLabel = CreateWindow(
+                L"STATIC",
+                L"Leg Wt",
+                WS_VISIBLE | WS_CHILD | SS_LEFT,
+                0, 0, 10, 10,
+                hwnd,
+                NULL,
+                NULL,
+                NULL
+            );
+             SendMessage(app->ui.hLegWeightLabel, WM_SETFONT, (WPARAM)g_semniUIFont, TRUE);
+
+             app->ui.hLegWeightEdit = CreateWindowEx(
+                WS_EX_CLIENTEDGE,
+                L"EDIT",
+                L"1.0",
+                WS_VISIBLE | WS_CHILD | ES_AUTOHSCROLL,
+                0, 0, 10, 10,
+                hwnd,
+                (HMENU)ID_LEG_WEIGHT_EDIT,
+                NULL,
+                NULL
+            );
+             SendMessage(app->ui.hLegWeightEdit, WM_SETFONT, (WPARAM)g_semniUIFont, TRUE);
+
              // Robot size slider: 0.25 - 1.0 (see ROBOT_SCALE_MIN/MAX in
              // config.h), mapped to an integer trackbar range of 25-100
              // (WM_HSCROLL below divides the position back down by 100).
@@ -2790,9 +2878,32 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     switch (app->robotScene.activeKind)
                     {
                         case ROBOT_KIND_ROCKY:
+                        {
                             saveCanvasAsBMP("rocky.bmp", app->hwndMain, app);
                             saveRockyAsEquations("rocky.txt", app);
+
+                            // Rob.txt/Arm.txt export (see save.c's
+                            // saveRockyAsRobArm) -- reads the Body/Leg
+                            // Weight edit boxes right before saving so
+                            // whatever's currently typed in is what gets
+                            // written, same "pull from the control at the
+                            // moment of the action" pattern
+                            // ID_SCALE_SLIDER's WM_HSCROLL already uses.
+                            wchar_t weightBuf[64];
+
+                            // wcstod (standard C, <wchar.h>) instead of the
+                            // MS-specific _wtof -- Pelles C's headers don't
+                            // declare _wtof, which silently assumed an
+                            // "extern int" return and warned at compile time.
+                            GetWindowText(app->ui.hBodyWeightEdit, weightBuf, 64);
+                            app->robotScene.rocky.bodyWeight = (float)wcstod(weightBuf, NULL);
+
+                            GetWindowText(app->ui.hLegWeightEdit, weightBuf, 64);
+                            app->robotScene.rocky.legWeight = (float)wcstod(weightBuf, NULL);
+
+                            saveRockyAsRobArm(app);
                             break;
+                        }
 
                         case ROBOT_KIND_STILO:
                             saveCanvasAsBMP("stilo.bmp", app->hwndMain, app);

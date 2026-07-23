@@ -8,6 +8,7 @@
 
 #include "save.h"
 #include "renderer.h"
+#include "config.h"    // For MIN_SHIN_ARC_R/MAX_SHIN_ARC_R/MAX_SHIN_ARC2_CONCAVE_R, used by saveRockyAsRobArm below
 
 int saveCanvasAsBMP(const char* filename, HWND hwnd, AppState* app)
 {
@@ -444,5 +445,279 @@ int loadStiloPoseFromFile(const char* filename, Stilo* out)
     }
 
     fclose(f);
+    return 1;
+}
+
+// ---- Rob.txt / Arm.txt export (Rocky only) ----
+//
+// A completely separate export format from the KEY=value save*AsEquations/
+// load*PoseFromFile round-trip above -- built for an external consumer that
+// wants: a mass center + weight, the shared joint the two files attach at,
+// and the shape's own outline as a list of (start, end, center) point
+// triples. Rob.txt is Rocky's rectangular body, Arm.txt is its single leg
+// (kneeCircle -> 2 shin fillets -> footCircle).
+//
+// Both files are written in ONE shared local coordinate frame: Rocky's
+// kneeCircle (the joint where the leg attaches to the rectangle) sits at
+// (0,0) in BOTH files, so an external assembler just has to line up each
+// file's own origin to reunite them -- this is also why the "joint
+// location" line below is always "0 0" in both. Every other point (corners,
+// arc endpoints/centers, mass centers) is that raw field's value minus
+// kneeCircle. Like saveRockyAsEquations above, this uses Rocky's RAW local
+// (pre-whole-body-angle, pre-kneeAngle) fields, not the current on-screen
+// rotated pose -- same convention the rest of this file already follows.
+//
+// Straight edges (Rob.txt's 4 rectangle sides) are written in the exact
+// same "start, end, center" shape as a circular arc, just with a degenerate
+// "center" -- the midpoint of the edge. Since every rectangle edge here is
+// axis-aligned (this frame is pre-rotation), that midpoint always shares
+// an X (vertical edge) or a Y (horizontal edge) with both endpoints, which
+// is what tells the consumer "this one's a straight line, not a circle".
+
+#define ROB_ARM_ARC_SAMPLES 48   // per-arc polygon subdivision count, for the approximate centroid below only -- doesn't affect the exact start/end/center values written to Arm.txt
+
+typedef struct { PointF start, end, center; } RobArmSegment;
+
+// Angle (degrees) of "p" around "center", atan2 convention -- same as
+// circleEdge's own angle parameter.
+static float robArmAngleAroundDeg(PointF center, PointF p)
+{
+    return atan2f(p.y - center.y, p.x - center.x) * 180.0f / 3.1415926f;
+}
+
+static float robArmWrap360(float deg)
+{
+    float d = fmodf(deg, 360.0f);
+    if (d < 0.0f) d += 360.0f;
+    return d;
+}
+
+// Appends ROB_ARM_ARC_SAMPLES+1 points (from "start" to "end" inclusive)
+// tracing the circle (center, implied by start's own distance to it) into
+// "out", resolving the start/end direction ambiguity via a known third
+// point ("mid") the arc must pass through -- the same "near"/bulge point
+// drawRockyLeg already computes for shin1/shin2 (shin1NearLocal/
+// shin2NearLocal) via circleTowardPoint(fillet, axisMidLocal). Used for
+// the two shin fillet arcs, where that bulge point is already at hand.
+static int robArmSampleArcThroughMid(PointF center, PointF start, PointF mid, PointF end, int steps, PointF* out)
+{
+    float r = sqrtf((start.x - center.x) * (start.x - center.x) + (start.y - center.y) * (start.y - center.y));
+    float a0 = robArmAngleAroundDeg(center, start);
+    float am = robArmWrap360(robArmAngleAroundDeg(center, mid) - a0);
+    float a2 = robArmWrap360(robArmAngleAroundDeg(center, end) - a0);
+
+    // if the mid point is reached before the end point while sweeping in
+    // the increasing-angle direction, that's the right direction; if the
+    // end point comes first, the true arc must instead sweep the other
+    // (decreasing-angle) way around
+    float sweep = (am <= a2) ? a2 : (a2 - 360.0f);
+
+    for (int i = 0; i <= steps; i++)
+    {
+        float t = (float)i / (float)steps;
+        float a = (a0 + sweep * t) * 3.1415926f / 180.0f;
+        out[i].x = center.x + cosf(a) * r;
+        out[i].y = center.y + sinf(a) * r;
+    }
+    return steps + 1;
+}
+
+// Same idea as robArmSampleArcThroughMid, but for an arc where only the two
+// endpoints are known -- used for the knee/foot circle's OWN boundary arc
+// (the portion of that circle not covered by either shin fillet), which
+// drawRockyLeg never needs a "mid" point for since it always draws the
+// full circle instead (see drawCircle(kneeWorld,...)/drawCircle(footWorld,
+// ...)). Between the two possible arcs linking "start" and "end", picks
+// whichever one bulges AWAY from "otherCenter" (the other circle in the
+// knee/foot pair) -- the visible/outer side of a two-circle-plus-fillets
+// leg silhouette like Rocky's is always the one facing away from the other
+// circle, never the one tucked in toward it.
+static int robArmSampleArcAwayFrom(PointF center, PointF start, PointF end, PointF otherCenter, int steps, PointF* out)
+{
+    float r = sqrtf((start.x - center.x) * (start.x - center.x) + (start.y - center.y) * (start.y - center.y));
+    float a0 = robArmAngleAroundDeg(center, start);
+    float a2 = robArmWrap360(robArmAngleAroundDeg(center, end) - a0);
+
+    float sweepShort = a2;          // increasing-angle candidate, 0..360
+    float sweepLong = a2 - 360.0f;  // the other way around, -360..0
+
+    float midShortRad = (a0 + sweepShort * 0.5f) * 3.1415926f / 180.0f;
+    float midLongRad = (a0 + sweepLong * 0.5f) * 3.1415926f / 180.0f;
+
+    PointF pShort = { center.x + r * cosf(midShortRad), center.y + r * sinf(midShortRad) };
+    PointF pLong = { center.x + r * cosf(midLongRad), center.y + r * sinf(midLongRad) };
+
+    float dShort = (pShort.x - otherCenter.x) * (pShort.x - otherCenter.x) + (pShort.y - otherCenter.y) * (pShort.y - otherCenter.y);
+    float dLong = (pLong.x - otherCenter.x) * (pLong.x - otherCenter.x) + (pLong.y - otherCenter.y) * (pLong.y - otherCenter.y);
+
+    float sweep = (dShort >= dLong) ? sweepShort : sweepLong;
+
+    for (int i = 0; i <= steps; i++)
+    {
+        float t = (float)i / (float)steps;
+        float a = (a0 + sweep * t) * 3.1415926f / 180.0f;
+        out[i].x = center.x + cosf(a) * r;
+        out[i].y = center.y + sinf(a) * r;
+    }
+    return steps + 1;
+}
+
+// Standard shoelace-formula polygon centroid, applied to the fine polygon
+// approximation of the leg outline the two sample functions above build --
+// an APPROXIMATION of the true area-weighted centroid (exact only in the
+// limit of infinite samples), which is what saveRockyAsRobArm's mass
+// center is meant to be: there's no material/density model in this editor
+// to compute a true one from. Consecutive arcs sharing an endpoint just
+// contribute a duplicate point, which the shoelace sum treats as a
+// zero-area sliver -- harmless, so callers don't need to de-duplicate.
+static PointF robArmPolygonCentroid(PointF* pts, int n)
+{
+    float area = 0.0f, cx = 0.0f, cy = 0.0f;
+
+    for (int i = 0; i < n; i++)
+    {
+        PointF p0 = pts[i];
+        PointF p1 = pts[(i + 1) % n];
+        float cross = p0.x * p1.y - p1.x * p0.y;
+        area += cross;
+        cx += (p0.x + p1.x) * cross;
+        cy += (p0.y + p1.y) * cross;
+    }
+
+    area *= 0.5f;
+
+    if (fabsf(area) < 1e-9f)
+    {
+        // degenerate (near-zero-area) shape -- fall back to the plain
+        // average of the sample points rather than dividing by ~0
+        PointF fallback = { 0.0f, 0.0f };
+        for (int i = 0; i < n; i++)
+        {
+            fallback.x += pts[i].x;
+            fallback.y += pts[i].y;
+        }
+        fallback.x /= (float)n;
+        fallback.y /= (float)n;
+        return fallback;
+    }
+
+    cx /= (6.0f * area);
+    cy /= (6.0f * area);
+
+    return (PointF){ cx, cy };
+}
+
+int saveRockyAsRobArm(AppState* app)
+{
+    Rocky* r = &app->robotScene.rocky;
+
+    // shared attach point -- both files' local (0,0), see this section's
+    // top comment
+    PointF joint = r->kneeCircle;
+
+    // ---- Rob.txt: rectangular body ----
+    {
+        PointF corners[4] = {
+            { r->bodyX - r->bodyHalfWidth, r->bodyY - r->bodyHalfHeight },
+            { r->bodyX + r->bodyHalfWidth, r->bodyY - r->bodyHalfHeight },
+            { r->bodyX + r->bodyHalfWidth, r->bodyY + r->bodyHalfHeight },
+            { r->bodyX - r->bodyHalfWidth, r->bodyY + r->bodyHalfHeight },
+        };
+
+        for (int i = 0; i < 4; i++)
+        {
+            corners[i].x -= joint.x;
+            corners[i].y -= joint.y;
+        }
+
+        // a rectangle's centroid is exactly its own center (uniform
+        // density assumed) -- no need for the polygon-sampling approach
+        // Arm.txt's curved outline needs below
+        PointF massCenter = { r->bodyX - joint.x, r->bodyY - joint.y };
+
+        FILE* f = fopen("Rob.txt", "w");
+        if (!f)
+            return 0;
+
+        fprintf(f, "%.6f %.6f %.6f\n", massCenter.x, massCenter.y, r->bodyWeight);
+        fprintf(f, "%.6f %.6f\n", 0.0f, 0.0f);
+
+        for (int i = 0; i < 4; i++)
+        {
+            PointF s = corners[i];
+            PointF e = corners[(i + 1) % 4];
+            // degenerate "center" for a straight edge -- see this
+            // section's top comment
+            PointF c = { (s.x + e.x) * 0.5f, (s.y + e.y) * 0.5f };
+            fprintf(f, "%.6f %.6f %.6f %.6f %.6f %.6f\n", s.x, s.y, e.x, e.y, c.x, c.y);
+        }
+
+        fclose(f);
+    }
+
+    // ---- Arm.txt: single leg (kneeCircle -> 2 shin fillets -> footCircle) ----
+    {
+        // exact same fillet/tangent-point construction drawRockyLeg uses
+        // to render this leg (renderer.c) -- kept in sync with that so
+        // this export always matches what's actually on screen
+        PointF axisMidLocal = { (r->kneeCircle.x + r->footCircle.x) * 0.5f, (r->kneeCircle.y + r->footCircle.y) * 0.5f };
+
+        Fillet shin1Fillet = filletFromAttachAngle(r->kneeCircle, r->kneeRadius, r->footCircle, r->footRadius, r->shinArc1Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC_R);
+        PointF shin1KneeTangent = circleEdge(r->kneeCircle, r->kneeRadius, r->shinArc1Angle);
+        PointF shin1FootTangent = internalTangentPoint(shin1Fillet.center, shin1Fillet.radius, r->footCircle, r->footRadius);
+        PointF shin1Mid = circleTowardPoint(shin1Fillet.center, shin1Fillet.radius, axisMidLocal);
+
+        Fillet shin2Fillet = filletFromAttachAngleConcave(r->kneeCircle, r->kneeRadius, r->footCircle, r->footRadius, r->shinArc2Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC2_CONCAVE_R);
+        PointF shin2KneeTangent = circleEdge(r->kneeCircle, r->kneeRadius, r->shinArc2Angle);
+        PointF shin2FootTangent = circleTowardPoint(shin2Fillet.center, shin2Fillet.radius, r->footCircle);
+        PointF shin2Mid = circleTowardPoint(shin2Fillet.center, shin2Fillet.radius, axisMidLocal);
+
+        // closed 4-arc outline: shin1 fillet, foot circle's own arc, shin2
+        // fillet, knee circle's own arc -- each one's end matches the next
+        // one's start, and the last matches the first, same chained
+        // convention as this format's own example
+        RobArmSegment segs[4] = {
+            { shin1KneeTangent, shin1FootTangent, shin1Fillet.center },
+            { shin1FootTangent, shin2FootTangent, r->footCircle },
+            { shin2FootTangent, shin2KneeTangent, shin2Fillet.center },
+            { shin2KneeTangent, shin1KneeTangent, r->kneeCircle },
+        };
+
+        // fine polygon approximation of the same 4-arc outline, purely for
+        // the approximate mass center below -- built with the same
+        // directions as segs[] above (shin arcs resolved via their known
+        // mid/bulge point, the knee/foot circles' own arcs resolved via
+        // "bulges away from the other circle")
+        PointF poly[4 * (ROB_ARM_ARC_SAMPLES + 1)];
+        int n = 0;
+        n += robArmSampleArcThroughMid(shin1Fillet.center, shin1KneeTangent, shin1Mid, shin1FootTangent, ROB_ARM_ARC_SAMPLES, poly + n);
+        n += robArmSampleArcAwayFrom(r->footCircle, shin1FootTangent, shin2FootTangent, r->kneeCircle, ROB_ARM_ARC_SAMPLES, poly + n);
+        n += robArmSampleArcThroughMid(shin2Fillet.center, shin2FootTangent, shin2Mid, shin2KneeTangent, ROB_ARM_ARC_SAMPLES, poly + n);
+        n += robArmSampleArcAwayFrom(r->kneeCircle, shin2KneeTangent, shin1KneeTangent, r->footCircle, ROB_ARM_ARC_SAMPLES, poly + n);
+
+        PointF massCenterLocal = robArmPolygonCentroid(poly, n);
+
+        FILE* f = fopen("Arm.txt", "w");
+        if (!f)
+            return 0;
+
+        fprintf(f, "%.6f %.6f %.6f\n", massCenterLocal.x - joint.x, massCenterLocal.y - joint.y, r->legWeight);
+        fprintf(f, "%.6f %.6f\n", 0.0f, 0.0f);
+
+        for (int i = 0; i < 4; i++)
+        {
+            PointF s = { segs[i].start.x - joint.x, segs[i].start.y - joint.y };
+            PointF e = { segs[i].end.x - joint.x, segs[i].end.y - joint.y };
+            PointF c = { segs[i].center.x - joint.x, segs[i].center.y - joint.y };
+            fprintf(f, "%.6f %.6f %.6f %.6f %.6f %.6f\n", s.x, s.y, e.x, e.y, c.x, c.y);
+        }
+
+        fclose(f);
+    }
+
+    char path[MAX_PATH];
+    GetCurrentDirectoryA(MAX_PATH, path);
+    printf("Saved Rocky body/leg as Rob.txt + Arm.txt in: %s\n", path);
+
     return 1;
 }

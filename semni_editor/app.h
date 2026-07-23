@@ -21,6 +21,14 @@
 // above now only ever mirrors leg 1 (or Semni/Rocky's own single leg).
 #define ID_MIRROR_LEG2_BUTTON 1011
 
+// Body/Leg Weight edit boxes (see hBodyWeightEdit/hLegWeightEdit below) --
+// read via GetWindowText on ID_SAVE_BUTTON rather than driven by a
+// WM_COMMAND notification, so these don't strictly need control IDs the
+// way the buttons/combobox above do, but every other control here has one
+// for consistency and in case EN_CHANGE handling is ever added.
+#define ID_BODY_WEIGHT_EDIT 1012
+#define ID_LEG_WEIGHT_EDIT 1013
+
 // dropdown at the top of the control panel that picks which of the three
 // robots (Semni/Rocky/Stilo) the Standing/Home/Save/Mirror/Debug Log
 // buttons below it act on -- see input.c's WM_CREATE/WM_COMMAND.
@@ -162,6 +170,15 @@ typedef struct {
 
     float angle;      // whole-body rotation, around (bodyX, bodyY)
     float kneeAngle;  // swings the leg (footCircle) around kneeCircle
+
+    // User-entered mass values for the Rob.txt/Arm.txt export (see
+    // save.c's saveRockyAsRobArm and input.c's hBodyWeightEdit/
+    // hLegWeightEdit) -- typed into the control panel rather than derived
+    // from geometry, since there's no material/density model here to
+    // compute a real mass from. Defaulted to 1.0f in app_init.c's
+    // initRockyStandingPosition/initRockyHomePosition.
+    float bodyWeight;
+    float legWeight;
 } Rocky;
 
 // ---- robot model ("Stilo") ----
@@ -263,6 +280,17 @@ typedef struct {
     // custom pose was ever saved.
     HWND hSetStandingButton;
     HWND hSetHomeButton;
+
+    // Body/Leg Weight input boxes -- only meaningful for Rocky (see
+    // Rocky's own bodyWeight/legWeight fields and save.c's
+    // saveRockyAsRobArm, which reads them via ID_SAVE_BUTTON), same
+    // "harmlessly inert for other robot kinds" convention as
+    // hMirrorButton2/hViewSegmentsButton. Label + edit box per weight,
+    // same pairing as hScaleLabel/hScaleSlider above.
+    HWND hBodyWeightLabel;
+    HWND hBodyWeightEdit;
+    HWND hLegWeightLabel;
+    HWND hLegWeightEdit;
 
     // top-right robot "size" slider (0.25 - 1.0, see ROBOT_SCALE_MIN/MAX
     // in config.h) + its static label, a row below the buttons above.

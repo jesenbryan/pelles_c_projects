@@ -37,3 +37,12 @@ int saveStiloAsEquations(const char* filename, AppState* app);
 int loadRobotPoseFromFile(const char* filename, Semni* out);
 int loadRockyPoseFromFile(const char* filename, Rocky* out);
 int loadStiloPoseFromFile(const char* filename, Stilo* out);
+
+// Writes Rocky's body + leg as a pair of plain-numeric files, "Rob.txt"
+// (rectangle) and "Arm.txt" (kneeCircle->2 shin fillets->footCircle),
+// for an external mass/joint/geometry consumer -- see save.c's own
+// comment just above the implementation for the full format. Reads
+// app->robotScene.rocky, including its user-entered bodyWeight/legWeight
+// (see input.c's hBodyWeightEdit/hLegWeightEdit). Returns 0 if either
+// file can't be opened for writing, 1 on success.
+int saveRockyAsRobArm(AppState* app);

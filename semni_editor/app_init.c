@@ -198,4 +198,15 @@ void initAppState(AppState* app)
 	initRockyStandingPosition(app);
 	initStiloStandingPosition(app);
 	app->robotScene.activeKind = ROBOT_KIND_SEMNI;
+
+	// Rob.txt/Arm.txt export weights (see app.h's Rocky.bodyWeight/
+	// legWeight and input.c's hBodyWeightEdit/hLegWeightEdit) -- deliberately
+	// set here ONCE rather than inside initRockyStandingPosition/
+	// initRockyHomePosition above, since those two also get re-run every
+	// time the Standing/Home buttons are clicked (see input.c's
+	// ID_STANDING_POSITION_BUTTON/ID_HOME_POSITION_BUTTON) -- putting the
+	// default there would silently wipe out whatever weight the user had
+	// already typed in every time they re-pose the robot.
+	app->robotScene.rocky.bodyWeight = 1.0f;
+	app->robotScene.rocky.legWeight = 1.0f;
 }
