@@ -1499,8 +1499,7 @@ void canvasRenderFrame(float dimAmount)
     glCallLists((GLsizei)strlen(zoomStr), GL_UNSIGNED_BYTE, zoomStr);
     glPopAttrib();
 
-    // 'P' toggle (app.showPixelCoords, see main.c's WndProcShared
-    // WM_KEYDOWN) -- exact client-area pixel position of the cursor, same
+    // Always-on exact client-area pixel position of the cursor, same
     // bottom-right column as the zoom readout just above, stacked directly
     // above it (y = 40 vs the zoom line's y = 20, one text row's worth of
     // clearance) so the two never overlap. Read fresh via GetCursorPos/
@@ -1510,9 +1509,10 @@ void canvasRenderFrame(float dimAmount)
     // WndProcShared's mode-gated dispatch) -- reading the cursor position
     // directly here means one implementation works identically in both
     // Design > Robot and Design > Environment, with no mouse-move hook
-    // needed in either one. Same "always full opacity" reasoning as the
-    // zoom readout above -- global HUD, not ArcSpline-specific content.
-    if (app.showPixelCoords)
+    // needed in either one. Used to be gated behind a 'P' toggle -- removed
+    // in favor of just always showing it. Same "always full opacity"
+    // reasoning as the zoom readout above -- global HUD, not
+    // ArcSpline-specific content.
     {
         POINT pt;
         GetCursorPos(&pt);

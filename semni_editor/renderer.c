@@ -976,8 +976,8 @@ void drawRocky(Rocky b, RenderState* rs, int includeHandles, float opacity)
             PointF shin1World = jointToWorld(shin1MidLocal, b.kneeCircle, b.kneeAngle, center, b.angle);
             PointF shin2World = jointToWorld(shin2MidLocal, b.kneeCircle, b.kneeAngle, center, b.angle);
 
-            drawHandle(shin1World, rs->draggingRockyShin1, SHIN_HANDLE_RADIUS, opacity);
-            drawHandle(shin2World, rs->draggingRockyShin2, SHIN_HANDLE_RADIUS, opacity);
+            drawHandle(shin1World, rs->draggingRockyShin1, ROCKY_SHIN_HANDLE_RADIUS, opacity);
+            drawHandle(shin2World, rs->draggingRockyShin2, ROCKY_SHIN_HANDLE_RADIUS, opacity);
         }
 
         // One small handle at the midpoint of each of the 4 edges --

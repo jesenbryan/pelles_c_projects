@@ -88,6 +88,13 @@
 #define THIGH_HANDLE_RADIUS 0.014f
 #define SHIN_HANDLE_RADIUS  0.010f
 
+// Rocky's own shin1/shin2 handles (drawRockyLeg's drawHandle calls,
+// input.c's Rocky-specific isNear hit-tests) -- deliberately bigger than
+// SHIN_HANDLE_RADIUS above (which Semni's own shin handles still use), per
+// explicit user request to make Rocky's easier to see/grab even though
+// that means the two robots no longer match exactly.
+#define ROCKY_SHIN_HANDLE_RADIUS 0.016f
+
 // thigh arcs (between innerCircle/hip and kneeCircle/knee) use the same
 // tangent-restricted-fillet construction as the head/butt seam arcs (see
 // MIN_ARC_R/MAX_ARC_R above), but the hip/knee circles are much smaller

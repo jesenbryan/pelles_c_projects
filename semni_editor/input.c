@@ -463,7 +463,7 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     // foot, same as Semni's own draggingFoot
                     app->draggingRockyFoot = 1;
                 }
-                else if (isNear(app->mouseGL, rockyShin1World, SHIN_HANDLE_RADIUS))
+                else if (isNear(app->mouseGL, rockyShin1World, ROCKY_SHIN_HANDLE_RADIUS))
                 {
                     app->draggingRockyShin1 = 1;
 
@@ -474,7 +474,7 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     app->rockyShinArcDragStartPerp = perpOffsetOnAxis(rockyShinLocalMouseDown, app->robotScene.rocky.kneeCircle, app->robotScene.rocky.footCircle);
                     app->rockyShinArcDragStartAngle = app->robotScene.rocky.shinArc1Angle;
                 }
-                else if (isNear(app->mouseGL, rockyShin2World, SHIN_HANDLE_RADIUS))
+                else if (isNear(app->mouseGL, rockyShin2World, ROCKY_SHIN_HANDLE_RADIUS))
                 {
                     app->draggingRockyShin2 = 1;
 
@@ -973,12 +973,17 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 if (app->hoverRockyBody)
                     rockyHoverLabel = L"Body";
                 else if (app->hoverRockyKnee)
-                    rockyHoverLabel = L"Knee";
+                    // Same control-hint-in-the-label idea as Semni's own
+                    // Hip/Knee above -- Rocky's knee is the only joint that
+                    // supports Shift+Scroll rotate (see WM_MOUSEWHEEL's
+                    // ROBOT_KIND_ROCKY branch); the body/foot handles are
+                    // plain-scroll resize only, so they don't get this hint.
+                    rockyHoverLabel = L"Knee (Shift + Scroll: rotate)";
                 else if (app->hoverRockyFoot)
                     rockyHoverLabel = L"Foot";
-                else if (isNear(app->mouseGL, rockyShin1World, SHIN_HANDLE_RADIUS))
+                else if (isNear(app->mouseGL, rockyShin1World, ROCKY_SHIN_HANDLE_RADIUS))
                     rockyHoverLabel = L"Shin Arc 1";
-                else if (isNear(app->mouseGL, rockyShin2World, SHIN_HANDLE_RADIUS))
+                else if (isNear(app->mouseGL, rockyShin2World, ROCKY_SHIN_HANDLE_RADIUS))
                     rockyHoverLabel = L"Shin Arc 2";
                 else if (app->hoverRockyEdge == ROCKY_EDGE_LEFT || app->hoverRockyEdge == ROCKY_EDGE_RIGHT)
                     rockyHoverLabel = L"Body Width";
@@ -1229,7 +1234,12 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     else if (isNear(stiloMouse, stiloSeamArc2HandleWorldHover, ARC_HANDLE_RADIUS))
                         stiloHoverLabel = L"Seam Arc 2";
                     else if (app->hoverStiloHip1)
-                        stiloHoverLabel = L"Hip 1";
+                        // Same control-hint-in-the-label idea as Semni's/
+                        // Rocky's own hip/knee above -- Stilo's hips are its
+                        // only joints with a Shift+Scroll rotate gesture
+                        // (see WM_MOUSEWHEEL's ROBOT_KIND_STILO branch);
+                        // Feet 1/2 are plain-scroll resize only.
+                        stiloHoverLabel = L"Hip 1 (Shift + Scroll: rotate)";
                     else if (isNear(stiloMouse, stiloThigh1Arc1WorldHover, THIGH_HANDLE_RADIUS))
                         stiloHoverLabel = L"Thigh 1 Arc 1";
                     else if (isNear(stiloMouse, stiloThigh1Arc2WorldHover, THIGH_HANDLE_RADIUS))
@@ -1237,7 +1247,7 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     else if (app->hoverStiloFeet1)
                         stiloHoverLabel = L"Feet 1";
                     else if (app->hoverStiloHip2)
-                        stiloHoverLabel = L"Hip 2";
+                        stiloHoverLabel = L"Hip 2 (Shift + Scroll: rotate)";
                     else if (isNear(stiloMouse, stiloThigh2Arc1WorldHover, THIGH_HANDLE_RADIUS))
                         stiloHoverLabel = L"Thigh 2 Arc 1";
                     else if (isNear(stiloMouse, stiloThigh2Arc2WorldHover, THIGH_HANDLE_RADIUS))
@@ -1623,9 +1633,14 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 else if (isNear(mouse, seamArc2HandleWorldHover, ARC_HANDLE_RADIUS))
                     hoverLabel = L"Seam Arc 2";
                 else if (app->hoverHip)
-                    hoverLabel = L"Hip";
+                    // Control hint appended right in the hover label itself
+                    // -- same bottom-left strip, only shown while actually
+                    // hovering a joint that supports it (see WM_MOUSEWHEEL's
+                    // shiftHeld-gated hipAngle rotate), so it never clutters
+                    // the screen for handles that don't have this gesture.
+                    hoverLabel = L"Hip (Shift + Scroll: rotate)";
                 else if (app->hoverKnee)
-                    hoverLabel = L"Knee";
+                    hoverLabel = L"Knee (Shift + Scroll: rotate)";
                 else if (isNear(mouse, thigh1WorldHover, THIGH_HANDLE_RADIUS))
                     hoverLabel = L"Thigh Arc 1";
                 else if (isNear(mouse, thigh2WorldHover, THIGH_HANDLE_RADIUS))
@@ -2565,9 +2580,8 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             int relYSelector = relYTitle    + titleH    + rowGap;  // robot picker (Semni/Rocky/Stilo)
             int relYRow1     = relYSelector + comboRowH + rowGap;  // Home | Standing
             int relYRow1b    = relYRow1     + btnH      + rowGap;  // Set Home | Set Standing
-            int relYRow2     = relYRow1b    + btnH      + rowGap;  // Mirror Leg (own full-width row -- used to share this row with the now-removed Save button, see canvas.c's ID_SAVE for where Save moved)
-            int relYMirror2  = relYRow2     + btnH      + rowGap;  // Mirror Leg 2 (Stilo only, inert otherwise)
-            int relYWeight   = relYMirror2  + btnH      + rowGap;  // Body Wt | Leg Wt (Rocky only, inert otherwise)
+            int relYRow2     = relYRow1b    + btnH      + rowGap;  // Mirror Leg | Mirror Leg 2 (leg 2 only meaningful for Stilo, inert otherwise -- see canvas.c's ID_SAVE for where the old Save button that used to share this row moved to)
+            int relYWeight   = relYRow2     + btnH      + rowGap;  // Body Wt | Leg Wt (Rocky only, inert otherwise)
             int relYSize     = relYWeight   + btnH      + rowGap;  // Size: W x H mm (live readout, all robot kinds)
             int relYScale    = relYSize     + btnH       + rowGap; // Scale label + slider
             int relYSeg      = relYScale    + sliderH    + rowGap; // View Segments
@@ -2622,18 +2636,16 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                  col2X, panelY + relYRow1b, colW, btnH,
                  SWP_NOZORDER);
 
-            // Now the row's only occupant (Save moved to File > Save) --
-            // full content width instead of sharing col1X/col2X with it.
+            // Mirror Leg | Mirror Leg 2, side by side -- Leg 2 (see
+            // ID_MIRROR_LEG2_BUTTON) is only meaningful for Stilo, harmlessly
+            // inert for Semni/Rocky, same convention as the rest of this
+            // panel's "always shown, only some kinds act on it" controls.
             SetWindowPos(app->ui.hMirrorButton, NULL,
-                 col1X, panelY + relYRow2, contentW, btnH,
+                 col1X, panelY + relYRow2, colW, btnH,
                  SWP_NOZORDER);
 
-            // Full content width, own row -- only meaningful for Stilo
-            // (mirrors its leg 2 only, see ID_MIRROR_LEG2_BUTTON), so it
-            // doesn't share a row/column with the single-leg Mirror button
-            // above it.
             SetWindowPos(app->ui.hMirrorButton2, NULL,
-                 col1X, panelY + relYMirror2, contentW, btnH,
+                 col2X, panelY + relYRow2, colW, btnH,
                  SWP_NOZORDER);
 
             // Body Wt | Leg Wt -- each column holds its own short label +
@@ -2685,8 +2697,14 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                  SWP_NOZORDER);
 
             // ---- bottom-left hover status strip ----
+            // Widened from 280 -- the Hip/Knee/Hip 1/Hip 2 labels now
+            // append a "(Shift + Scroll: rotate)" control hint (see
+            // WM_MOUSEMOVE's hoverLabel/rockyHoverLabel/stiloHoverLabel
+            // assignments) whenever hovering one of those joints, and the
+            // longest of those ("Hip 2 (Shift + Scroll: rotate)") didn't
+            // fit in the old width.
             int hoverPad = 8;
-            int hoverLabelW = 280;
+            int hoverLabelW = 340;
             int hoverLabelH = 20;
             int hoverPanelW = hoverLabelW + hoverPad * 2;
             int hoverPanelH = hoverLabelH + hoverPad * 2;

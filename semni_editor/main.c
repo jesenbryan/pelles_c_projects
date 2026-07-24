@@ -75,11 +75,11 @@ static HMENU buildMainMenu(void)
     AppendMenu(hMenuBar, MF_POPUP, (UINT_PTR)hFileMenu, L"&File");
 
     HMENU hDesignMenu = CreatePopupMenu();
-    AppendMenu(hDesignMenu, MF_STRING, ID_LAYER_ROBOT, L"Robot (Semni)");
+    AppendMenu(hDesignMenu, MF_STRING, ID_LAYER_ROBOT, L"Robot");
     AppendMenu(hDesignMenu, MF_STRING, ID_LAYER_ENVIRONMENT, L"Environment");
 
     HMENU hModeMenu = CreatePopupMenu();
-    AppendMenu(hModeMenu, MF_POPUP, (UINT_PTR)hDesignMenu, L"Design Mode");
+    AppendMenu(hModeMenu, MF_POPUP, (UINT_PTR)hDesignMenu, L"Design");
     AppendMenu(hModeMenu, MF_STRING, ID_MODE_SIMULATION, L"Simulation");
     AppendMenu(hMenuBar, MF_POPUP, (UINT_PTR)hModeMenu, L"&Mode");
 
@@ -139,26 +139,6 @@ LRESULT CALLBACK WndProcShared(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
         {
             switchEditorMode(EDITOR_MODE_ARCSPLINE, &editorModeState);
             InvalidateRect(hwnd, NULL, TRUE);
-            return 0;
-        }
-
-        // 'P' toggles the exact-pixel-position readout (app.showPixelCoords,
-        // drawn by canvas.c's canvasRenderFrame) -- handled here rather than
-        // in handleInput/WndProcGL individually so it's a single flag that
-        // behaves identically and stays on/off across both Design > Robot
-        // and Design > Environment. lParam bit 30 is set on every repeated
-        // WM_KEYDOWN while the key is held down, clear only on the very
-        // first press -- same repeat-safe-toggle guard canvas.c's Shift+G
-        // auto-gravity uses, so holding P doesn't flicker the readout
-        // on/off/on/... instead of toggling once per press.
-        if (wParam == 'P')
-        {
-            BOOL isAutoRepeat = (lParam & 0x40000000) != 0;
-            if (!isAutoRepeat)
-            {
-                app.showPixelCoords = !app.showPixelCoords;
-                InvalidateRect(hwnd, NULL, TRUE);
-            }
             return 0;
         }
         break;

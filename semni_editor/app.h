@@ -351,15 +351,6 @@ typedef struct {
     RobotScene robotScene;
     UIState ui;
 
-    // 'P' toggle (see main.c's WndProcShared WM_KEYDOWN) -- shows the
-    // exact client-area pixel position of the cursor, bottom-right, above
-    // the zoom readout (see canvas.c's canvasRenderFrame). One shared flag
-    // rather than one per subsystem since it has to behave identically in
-    // both Design > Robot and Design > Environment, and persist across
-    // switching between them -- handled once in the shared WndProc instead
-    // of duplicated in both handleInput's and WndProcGL's own WM_KEYDOWN.
-    int showPixelCoords;
-
     // handle interaction: which handle is active, which are being
     // dragged, and which are merely being hovered over
     int activeHandle;
