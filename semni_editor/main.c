@@ -83,6 +83,18 @@ static HMENU buildMainMenu(void)
     AppendMenu(hModeMenu, MF_STRING, ID_MODE_SIMULATION, L"Simulation");
     AppendMenu(hMenuBar, MF_POPUP, (UINT_PTR)hModeMenu, L"&Mode");
 
+    // Own top-level menu instead of living inside File -- added AFTER Mode
+    // (index 2) rather than before it, since canvas.c's WM_COMMAND
+    // (ID_LAYER_ROBOT/ID_LAYER_ENVIRONMENT handling) locates Mode/Design
+    // via GetSubMenu(hMenuBar, 1)/GetSubMenu(hModeMenu, 0) by fixed index,
+    // and inserting anything before Mode would silently shift it to the
+    // wrong slot.
+    HMENU hHelpMenu = CreatePopupMenu();
+    // Lists every keyboard/mouse control for posing/simulating the robot
+    // (see canvas.c's WM_COMMAND ID_HELP handler).
+    AppendMenu(hHelpMenu, MF_STRING, ID_HELP, L"Controls Help...");
+    AppendMenu(hMenuBar, MF_POPUP, (UINT_PTR)hHelpMenu, L"&Help");
+
     // Matches designLayer's actual startup default (LAYER_ENVIRONMENT --
     // see canvas.c) so the menu's check marks agree with reality from the
     // first frame instead of only updating after the user picks something.

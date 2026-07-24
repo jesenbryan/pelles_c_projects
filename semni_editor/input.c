@@ -986,13 +986,6 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     rockyHoverLabel = L"Body Height";
                 SetWindowText(app->ui.hHoverLabel, rockyHoverLabel);
 
-                // Drives the floating "(Shift + Scroll: rotate)" hint --
-                // see canvas.c's canvasRenderFrame. Rocky's knee is the
-                // only joint with that gesture (WM_MOUSEWHEEL's
-                // ROBOT_KIND_ROCKY branch); body/foot are plain-scroll
-                // resize only.
-                app->showRotateHint = app->hoverRockyKnee;
-
                 if (app->draggingRockyBody)
                 {
                     app->robotScene.rocky.kneeCircle.x = localMouse.x + app->rockyDragKneeOffset.x;
@@ -1257,13 +1250,6 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                         stiloHoverLabel = L"Head";
 
                     SetWindowText(app->ui.hHoverLabel, stiloHoverLabel);
-
-                    // Drives the floating "(Shift + Scroll: rotate)" hint --
-                    // see canvas.c's canvasRenderFrame. Stilo's hips are its
-                    // only joints with that gesture (WM_MOUSEWHEEL's
-                    // ROBOT_KIND_STILO branch); Feet 1/2 are plain-scroll
-                    // resize only.
-                    app->showRotateHint = app->hoverStiloHip1 || app->hoverStiloHip2;
                 }
 
                 if (!app->draggingStiloSeamArc1 && !app->draggingStiloSeamArc2 &&
@@ -1669,13 +1655,6 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     hoverLabel = L"Head";
 
                 SetWindowText(app->ui.hHoverLabel, hoverLabel);
-
-                // Drives the separate floating "(Shift + Scroll: rotate)"
-                // hint (drawn in GL, no backdrop, above the hover panel --
-                // see canvas.c's canvasRenderFrame) -- Hip/Knee are the only
-                // joints on Semni with that gesture (WM_MOUSEWHEEL's
-                // shiftHeld-gated hipAngle/kneeAngle rotate).
-                app->showRotateHint = app->hoverHip || app->hoverKnee;
             }
 
             if (!app->draggingSeamArc1 && !app->draggingSeamArc2 &&
@@ -2710,15 +2689,6 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             int hoverPanelH = hoverLabelH + hoverPad * 2;
             int hoverPanelX = outerMargin;
             int hoverPanelY = rect.bottom - outerMargin - hoverPanelH;
-
-            // Shared with canvas.c's canvasRenderFrame -- the floating
-            // "(Shift + Scroll: rotate)" hint (app->showRotateHint, GL-
-            // drawn with no backdrop, unlike this native hover panel) is
-            // positioned directly above this same panel, so its exact
-            // screen rect is exposed here instead of canvas.c recomputing
-            // (and risking drifting out of sync with) these same numbers.
-            app->hoverPanelScreenX = hoverPanelX;
-            app->hoverPanelScreenY = hoverPanelY;
 
             // Same HWND_BOTTOM pinning as hControlPanel above.
             SetWindowPos(app->ui.hHoverPanel, HWND_BOTTOM,

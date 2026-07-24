@@ -1529,35 +1529,6 @@ void canvasRenderFrame(float dimAmount)
         glPopAttrib();
     }
 
-    // Floating "(Shift + Scroll: rotate)" control hint -- Robot-mode-only
-    // (app.showRotateHint, see input.c's WM_MOUSEMOVE, is only ever set
-    // TRUE while hovering a joint that actually has this gesture: Semni's
-    // Hip/Knee, Rocky's Knee, Stilo's Hip1/Hip2), drawn with NO backdrop
-    // quad at all -- unlike the native hHoverLabel/hHoverPanel controls
-    // just below it on screen, this is plain GL text straight over
-    // whatever's rendered behind it, so there's nothing to make
-    // "invisible" in the first place. Positioned directly above that same
-    // hover panel using its exact screen rect (app.hoverPanelScreenX/Y,
-    // computed in input.c's WM_SIZE) rather than recomputing input.c's own
-    // layout constants here and risking the two drifting apart -- flipped
-    // from Windows' top-down client Y into this ortho's bottom-up Y
-    // (glWindowHeight - hoverPanelScreenY lands exactly on the panel's own
-    // top edge), then nudged up a few more pixels for clearance.
-    if (semniModeActive && app.showRotateHint)
-    {
-        const char* hintStr = "(Shift + Scroll: rotate)";
-
-        int hintX = app.hoverPanelScreenX + 8; // 8 == input.c's hoverPad, lines up with the label's own left edge
-        int hintY = (glWindowHeight - app.hoverPanelScreenY) + 6;
-
-        glColor4f(0.3f, 0.3f, 0.3f, 1.0f);
-        glRasterPos2i(hintX, hintY);
-        glPushAttrib(GL_LIST_BIT);
-        glListBase(fontBase - 32);
-        glCallLists((GLsizei)strlen(hintStr), GL_UNSIGNED_BYTE, hintStr);
-        glPopAttrib();
-    }
-
     // NEW: persistent top-left mode/layer indicator - otherwise the
     // only way to tell Design/Robot/Environment apart is to open the
     // Mode menu and see which item is checked.
@@ -3149,6 +3120,36 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
 	            saveEnvironmentSegmentsAsTxt("EnvExport\\Env.txt");
 	        }
+	    }
+	    else if (LOWORD(wParam) == ID_HELP)
+	    {
+	        // Reference list of every keyboard/mouse control for posing and
+	        // simulating the robot -- File > Controls Help... (main.c's
+	        // buildMainMenu). Replaces an earlier, now-removed floating
+	        // on-screen hint that only ever showed one gesture (Shift +
+	        // Scroll rotate) at a time; this covers all of them at once,
+	        // reachable whenever needed instead of only while hovering the
+	        // right joint. Scoped to Robot Editing + Simulation (posing/
+	        // moving the ROBOT itself), not the Environment canvas's own
+	        // drawing controls, since that's what was actually asked for.
+	        MessageBox(hWnd,
+	            L"Robot Editing (Design > Robot):\n"
+	            L"  Left-click + drag a handle - move/resize/reshape that part\n"
+	            L"  Scroll wheel over a handle - resize that joint's circle\n"
+	            L"  Shift + Scroll over a hip/knee handle - rotate that joint\n"
+	            L"      (Semni: Hip, Knee -- Rocky: Knee -- Stilo: Hip 1, Hip 2)\n"
+	            L"  Left / Right arrow - rotate the whole robot\n"
+	            L"  Up / Down arrow (hold Ctrl for finer steps) - move the whole robot\n"
+	            L"  Esc - back to Environment view\n"
+	            L"\n"
+	            L"Simulation:\n"
+	            L"  Left-click + drag the robot - move it\n"
+	            L"  Shift + Scroll over a hip/knee handle - rotate that joint\n"
+	            L"  Left / Right arrow - rotate the whole robot\n"
+	            L"  G - nudge the robot down; Shift + G - toggle auto gravity\n"
+	            L"  Shift + W - toggle Walk\n"
+	            L"  Ctrl + Numpad 0 - reset the camera",
+	            L"Controls Help", MB_OK | MB_ICONINFORMATION);
 	    }
 	    return 0;
 	}

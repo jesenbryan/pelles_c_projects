@@ -20,6 +20,7 @@
 #define ID_LAYER_ENVIRONMENT 11
 #define ID_SLOW_MOTION       12
 #define ID_WALK_TOGGLE       13
+#define ID_HELP              14
 
 // App-wide mode, switched from the "Mode" menu on the GL window.
 // Design = draw/trace/edit arc-spline paths (current behavior).
