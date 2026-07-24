@@ -165,11 +165,14 @@ void drawHandle(PointF p, int selected, float radius, float opacity)
 }
 
 // Draws a dashed horizontal "ground" reference line at design-space Y
-// coordinate `y` (world units as if Robot Size == 1.0 and camera zoom ==
-// 1.0), always spanning the full visible viewport width -- a fixed ruler
-// the user can lay the robot against or compare its size to. Two things
-// are deliberately compensated here rather than left to fall out of the
-// shared projection the way everything else on screen does:
+// coordinate `y` (world units as if Robot Size == 1.0, camera zoom == 1.0,
+// and no pan), always spanning the full visible viewport width -- a fixed
+// ruler the user can lay the robot against or compare its size to. Called
+// with the modelview already translated by -graphicsGetPan() (see
+// renderApp/renderRobotScene), so everything drawn here is implicitly
+// shifted by that combined pan -- three things are deliberately
+// compensated for on top of that, rather than left to fall out of the
+// shared projection/pan the way everything else on screen does:
 //
 //  - Width: computed from the CURRENT projection's own halfX (aspect *
 //    1.5 / (zoom * robotScale), exactly matching graphics.c's
@@ -178,25 +181,55 @@ void drawHandle(PointF p, int selected, float radius, float opacity)
 //    than stopping short (or overshooting) at whichever one size a fixed
 //    constant happened to fit.
 //
-//  - Y position and dash/gap length: divided by graphicsGetRobotScale()
-//    before being handed to OpenGL, which exactly cancels the robotScale
-//    factor the projection multiplies back in -- so this line's on-screen
-//    position and dash pattern stay pixel-for-pixel identical no matter
-//    where the "Robot Size" slider is set (it still moves and resizes
-//    normally with ordinary camera zoom, same as everything else --
-//    only the slider is cancelled out). That's the whole point: with a
-//    fixed ruler like this on screen, moving the slider now visibly
-//    changes the robot's size RELATIVE to it, instead of looking like the
-//    whole scene just zoomed together (see graphics.c's g_robotScale
-//    comment for the underlying reason that ambiguity exists at all).
+//  - Y position and dash/gap length: divided by graphicsGetRobotScale(),
+//    which exactly cancels the robotScale factor the projection
+//    multiplies back in -- so this line's dash pattern (and, combined
+//    with the next point, its position) stays pixel-for-pixel identical
+//    no matter where the "Robot Size" slider is set. It still moves and
+//    resizes normally with ordinary camera zoom/manual pan, same as
+//    everything else -- only the slider is cancelled out.
+//
+//  - The Robot-Size-driven ANCHOR half of the combined pan: graphicsGetPan
+//    includes whatever graphicsSetRobotScale added to keep the robot's
+//    own center fixed on screen (see its comment) -- left alone, that
+//    would drag this line along with it every time the slider moves,
+//    which is exactly the bug the two points above don't fix by
+//    themselves. Adding the combined pan back in, then re-subtracting
+//    just the MANUAL half (graphicsGetManualPan) scaled by 1/robotScale,
+//    cancels that anchor out algebraically while still letting genuine
+//    user panning/zooming move this line like anything else.
+//
+// That's the whole point of all three: with a fixed ruler like this on
+// screen, moving the slider now visibly changes the robot's size RELATIVE
+// to it, instead of looking like the whole scene just zoomed together
+// (see graphics.c's g_robotScale comment for the underlying reason that
+// ambiguity exists at all).
 void drawDashedHorizontalLine(float y, float opacity)
 {
     float robotScale = graphicsGetRobotScale();
     float zoom = graphicsGetZoom();
     float aspect = (glWindowHeight != 0) ? ((float)glWindowWidth / (float)glWindowHeight) : 1.0f;
 
+    float combinedPanX, combinedPanY;
+    graphicsGetPan(&combinedPanX, &combinedPanY);
+
+    // Only the Y half is used below -- unlike height, the line's
+    // horizontal centering doesn't need to stay anchored to a "design"
+    // reference (see centerX's own comment just below).
+    float manualPanX, manualPanY;
+    graphicsGetManualPan(&manualPanX, &manualPanY);
+    (void)manualPanX;
+
     float halfWidth = (1.5f / (zoom * robotScale)) * aspect;
-    float compensatedY = y / robotScale;
+
+    // Horizontal center: exactly the CURRENT combined pan, not anti-
+    // anchored the way Y is below -- this one just needs to always land
+    // exactly on the current view's own center so the line reaches both
+    // screen edges (see halfWidth above), whatever that view happens to
+    // be right now. There's no separate "design" horizontal reference to
+    // stay anchored to the way there is for height.
+    float centerX = combinedPanX;
+    float centerY = combinedPanY + (y - manualPanY) / robotScale;
 
     glColor4f(0.6f, 0.6f, 0.6f, opacity); // medium gray, subtle
 
@@ -204,16 +237,19 @@ void drawDashedHorizontalLine(float y, float opacity)
     float gapLength = 0.06f / robotScale;   // smaller gaps
     float segmentLength = dashLength + gapLength;
 
+    float left = centerX - halfWidth;
+    float right = centerX + halfWidth;
+
     // start from the left edge and draw dashes across
-    for (float x = -halfWidth; x < halfWidth; x += segmentLength)
+    for (float x = left; x < right; x += segmentLength)
     {
         float dashEnd = x + dashLength;
-        if (dashEnd > halfWidth)
-            dashEnd = halfWidth;
+        if (dashEnd > right)
+            dashEnd = right;
 
         glBegin(GL_LINES);
-        glVertex2f(x, compensatedY);
-        glVertex2f(dashEnd, compensatedY);
+        glVertex2f(x, centerY);
+        glVertex2f(dashEnd, centerY);
         glEnd();
     }
 }

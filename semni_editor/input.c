@@ -2510,7 +2510,30 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             if ((HWND)lParam == app->ui.hScaleSlider)
             {
                 int pos = (int)SendMessage(app->ui.hScaleSlider, TBM_GETPOS, 0, 0);
-                graphicsSetRobotScale(pos / 100.0f);
+
+                // Scale around whichever robot kind is active's own
+                // center, not the world origin -- see
+                // graphicsSetRobotScale's comment for why (the robot's
+                // center is rarely anywhere near the origin, so without
+                // this it visibly drifts across the screen as it resizes
+                // instead of growing/shrinking in place).
+                PointF scaleCenter;
+                switch (app->robotScene.activeKind)
+                {
+                    case ROBOT_KIND_ROCKY:
+                        scaleCenter = getRockyCenter(app->robotScene.rocky);
+                        break;
+
+                    case ROBOT_KIND_STILO:
+                        scaleCenter = getStiloCenter(app->robotScene.stilo);
+                        break;
+
+                    case ROBOT_KIND_SEMNI:
+                    default:
+                        scaleCenter = getCenter(app->robotScene.robot);
+                        break;
+                }
+                graphicsSetRobotScale(pos / 100.0f, scaleCenter.x, scaleCenter.y);
 
                 // Live value in the label instead of a static "Scale" --
                 // matches the ArcSpline panel's "Thickness: N px" label

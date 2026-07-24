@@ -37,13 +37,30 @@ static float effectiveZoom(void)
     return g_zoom * g_robotScale;
 }
 
-// Manual view pan offset, in world units -- moved by graphicsPan() during
-// a middle-mouse drag (see input.c). Kept separate from g_zoom's "never
-// drift automatically" guarantee: this only ever changes in response to
-// an explicit user drag, so the robot can be panned out of view the same
-// deliberate way ArcSpline strokes can (see canvas.c's canvas.panX/panY).
+// Manual view pan offset, in world units -- moved ONLY by graphicsPan()
+// during a middle-mouse drag (see input.c) or reset by graphicsResetView.
+// Kept separate from g_zoom's "never drift automatically" guarantee: this
+// only ever changes in response to an explicit user drag, so the robot
+// can be panned out of view the same deliberate way ArcSpline strokes can
+// (see canvas.c's canvas.panX/panY). Deliberately NOT touched by
+// graphicsSetRobotScale (see g_scaleAnchorX/Y below) -- keeping "the user
+// dragged the view" and "the Robot Size slider shifted the view to keep
+// the robot centered" as two separate numbers that ADD together (see
+// graphicsGetPan) lets drawDashedHorizontalLine cancel out just the
+// second one and stay put while the robot still correctly grows/shrinks
+// in place underneath it.
 static float g_panX = 0.0f;
 static float g_panY = 0.0f;
+
+// Extra pan contributed by graphicsSetRobotScale alone, to keep the
+// robot's own center fixed on screen across a Robot Size change (see that
+// function's comment for the derivation). Added to g_panX/g_panY (not
+// merged into them) everywhere the COMBINED view pan is needed (rendering,
+// hit-testing) via graphicsGetPan -- but graphicsGetManualPan deliberately
+// exposes g_panX/g_panY alone, without this, for the one caller that needs
+// to ignore it (the ground reference line).
+static float g_scaleAnchorX = 0.0f;
+static float g_scaleAnchorY = 0.0f;
 
 // last known viewport size, cached so a zoom change can reapply the
 // projection without waiting for the next WM_SIZE
@@ -163,8 +180,8 @@ void screenToGL(HWND hwnd, int mx, int my, float *x, float *y)
         zoom = effectiveZoom();
         halfY = 1.5f / zoom;
         halfX = halfY * aspect;
-        panX = g_panX;
-        panY = g_panY;
+        panX = g_panX + g_scaleAnchorX;
+        panY = g_panY + g_scaleAnchorY;
     }
 
     *x = (nx * halfX) + panX;
@@ -218,6 +235,19 @@ void graphicsGetPan(float* panX, float* panY)
         simCameraGetWorldPan(halfX, halfY, panX, panY);
         return;
     }
+    *panX = g_panX + g_scaleAnchorX;
+    *panY = g_panY + g_scaleAnchorY;
+}
+
+// The pure user-drag component of the Design-mode pan (graphicsPan/
+// graphicsResetView only) -- excludes g_scaleAnchorX/Y, unlike
+// graphicsGetPan above. The ground reference line (renderer.c's
+// drawDashedHorizontalLine) needs exactly this: it wants to track a
+// genuine user pan/zoom like everything else on screen, but stay
+// completely still when the Robot Size slider moves the ANCHOR part of
+// the pan instead.
+void graphicsGetManualPan(float* panX, float* panY)
+{
     *panX = g_panX;
     *panY = g_panY;
 }
@@ -232,8 +262,40 @@ float graphicsGetZoom(void)
 // straight into effectiveZoom/applyProjection/screenToGL/graphicsGetPan,
 // so this is a projection multiplier applied on top of camera zoom, not a
 // change to the robot's own stored geometry.
-void graphicsSetRobotScale(float scale)
+//
+// (centerX, centerY) is the robot's own current center (in world units --
+// input.c passes whichever of getCenter/getRockyCenter/getStiloCenter
+// matches the active kind). Since this is a pure projection zoom, not a
+// geometry change, it scales everything around the same point
+// applyProjection always has: the combined pan (g_panX+g_scaleAnchorX,
+// g_panY+g_scaleAnchorY), NOT the robot's center -- so without this
+// adjustment, a robot whose center isn't already sitting on that point
+// (true almost all the time; see app_init.c's poses, most of which put
+// the center well below y=0) visibly drifts across the screen as it
+// resizes instead of growing/shrinking in place.
+//
+// Solving for the new ANCHOR (not the user's own manual pan, g_panX/Y,
+// which this deliberately leaves untouched -- see its comment) that keeps
+// (centerX, centerY) projected to the exact same screen position before
+// and after: writing D = center - manualPan (the center relative to
+// wherever the user has manually panned to), (D - anchor)/half must stay
+// constant, and half scales by oldScale/newScale when only the robot-size
+// factor of effectiveZoom changes -- gives
+// anchor' = D - (oldScale/newScale) * (D - anchor), applied per-axis
+// below.
+void graphicsSetRobotScale(float scale, float centerX, float centerY)
 {
+    if (g_robotScale > 0.0f && scale > 0.0f)
+    {
+        float ratio = g_robotScale / scale;
+
+        float dx = centerX - g_panX;
+        float dy = centerY - g_panY;
+
+        g_scaleAnchorX = dx - ratio * (dx - g_scaleAnchorX);
+        g_scaleAnchorY = dy - ratio * (dy - g_scaleAnchorY);
+    }
+
     g_robotScale = scale;
     applyProjection();
 }
@@ -253,6 +315,8 @@ void graphicsResetView(void)
     g_zoom = 1.0f;
     g_panX = 0.0f;
     g_panY = 0.0f;
+    g_scaleAnchorX = 0.0f;
+    g_scaleAnchorY = 0.0f;
 
     applyProjection();
 }

@@ -23,10 +23,21 @@ void graphicsZoom(float factor);
 // warns about.
 void graphicsPan(int dxPixels, int dyPixels);
 
-// Current view pan offset, in world units. Applied by the renderer via
-// glTranslatef(-panX, -panY, 0) so drawing and screenToGL's hit-testing
-// (which also adds this offset) stay in agreement.
+// Current view pan offset, in world units -- the user's own manual pan
+// PLUS whatever graphicsSetRobotScale has added to keep the robot's
+// center in place across a Robot Size change (see its comment). Applied
+// by the renderer via glTranslatef(-panX, -panY, 0) so drawing and
+// screenToGL's hit-testing (which also adds this offset) stay in
+// agreement.
 void graphicsGetPan(float* panX, float* panY);
+
+// Just the user's own manual pan (graphicsPan/graphicsResetView) --
+// excludes the Robot-Size-driven addition graphicsGetPan includes. Meant
+// for the one caller that specifically needs to ignore that part: the
+// ground reference line (renderer.c's drawDashedHorizontalLine), which
+// should still pan/zoom with the camera like everything else but stay put
+// when only the "Robot Size" slider moves.
+void graphicsGetManualPan(float* panX, float* panY);
 
 // Current Semni view zoom (see graphicsZoom) -- exposed so canvas.c's
 // shared HUD overlay can show it alongside the ArcSpline canvas's own
@@ -36,8 +47,17 @@ float graphicsGetZoom(void);
 // Sets the "Robot Size" slider's value directly (see config.h's
 // ROBOT_SCALE_MIN/MAX) -- folds multiplicatively into this file's own
 // zoom/projection math (effectiveZoom/applyProjection/screenToGL/
-// graphicsGetPan), same as camera zoom.
-void graphicsSetRobotScale(float scale);
+// graphicsGetPan), same as camera zoom. (centerX, centerY) is the robot's
+// own current center in world units (Semni/Stilo's getCenter/
+// getStiloCenter, Rocky's getRockyCenter -- see input.c's WM_HSCROLL,
+// which computes whichever one matches the active robot kind) -- this
+// function adds to a separate pan "anchor" (kept apart from the user's own
+// manual pan, see graphicsGetManualPan) so that exact point stays visually
+// fixed on screen across the scale change, so the robot grows/shrinks
+// around its own middle instead of around the world origin (which the
+// robot's center isn't necessarily anywhere near -- see app_init.c's
+// poses, most of which sit well off of y=0).
+void graphicsSetRobotScale(float scale, float centerX, float centerY);
 
 // Current "Robot Size" slider value -- exposed so input.c's pick-
 // tolerance math and canvas.c's robot/environment coordinate conversion
