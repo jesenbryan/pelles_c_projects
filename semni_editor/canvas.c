@@ -2118,6 +2118,25 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             POINT pt;
             GetCursorPos(&pt);
 
+            // NEW: GetCursorPos/PtInRect only ever compare raw SCREEN
+            // coordinates - they have no idea whether our window is
+            // actually the one visible at that point, or buried behind
+            // some other app (Discord, a browser, ...) that just happens
+            // to overlap the same screen region as our hot zone. Without
+            // this, moving the mouse over that other app's window while
+            // ours sits behind it still read as "cursor is in the hot
+            // zone" and popped the panel up on top of everything.
+            // WindowFromPoint respects real Z-order/occlusion - it
+            // returns whichever window would actually receive a click at
+            // that exact screen point - so this only counts hovers that
+            // are genuinely over one of OUR windows (the main GL window,
+            // the panel itself, or one of the panel's own child controls).
+            HWND wndAtPt = WindowFromPoint(pt);
+            BOOL cursorOverOurWindows = wndAtPt != NULL &&
+                                        ((wndAtPt == hWnd) ||
+                                         (wndAtPt == hWndUI) ||
+                                         IsChild(hWndUI, wndAtPt));
+
             // NEW: use the CLIENT area's top-right corner, not the full
             // window rect - GetWindowRect() includes the title bar, which
             // would (a) make the hot zone drift up into the title bar
@@ -2135,7 +2154,7 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             hotZone.top    = clientTopRight.y;
             hotZone.bottom = clientTopRight.y + UI_HOTZONE_HEIGHT;
 
-            BOOL inHotZone = PtInRect(&hotZone, pt);
+            BOOL inHotZone = cursorOverOurWindows && PtInRect(&hotZone, pt);
 
             if (inHotZone != hotZoneHighlighted)
             {
@@ -2144,7 +2163,7 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             }
 
             BOOL inUIWindow = FALSE;
-            if (uiShown)
+            if (uiShown && cursorOverOurWindows)
             {
                 RECT uiRect;
                 GetWindowRect(hWndUI, &uiRect);
