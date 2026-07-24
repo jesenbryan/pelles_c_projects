@@ -27,8 +27,26 @@ static void worldToPixel(float wx, float wy, int w, int h, float* px, float* py)
     }
 }
 
+// px/py are PIXEL-INDEX-space coordinates (an integer i means "pixel i",
+// spanning the continuous range [i, i+1)) -- the convention every caller
+// in this file actually uses: raw traced path points (integer pixel
+// indices from the skeletonized stroke), a fitted circle's cx/cy (fit
+// against those same raw indices, so it inherits the same convention),
+// and arc points sampled off that circle all live in this space. Adding
+// 0.5 here converts an index to that pixel's CENTER -- the actual
+// continuous position it represents -- matching canvasToImage's own
+// rasterization convention (stampDisc/stampSegment test each candidate
+// pixel's CENTER, (x+0.5, y+0.5), against the stroke). Without this, every
+// reconstructed point comes out exactly half a pixel short in each axis:
+// since Y is flipped (screen grows down, world grows up), that shows up
+// as the reconstructed line sitting visibly ABOVE a horizontal stroke and
+// LEFT of a vertical one -- never below/right -- which is exactly the
+// direction the missing offset predicts.
 static void pixelToWorldExact(float px, float py, int w, int h, float* wx, float* wy)
 {
+    px += 0.5f;
+    py += 0.5f;
+
     float aspect = (float)w / (float)h;
 
     if (aspect >= 1.0f) {
@@ -45,8 +63,16 @@ static void pixelToWorldExact(float px, float py, int w, int h, float* wx, float
 
 // Uses the FIXED bg bounds, so no canvas.zoom/pan math needed here —
 // pan/canvas.zoom are applied uniformly later by the shared render pipeline
+//
+// Same pixel-index-to-pixel-center +0.5 correction as pixelToWorldExact
+// above, for the same reason (this is the "uploaded BMP" counterpart --
+// every call site picks one or the other via the same `stretched` flag,
+// feeding both the exact same px/py, so both need the same fix).
 static void pixelToWorldStretched(float px, float py, int imgW, int imgH, float* wx, float* wy)
 {
+    px += 0.5f;
+    py += 0.5f;
+
     float u = px / (float)imgW;
     float v = 1.0f - (py / (float)imgH);
 
