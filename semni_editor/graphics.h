@@ -33,17 +33,19 @@ void graphicsGetPan(float* panX, float* panY);
 // zoom%, since the two modes now zoom independently of each other.
 float graphicsGetZoom(void);
 
-// Sets the robot "size" slider value (see ROBOT_SCALE_MIN/MAX in
-// config.h), clamped to that range. Layered multiplicatively with
-// graphicsZoom's own zoom in the projection math, rather than being a
-// separate transform -- reusing the exact same code path that already
-// keeps rendering and screenToGL's hit-testing in agreement for zoom
-// means the slider gets that same guarantee for free.
+// Sets the "Robot Size" slider's value directly (see config.h's
+// ROBOT_SCALE_MIN/MAX) -- folds multiplicatively into this file's own
+// zoom/projection math (effectiveZoom/applyProjection/screenToGL/
+// graphicsGetPan), same as camera zoom.
 void graphicsSetRobotScale(float scale);
+
+// Current "Robot Size" slider value -- exposed so input.c's pick-
+// tolerance math and canvas.c's robot/environment coordinate conversion
+// can fold it in the same way this file's own projection does.
 float graphicsGetRobotScale(void);
 
 // Resets zoom to 100% and pan to center -- bound to Ctrl+0 in Design >
-// Robot mode (see input.c's WM_KEYDOWN). Does NOT touch g_robotScale (the
-// size slider) -- that's the robot's own configured size, not a camera
-// position, so Ctrl+0 shouldn't undo it.
+// Robot mode (see input.c's WM_KEYDOWN). Does NOT touch the robot's own
+// "Robot Size" slider (graphicsSetRobotScale) -- that's the robot's own
+// configured size, not a camera position, so Ctrl+0 shouldn't undo it.
 void graphicsResetView(void);

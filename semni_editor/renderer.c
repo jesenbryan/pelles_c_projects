@@ -6,6 +6,7 @@
 #include "config.h"
 #include "graphics.h"
 #include "editor_mode.h"
+#include "ui_state.h"   // for glWindowWidth/glWindowHeight -- drawDashedHorizontalLine's aspect ratio
 #include <stdio.h>
 
 // opacity multiplies every color's alpha (1.0 = fully opaque, down toward
@@ -163,27 +164,56 @@ void drawHandle(PointF p, int selected, float radius, float opacity)
     glEnd();
 }
 
-// Draws a dashed horizontal reference line at the given Y coordinate,
-// spanning the full visible viewport width. Used to help the user
-// position the robot horizontally (e.g., laying down).
-void drawDashedHorizontalLine(float y, float viewportHalfWidth, float opacity)
+// Draws a dashed horizontal "ground" reference line at design-space Y
+// coordinate `y` (world units as if Robot Size == 1.0 and camera zoom ==
+// 1.0), always spanning the full visible viewport width -- a fixed ruler
+// the user can lay the robot against or compare its size to. Two things
+// are deliberately compensated here rather than left to fall out of the
+// shared projection the way everything else on screen does:
+//
+//  - Width: computed from the CURRENT projection's own halfX (aspect *
+//    1.5 / (zoom * robotScale), exactly matching graphics.c's
+//    applyProjection) instead of a fixed constant, so the line reaches
+//    exactly both screen edges at any aspect ratio or zoom level, rather
+//    than stopping short (or overshooting) at whichever one size a fixed
+//    constant happened to fit.
+//
+//  - Y position and dash/gap length: divided by graphicsGetRobotScale()
+//    before being handed to OpenGL, which exactly cancels the robotScale
+//    factor the projection multiplies back in -- so this line's on-screen
+//    position and dash pattern stay pixel-for-pixel identical no matter
+//    where the "Robot Size" slider is set (it still moves and resizes
+//    normally with ordinary camera zoom, same as everything else --
+//    only the slider is cancelled out). That's the whole point: with a
+//    fixed ruler like this on screen, moving the slider now visibly
+//    changes the robot's size RELATIVE to it, instead of looking like the
+//    whole scene just zoomed together (see graphics.c's g_robotScale
+//    comment for the underlying reason that ambiguity exists at all).
+void drawDashedHorizontalLine(float y, float opacity)
 {
+    float robotScale = graphicsGetRobotScale();
+    float zoom = graphicsGetZoom();
+    float aspect = (glWindowHeight != 0) ? ((float)glWindowWidth / (float)glWindowHeight) : 1.0f;
+
+    float halfWidth = (1.5f / (zoom * robotScale)) * aspect;
+    float compensatedY = y / robotScale;
+
     glColor4f(0.6f, 0.6f, 0.6f, opacity); // medium gray, subtle
 
-    const float dashLength = 0.08f;  // shorter dashes for finer appearance
-    const float gapLength = 0.06f;   // smaller gaps
-    const float segmentLength = dashLength + gapLength;
+    float dashLength = 0.08f / robotScale;  // shorter dashes for finer appearance
+    float gapLength = 0.06f / robotScale;   // smaller gaps
+    float segmentLength = dashLength + gapLength;
 
     // start from the left edge and draw dashes across
-    for (float x = -viewportHalfWidth; x < viewportHalfWidth; x += segmentLength)
+    for (float x = -halfWidth; x < halfWidth; x += segmentLength)
     {
         float dashEnd = x + dashLength;
-        if (dashEnd > viewportHalfWidth)
-            dashEnd = viewportHalfWidth;
+        if (dashEnd > halfWidth)
+            dashEnd = halfWidth;
 
         glBegin(GL_LINES);
-        glVertex2f(x, y);
-        glVertex2f(dashEnd, y);
+        glVertex2f(x, compensatedY);
+        glVertex2f(dashEnd, compensatedY);
         glEnd();
     }
 }
@@ -1363,11 +1393,12 @@ void renderApp(AppState* app, HDC hdc)
         glTranslatef(-panX, -panY, 0.0f);
     }
 
-    // Draw ground reference line at the bottom. The viewport's
-    // half-width is 1.5 units at the base zoom level, so we position
-    // the line near the bottom (-1.3) to look like a ground plane
-    // that helps the user position the robot for laying down poses.
-    drawDashedHorizontalLine(-1.1f, 1.5f, 1.0f);
+    // Draw ground reference line at the bottom, low enough to read as a
+    // floor the robot stands/lies on rather than a line cutting through
+    // its body -- see drawDashedHorizontalLine's own comment for how it
+    // stays a fixed on-screen ruler regardless of camera zoom/aspect and
+    // the "Robot Size" slider.
+    drawDashedHorizontalLine(-1.3f, 1.0f);
 
     renderRobot(app, 1, 1.0f);
 
@@ -1423,7 +1454,7 @@ void renderRobotScene(AppState* app, float dimAmount)
     // background copy of the robot either, since nothing is being edited
     // there.
     if (editorModeState.currentMode == EDITOR_MODE_SEMNI)
-        drawDashedHorizontalLine(-1.1f, 1.5f, opacity);
+        drawDashedHorizontalLine(-1.3f, opacity);
 
     renderRobot(app, 1, opacity);
 }

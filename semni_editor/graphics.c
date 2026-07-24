@@ -26,13 +26,10 @@ static HGLRC hrc;
 // being able to zoom toward wherever the cursor happens to be.
 static float g_zoom = 1.0f;
 
-// Robot "size" slider value (see ROBOT_SCALE_MIN/MAX in config.h) -- set
-// via graphicsSetRobotScale from the trackbar in input.c. Combined
-// multiplicatively with g_zoom everywhere g_zoom is used below (see
-// effectiveZoom()), rather than kept as a wholly separate transform, so
-// this reuses the exact projection/screenToGL math that already keeps
-// zoomed rendering and hit-testing in sync -- the slider gets that same
-// guarantee for free instead of needing its own parallel bookkeeping.
+// Current "Robot Size" slider value (see ROBOT_SCALE_MIN/MAX in config.h,
+// input.c's WM_HSCROLL) -- folded directly into effectiveZoom below so
+// resizing the robot and zooming the camera share the exact same
+// projection math.
 static float g_robotScale = 0.5f;
 
 static float effectiveZoom(void)
@@ -65,16 +62,10 @@ HDC graphicsGetHDC(void)
 // In Simulation mode, the robot is driven by sim_camera's own independent
 // zoom instead of g_zoom -- see sim_camera.h for why (keeps the robot and
 // the ArcSpline environment zooming/panning together as one scene, without
-// disturbing either subsystem's own Design-mode camera). g_robotScale (the
-// "size" slider) is still layered on top here exactly like it is in
-// effectiveZoom() below -- it's the robot's own configured size, not a
-// camera position, so it should render at that same size regardless of
-// which camera is currently driving the view. sim_camera's pan tracking
-// (simCameraGetWorldPan) is written to not care about this extra
-// multiplier -- it converts into whatever half-extent this function
-// actually computes, so folding g_robotScale in here doesn't desync the
-// robot's panning from the environment's the way it would have with an
-// earlier, more naive version of this pan math.
+// disturbing either subsystem's own Design-mode camera) -- but the "Robot
+// Size" slider (g_robotScale) still layers on top either way, so resizing
+// the robot has the same visible effect whether or not Simulation mode is
+// active.
 static void applyProjection(void)
 {
     if (g_lastH == 0) g_lastH = 1;
@@ -217,9 +208,9 @@ void graphicsGetPan(float* panX, float* panY)
 {
     if (appMode == APP_MODE_SIMULATION)
     {
-        // Same half-extent as applyProjection (including g_robotScale), so
-        // the pan this hands back agrees exactly with the projection the
-        // robot was actually just drawn with this frame.
+        // Same half-extent as applyProjection, so the pan this hands back
+        // agrees exactly with the projection the robot was actually just
+        // drawn with this frame.
         float aspect = (float)g_lastW / (float)g_lastH;
         float zoom = simCameraGetZoom() * g_robotScale;
         float halfY = 1.5f / zoom;
@@ -236,16 +227,22 @@ float graphicsGetZoom(void)
     return g_zoom;
 }
 
+// Sets the "Robot Size" slider's value directly (input.c's WM_HSCROLL
+// passes pos/100.0f, see ROBOT_SCALE_MIN/MAX in config.h) -- folds
+// straight into effectiveZoom/applyProjection/screenToGL/graphicsGetPan,
+// so this is a projection multiplier applied on top of camera zoom, not a
+// change to the robot's own stored geometry.
 void graphicsSetRobotScale(float scale)
 {
-    if (scale < ROBOT_SCALE_MIN) scale = ROBOT_SCALE_MIN;
-    if (scale > ROBOT_SCALE_MAX) scale = ROBOT_SCALE_MAX;
-
     g_robotScale = scale;
-
     applyProjection();
 }
 
+// Current "Robot Size" slider value -- exposed so input.c's pick-
+// tolerance math and canvas.c's robot/environment coordinate conversion
+// (robotPointToEnvWorld/robotLengthToEnvWorld) can fold it in the same
+// way applyProjection does, since it affects the robot's on-screen size
+// exactly like an extra zoom factor.
 float graphicsGetRobotScale(void)
 {
     return g_robotScale;
