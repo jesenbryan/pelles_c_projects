@@ -1835,6 +1835,27 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 float maxDelta = range.halfWidthDeg - THIGH_ARC_ANGLE_MARGIN_DEG;
                 if (maxDelta < THIGH_ARC_SIDE_MARGIN_DEG) maxDelta = THIGH_ARC_SIDE_MARGIN_DEG;
 
+                // NEW: which side of centerDeg counts as "the good side"
+                // used to just be hardcoded to negative -- true for a
+                // never-mirrored leg, but mirrorHipLeg (robot.c) reflects
+                // the leg through a true screen-space mirror, which
+                // reverses orientation/handedness: whichever side of
+                // centerDeg was physically valid before mirroring ends up
+                // on the OPPOSITE side afterward. Semni doesn't keep a
+                // persistent "is this leg mirrored" flag to branch on, so
+                // instead this re-derives the correct side fresh every
+                // drag from thighArcDragStartAngle itself (the actual
+                // current angle, captured in WM_LBUTTONDOWN, which is
+                // already sitting on whichever side is currently correct)
+                // rather than assuming it's always negative. Without this,
+                // starting a drag right after mirroring immediately
+                // clamped to the hardcoded (now wrong) side and snapped
+                // the arc to it -- the reported "jumps when mirrored" bug.
+                float startDelta = app->thighArcDragStartAngle - range.centerDeg;
+                while (startDelta > 180.0f) startDelta -= 360.0f;
+                while (startDelta < -180.0f) startDelta += 360.0f;
+                BOOL positiveSide = (startDelta >= 0.0f);
+
                 float perpNow = perpOffsetOnAxis(legLocalMouse, app->robotScene.robot.innerCircle, app->robotScene.robot.kneeCircle);
                 float raw = app->thighArcDragStartAngle + (perpNow - app->thighArcDragStartPerp) * THIGH_ARC_DRAG_SENSITIVITY_DEG_PER_UNIT;
 
@@ -1842,8 +1863,16 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 while (delta > 180.0f) delta -= 360.0f;
                 while (delta < -180.0f) delta += 360.0f;
 
-                if (delta > -THIGH_ARC_SIDE_MARGIN_DEG) delta = -THIGH_ARC_SIDE_MARGIN_DEG;
-                if (delta < -maxDelta) delta = -maxDelta;
+                if (positiveSide)
+                {
+                    if (delta < THIGH_ARC_SIDE_MARGIN_DEG) delta = THIGH_ARC_SIDE_MARGIN_DEG;
+                    if (delta > maxDelta) delta = maxDelta;
+                }
+                else
+                {
+                    if (delta > -THIGH_ARC_SIDE_MARGIN_DEG) delta = -THIGH_ARC_SIDE_MARGIN_DEG;
+                    if (delta < -maxDelta) delta = -maxDelta;
+                }
 
                 app->robotScene.robot.thighArc1Angle = range.centerDeg + delta;
             }
@@ -1921,6 +1950,18 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 float maxDelta = range.halfWidthDeg - SHIN_ARC_ANGLE_MARGIN_DEG;
                 if (maxDelta < SHIN_ARC_SIDE_MARGIN_DEG) maxDelta = SHIN_ARC_SIDE_MARGIN_DEG;
 
+                // NEW: same mirror-aware side derivation as thighArc1's
+                // drag block above (see its comment) -- mirrorHipLeg
+                // reverses orientation, so the hardcoded "always negative"
+                // side lock this used to have was wrong for a mirrored
+                // leg. Re-derive which side is currently correct from
+                // shinArcDragStartAngle (the actual angle at drag start)
+                // instead of assuming.
+                float startDelta = app->shinArcDragStartAngle - range.centerDeg;
+                while (startDelta > 180.0f) startDelta -= 360.0f;
+                while (startDelta < -180.0f) startDelta += 360.0f;
+                BOOL positiveSide = (startDelta >= 0.0f);
+
                 float perpNow = perpOffsetOnAxis(shinLocalMouse, app->robotScene.robot.kneeCircle, app->robotScene.robot.footCircle);
                 float raw = app->shinArcDragStartAngle + (perpNow - app->shinArcDragStartPerp) * SHIN_ARC_DRAG_SENSITIVITY_DEG_PER_UNIT;
 
@@ -1928,8 +1969,16 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 while (delta > 180.0f) delta -= 360.0f;
                 while (delta < -180.0f) delta += 360.0f;
 
-                if (delta > -SHIN_ARC_SIDE_MARGIN_DEG) delta = -SHIN_ARC_SIDE_MARGIN_DEG;
-                if (delta < -maxDelta) delta = -maxDelta;
+                if (positiveSide)
+                {
+                    if (delta < SHIN_ARC_SIDE_MARGIN_DEG) delta = SHIN_ARC_SIDE_MARGIN_DEG;
+                    if (delta > maxDelta) delta = maxDelta;
+                }
+                else
+                {
+                    if (delta > -SHIN_ARC_SIDE_MARGIN_DEG) delta = -SHIN_ARC_SIDE_MARGIN_DEG;
+                    if (delta < -maxDelta) delta = -maxDelta;
+                }
 
                 app->robotScene.robot.shinArc1Angle = range.centerDeg + delta;
             }

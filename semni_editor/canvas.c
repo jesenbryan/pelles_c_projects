@@ -3036,126 +3036,124 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	        // Single File > Save entry point for the whole app -- folded in
 	        // from what used to be two separate things: this dialog-based
 	        // ArcSpline-only save, and the Robot editor's own "Save" button
-	        // (input.c's now-removed ID_SAVE_BUTTON). Which one fires now
-	        // depends on which half of the app is actually showing:
-	        // editorModeState.currentMode == EDITOR_MODE_SEMNI means the
-	        // Robot editor is what's on screen (Design > Robot), anything
-	        // else (ArcSpline design layer, or Simulation) means the
-	        // Environment canvas is -- same test applyEditorModeVisibility
-	        // itself uses to decide which side's controls are visible.
-	        if (editorModeState.currentMode == EDITOR_MODE_SEMNI)
+	        // (input.c's now-removed ID_SAVE_BUTTON). Used to only save
+	        // whichever HALF of the app was currently showing (Robot editor
+	        // vs Environment canvas), picked via editorModeState.currentMode
+	        // -- but that meant Save while posing a robot silently skipped
+	        // the environment (and vice versa), even though both are
+	        // independent, already-drawn/posed things sitting in memory
+	        // regardless of which one you're currently looking at. Now
+	        // always does BOTH, every time, so one Save reliably captures
+	        // the whole scene: the Environment canvas AND whichever robot
+	        // kind is currently active (app.robotScene.activeKind) -- not
+	        // "every robot kind", just the one actually being worked on,
+	        // same as before.
+
+	        // --- Environment: EnvExport\Env.bmp + Env.txt ---
+	        //
+	        // Env.txt's segments come from canvas.segmentResultCount,
+	        // which is normally only produced by a manual Trace press
+	        // (the Environment panel's own button) -- easy to forget
+	        // before saving, and stale the moment another stroke is
+	        // drawn afterward. Re-tracing right here, unconditionally,
+	        // every time Save runs, closes both gaps for free -- same
+	        // reasoning (and same RunTracePipeline call) the
+	        // ID_MODE_SIMULATION handler above already uses so
+	        // ground-collision data is always current on entry.
+	        RunTracePipeline();
+
+	        CreateDirectoryA("EnvExport", NULL);
+
+	        // If comparison mode is on and segments exist, save reconstructed drawing
+	        if (canvas.comparisonMode && canvas.segmentResultCount > 0)
 	        {
-	            // Robot mode -- save ONLY the currently active robot kind
-	            // (app.robotScene.activeKind), each into its own export
-	            // folder so posing one robot never overwrites another's
-	            // saved files. Exact same per-kind logic the old Robot
-	            // editor Save button used.
-	            switch (app.robotScene.activeKind)
+	            Image* img = (Image*)malloc(sizeof(Image));
+	            if (img)
 	            {
-	                case ROBOT_KIND_ROCKY:
+	                img->width = glWindowWidth;
+	                img->height = glWindowHeight;
+	                img->data = (uint8_t*)malloc((size_t)img->width * img->height * 3);
+	                img->bin = NULL;
+
+	                if (img->data)
 	                {
-	                    CreateDirectoryA("RockyExport", NULL);
-
-	                    saveCanvasAsBMP("RockyExport\\rocky.bmp", app.hwndMain, &app);
-	                    saveRockyAsEquations("RockyExport\\rocky.txt", &app);
-
-	                    // Rob.txt/Arm.txt export (see save.c's
-	                    // saveRockyAsRobArm) -- reads the Body/Leg Weight
-	                    // edit boxes right before saving so whatever's
-	                    // currently typed in is what gets written.
-	                    wchar_t weightBuf[64];
-	                    GetWindowText(app.ui.hBodyWeightEdit, weightBuf, 64);
-	                    app.robotScene.rocky.bodyWeight = (float)wcstod(weightBuf, NULL);
-	                    GetWindowText(app.ui.hLegWeightEdit, weightBuf, 64);
-	                    app.robotScene.rocky.legWeight = (float)wcstod(weightBuf, NULL);
-
-	                    saveRockyAsRobArm(&app);
-	                    break;
+	                    renderSegmentsToImage(img, segmentPointsWorld, segmentStarts, segmentCounts,
+	                                         segmentAvgRadiusPx, canvas.segmentResultCount,
+	                                         img->width, img->height);
+	                    saveBMP_UI("EnvExport\\Env.bmp", img, NULL, BMP_RGB);
 	                }
 
-	                case ROBOT_KIND_STILO:
-	                    CreateDirectoryA("StiloExport", NULL);
-	                    saveCanvasAsBMP("StiloExport\\stilo.bmp", app.hwndMain, &app);
-	                    saveStiloAsEquations("StiloExport\\stilo.txt", &app);
-	                    break;
-
-	                case ROBOT_KIND_SEMNI:
-	                default:
-	                    CreateDirectoryA("SemniExport", NULL);
-	                    saveCanvasAsBMP("SemniExport\\semni.bmp", app.hwndMain, &app);
-	                    saveRobotAsEquations("SemniExport\\semni.txt", &app);
-	                    break;
+	                free(img->data);
+	                free(img);
 	            }
-
-	            SetFocus(app.hwndMain);
 	        }
 	        else
 	        {
-	            // Environment mode -- one EnvExport folder holding Env.bmp
-	            // (same rendered image the old dialog-based Save produced:
-	            // the arc-fitted reconstruction if Comparison Mode has
-	            // results, otherwise the raw hand-drawn canvas) and Env.txt
-	            // (the currently fitted arc segments -- see
-	            // saveEnvironmentSegmentsAsTxt above).
-	            //
-	            // Env.txt's segments come from canvas.segmentResultCount,
-	            // which is normally only produced by a manual Trace press
-	            // (the Environment panel's own button) -- easy to forget
-	            // before saving, and stale the moment another stroke is
-	            // drawn afterward. Re-tracing right here, unconditionally,
-	            // every time Save runs, closes both gaps for free -- same
-	            // reasoning (and same RunTracePipeline call) the
-	            // ID_MODE_SIMULATION handler above already uses so
-	            // ground-collision data is always current on entry.
-	            // Without this, Env.txt came out empty whenever the user
-	            // saved without having pressed Trace/View Segments/Compare
-	            // first.
-	            RunTracePipeline();
-
-	            CreateDirectoryA("EnvExport", NULL);
-
-	            // If comparison mode is on and segments exist, save reconstructed drawing
-	            if (canvas.comparisonMode && canvas.segmentResultCount > 0)
+	            // Save original drawing. NOTE: no "Canvas is empty" warning
+	            // here any more -- Save now always runs this branch even
+	            // when the user only came here to save a robot and never
+	            // drew an environment at all, which is a perfectly normal
+	            // case, not an error, so it just quietly skips Env.bmp
+	            // instead of interrupting with a dialog every single Save.
+	            Image* img = canvasToImage();
+	            if (img)
 	            {
-	                Image* img = (Image*)malloc(sizeof(Image));
-	                if (img)
-	                {
-	                    img->width = glWindowWidth;
-	                    img->height = glWindowHeight;
-	                    img->data = (uint8_t*)malloc((size_t)img->width * img->height * 3);
-	                    img->bin = NULL;
-
-	                    if (img->data)
-	                    {
-	                        renderSegmentsToImage(img, segmentPointsWorld, segmentStarts, segmentCounts,
-	                                             segmentAvgRadiusPx, canvas.segmentResultCount,
-	                                             img->width, img->height);
-	                        saveBMP_UI("EnvExport\\Env.bmp", img, NULL, BMP_RGB);
-	                    }
-
-	                    free(img->data);
-	                    free(img);
-	                }
+	                saveBMP_UI("EnvExport\\Env.bmp", img, img->bin, BMP_RGB);
+	                free(img->data);
+	                free(img->bin);
+	                free(img);
 	            }
-	            else
-	            {
-	                // Save original drawing
-	                Image* img = canvasToImage();
-	                if (img)
-	                {
-	                    saveBMP_UI("EnvExport\\Env.bmp", img, img->bin, BMP_RGB);
-	                    free(img->data);
-	                    free(img->bin);
-	                    free(img);
-	                }
-	                else
-	                {
-	                    MessageBox(hWnd, L"Canvas is empty. Draw something first.", L"Save Error", MB_OK | MB_ICONWARNING);
-	                }
-	            }
-
-	            saveEnvironmentSegmentsAsTxt("EnvExport\\Env.txt");
 	        }
+
+	        saveEnvironmentSegmentsAsTxt("EnvExport\\Env.txt");
+
+	        // --- Robot: whichever kind is currently active ---
+	        //
+	        // Each kind saves into its own export folder so posing one
+	        // robot never overwrites another's saved files. Exact same
+	        // per-kind logic the old Robot editor Save button used.
+	        switch (app.robotScene.activeKind)
+	        {
+	            case ROBOT_KIND_ROCKY:
+	            {
+	                CreateDirectoryA("RockyExport", NULL);
+
+	                saveCanvasAsBMP("RockyExport\\rocky.bmp", app.hwndMain, &app);
+	                saveRockyAsEquations("RockyExport\\rocky.txt", &app);
+
+	                // Rob.txt/Arm.txt export (see save.c's
+	                // saveRockyAsRobArm) -- reads the Body/Leg Weight
+	                // edit boxes right before saving so whatever's
+	                // currently typed in is what gets written.
+	                wchar_t weightBuf[64];
+	                GetWindowText(app.ui.hBodyWeightEdit, weightBuf, 64);
+	                app.robotScene.rocky.bodyWeight = (float)wcstod(weightBuf, NULL);
+	                GetWindowText(app.ui.hLegWeightEdit, weightBuf, 64);
+	                app.robotScene.rocky.legWeight = (float)wcstod(weightBuf, NULL);
+
+	                saveRockyAsRobArm(&app);
+	                break;
+	            }
+
+	            case ROBOT_KIND_STILO:
+	                CreateDirectoryA("StiloExport", NULL);
+	                saveCanvasAsBMP("StiloExport\\stilo.bmp", app.hwndMain, &app);
+	                saveStiloAsEquations("StiloExport\\stilo.txt", &app);
+	                break;
+
+	            case ROBOT_KIND_SEMNI:
+	            default:
+	                CreateDirectoryA("SemniExport", NULL);
+	                saveCanvasAsBMP("SemniExport\\semni.bmp", app.hwndMain, &app);
+	                saveRobotAsEquations("SemniExport\\semni.txt", &app);
+	                break;
+	        }
+
+	        // Robot editor's own controls (e.g. the Body/Leg Weight edit
+	        // boxes just read above) can be left with keyboard focus after
+	        // this -- only relevant while that editor is actually showing.
+	        if (editorModeState.currentMode == EDITOR_MODE_SEMNI)
+	            SetFocus(app.hwndMain);
 	    }
 	    else if (LOWORD(wParam) == ID_HELP)
 	    {
