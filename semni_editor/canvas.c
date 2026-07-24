@@ -11,6 +11,7 @@
 #include "config.h"        // For INACTIVE_MODE_DIM_ALPHA
 #include "sim_camera.h"    // Simulation mode's own independent zoom/pan (see sim_camera.h)
 #include "save.h"          // For saveCanvasAsBMP/saveRobotAsEquations/saveRockyAsEquations/saveStiloAsEquations/saveRockyAsRobArm -- File > Save (ID_SAVE below) now dispatches to these directly, folded in from the old Robot editor Save button
+#include "help_dialog.h"   // For showControlsHelpDialog -- Help > Controls Help... (ID_HELP below)
 #include <math.h>
 #include <string.h>
 #include <stdlib.h>        // For wcstod (Rocky's Body/Leg Weight edit boxes, read in ID_SAVE below)
@@ -3125,31 +3126,18 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	    {
 	        // Reference list of every keyboard/mouse control for posing and
 	        // simulating the robot -- File > Controls Help... (main.c's
-	        // buildMainMenu). Replaces an earlier, now-removed floating
-	        // on-screen hint that only ever showed one gesture (Shift +
-	        // Scroll rotate) at a time; this covers all of them at once,
-	        // reachable whenever needed instead of only while hovering the
-	        // right joint. Scoped to Robot Editing + Simulation (posing/
-	        // moving the ROBOT itself), not the Environment canvas's own
-	        // drawing controls, since that's what was actually asked for.
-	        MessageBox(hWnd,
-	            L"Robot Editing (Design > Robot):\n"
-	            L"  Left-click + drag a handle - move/resize/reshape that part\n"
-	            L"  Scroll wheel over a handle - resize that joint's circle\n"
-	            L"  Shift + Scroll over a hip/knee handle - rotate that joint\n"
-	            L"      (Semni: Hip, Knee -- Rocky: Knee -- Stilo: Hip 1, Hip 2)\n"
-	            L"  Left / Right arrow - rotate the whole robot\n"
-	            L"  Up / Down arrow (hold Ctrl for finer steps) - move the whole robot\n"
-	            L"  Esc - back to Environment view\n"
-	            L"\n"
-	            L"Simulation:\n"
-	            L"  Left-click + drag the robot - move it\n"
-	            L"  Shift + Scroll over a hip/knee handle - rotate that joint\n"
-	            L"  Left / Right arrow - rotate the whole robot\n"
-	            L"  G - nudge the robot down; Shift + G - toggle auto gravity\n"
-	            L"  Shift + W - toggle Walk\n"
-	            L"  Ctrl + Numpad 0 - reset the camera",
-	            L"Controls Help", MB_OK | MB_ICONINFORMATION);
+	        // buildMainMenu). A proper modal reference window (see
+	        // help_dialog.c) instead of a single-string MessageBox: section
+	        // headers, a two-column key/description layout, and an OK
+	        // button, reads far more like a real "Keyboard Shortcuts" page.
+	        // Replaces an earlier, now-removed floating on-screen hint that
+	        // only ever showed one gesture (Shift + Scroll rotate) at a
+	        // time; this covers all of them at once, reachable whenever
+	        // needed instead of only while hovering the right joint. Scoped
+	        // to Robot Editing + Simulation (posing/moving the ROBOT
+	        // itself), not the Environment canvas's own drawing controls,
+	        // since that's what was actually asked for.
+	        showControlsHelpDialog(hWnd);
 	    }
 	    return 0;
 	}
