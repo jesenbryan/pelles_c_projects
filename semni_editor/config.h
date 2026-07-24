@@ -304,6 +304,20 @@
 // Arm.txt once that mismatch showed up.
 #define ROCKY_EXPORT_SCALE 2.7105f
 
+// Env.txt export scale (see canvas.c's saveEnvironmentSegmentsAsTxt) --
+// same idea as ROCKY_EXPORT_SCALE above (converts our world units into
+// "his program"'s own units for that same external consumer), but
+// calibrated differently and independently: rather than eyeballing a
+// shape, this compares two "full screen" reference exports directly --
+// a straight line traced across our FULL canvas width came out
+// 3.876643 world units wide (Env.txt: -1.941355 to 1.935288), while his
+// program's own full-screen boundary (its two vertical screen-edge
+// lines) is 31.9 units wide x 18 tall (a 16:9-ish frame, so both axes
+// share one scale, same reasoning as ROCKY_EXPORT_SCALE). 31.9 /
+// 3.876643 = 8.228769 -- recalibrate if a more precise reference
+// measurement becomes available.
+#define ENV_EXPORT_SCALE 8.228769f
+
 // Both editor subsystems (ArcSpline canvas, Semni robot editor) now draw
 // into the same shared window every frame instead of only one being drawn
 // at a time -- switching Design Mode just decides which one is fully

@@ -1909,6 +1909,15 @@ static int saveEnvironmentSegmentsAsTxt(const char* filename)
         float midX   = segmentPointsWorld[midIdx * 2];
         float midY   = segmentPointsWorld[midIdx * 2 + 1];
 
+        // ENV_EXPORT_SCALE (config.h) applied right before writing, same
+        // convention save.c's saveRockyAsRobArm uses for Rob.txt/Arm.txt --
+        // converts our world units into "his program"'s own units so an
+        // environment traced to look right in OUR editor doesn't come out
+        // a fraction of the size once loaded there.
+        startX *= ENV_EXPORT_SCALE; startY *= ENV_EXPORT_SCALE;
+        endX   *= ENV_EXPORT_SCALE; endY   *= ENV_EXPORT_SCALE;
+        midX   *= ENV_EXPORT_SCALE; midY   *= ENV_EXPORT_SCALE;
+
         fprintf(f, "%.6f %.6f %.6f %.6f %.6f %.6f\n", startX, startY, endX, endY, midX, midY);
     }
 
