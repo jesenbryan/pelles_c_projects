@@ -1068,6 +1068,25 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     float maxDelta = range.halfWidthDeg - SHIN_ARC_ANGLE_MARGIN_DEG;
                     if (maxDelta < SHIN_ARC_SIDE_MARGIN_DEG) maxDelta = SHIN_ARC_SIDE_MARGIN_DEG;
 
+                    // NEW: same mirror-aware side derivation as Semni's
+                    // draggingThigh1/draggingShin1 (see their comments in
+                    // the ROBOT_KIND_SEMNI block above). mirrorRockyLeg
+                    // (robot.c) reflects shinArc1Angle via mirrorArcAngle's
+                    // "180 - angle" trick -- a genuine mirror reflection,
+                    // which reverses orientation even though kneeCircle/
+                    // footCircle (and so range.centerDeg) don't move: the
+                    // side of centerDeg that was "correct" before mirroring
+                    // ends up on the OPPOSITE side after. The hardcoded
+                    // "always negative" clamp used to snap the arc back to
+                    // the wrong side the instant a drag started on a
+                    // mirrored leg -- re-deriving the side from
+                    // rockyShinArcDragStartAngle (the actual current angle)
+                    // fixes that the same way it did for Semni.
+                    float startDelta = app->rockyShinArcDragStartAngle - range.centerDeg;
+                    while (startDelta > 180.0f) startDelta -= 360.0f;
+                    while (startDelta < -180.0f) startDelta += 360.0f;
+                    BOOL positiveSide = (startDelta >= 0.0f);
+
                     float perpNow = perpOffsetOnAxis(rockyShinLocalMouse, app->robotScene.rocky.kneeCircle, app->robotScene.rocky.footCircle);
                     float raw = app->rockyShinArcDragStartAngle + (perpNow - app->rockyShinArcDragStartPerp) * SHIN_ARC_DRAG_SENSITIVITY_DEG_PER_UNIT;
 
@@ -1075,8 +1094,16 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     while (delta > 180.0f) delta -= 360.0f;
                     while (delta < -180.0f) delta += 360.0f;
 
-                    if (delta > -SHIN_ARC_SIDE_MARGIN_DEG) delta = -SHIN_ARC_SIDE_MARGIN_DEG;
-                    if (delta < -maxDelta) delta = -maxDelta;
+                    if (positiveSide)
+                    {
+                        if (delta < SHIN_ARC_SIDE_MARGIN_DEG) delta = SHIN_ARC_SIDE_MARGIN_DEG;
+                        if (delta > maxDelta) delta = maxDelta;
+                    }
+                    else
+                    {
+                        if (delta > -SHIN_ARC_SIDE_MARGIN_DEG) delta = -SHIN_ARC_SIDE_MARGIN_DEG;
+                        if (delta < -maxDelta) delta = -maxDelta;
+                    }
 
                     app->robotScene.rocky.shinArc1Angle = range.centerDeg + delta;
                 }
@@ -1337,6 +1364,20 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     float maxDelta = range.halfWidthDeg - THIGH_ARC_ANGLE_MARGIN_DEG;
                     if (maxDelta < THIGH_ARC_SIDE_MARGIN_DEG) maxDelta = THIGH_ARC_SIDE_MARGIN_DEG;
 
+                    // NEW: mirror-aware side derivation, same fix as
+                    // Semni's draggingThigh1/draggingShin1 and Rocky's
+                    // draggingRockyShin1 (see their comments) -- mirrorStiloLeg
+                    // reflects hip1Circle/feet1Circle/thigh1Arc1Angle through
+                    // a true screen-space mirror, which reverses orientation,
+                    // so the hardcoded "always negative" side lock this used
+                    // to have was wrong on a mirrored leg 1. Re-derive which
+                    // side is currently correct from stiloThigh1ArcDragStartAngle
+                    // (the actual angle at drag start) instead of assuming.
+                    float startDelta = app->stiloThigh1ArcDragStartAngle - range.centerDeg;
+                    while (startDelta > 180.0f) startDelta -= 360.0f;
+                    while (startDelta < -180.0f) startDelta += 360.0f;
+                    BOOL positiveSide = (startDelta >= 0.0f);
+
                     float perpNow = perpOffsetOnAxis(stiloLeg1LocalMouse, app->robotScene.stilo.hip1Circle, app->robotScene.stilo.feet1Circle);
                     float raw = app->stiloThigh1ArcDragStartAngle + (perpNow - app->stiloThigh1ArcDragStartPerp) * THIGH_ARC_DRAG_SENSITIVITY_DEG_PER_UNIT;
 
@@ -1344,8 +1385,16 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     while (delta > 180.0f) delta -= 360.0f;
                     while (delta < -180.0f) delta += 360.0f;
 
-                    if (delta > -THIGH_ARC_SIDE_MARGIN_DEG) delta = -THIGH_ARC_SIDE_MARGIN_DEG;
-                    if (delta < -maxDelta) delta = -maxDelta;
+                    if (positiveSide)
+                    {
+                        if (delta < THIGH_ARC_SIDE_MARGIN_DEG) delta = THIGH_ARC_SIDE_MARGIN_DEG;
+                        if (delta > maxDelta) delta = maxDelta;
+                    }
+                    else
+                    {
+                        if (delta > -THIGH_ARC_SIDE_MARGIN_DEG) delta = -THIGH_ARC_SIDE_MARGIN_DEG;
+                        if (delta < -maxDelta) delta = -maxDelta;
+                    }
 
                     app->robotScene.stilo.thigh1Arc1Angle = range.centerDeg + delta;
                 }
@@ -1408,6 +1457,15 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     float maxDelta = range.halfWidthDeg - THIGH_ARC_ANGLE_MARGIN_DEG;
                     if (maxDelta < THIGH_ARC_SIDE_MARGIN_DEG) maxDelta = THIGH_ARC_SIDE_MARGIN_DEG;
 
+                    // NEW: same mirror-aware side derivation as leg 1's
+                    // draggingStiloThigh1Arc1 above (see its comment) --
+                    // mirrorStiloLeg2 reflects leg 2 the same way
+                    // mirrorStiloLeg reflects leg 1.
+                    float startDelta = app->stiloThigh2ArcDragStartAngle - range.centerDeg;
+                    while (startDelta > 180.0f) startDelta -= 360.0f;
+                    while (startDelta < -180.0f) startDelta += 360.0f;
+                    BOOL positiveSide = (startDelta >= 0.0f);
+
                     float perpNow = perpOffsetOnAxis(stiloLeg2LocalMouse, app->robotScene.stilo.hip2Circle, app->robotScene.stilo.feet2Circle);
                     float raw = app->stiloThigh2ArcDragStartAngle + (perpNow - app->stiloThigh2ArcDragStartPerp) * THIGH_ARC_DRAG_SENSITIVITY_DEG_PER_UNIT;
 
@@ -1415,8 +1473,16 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     while (delta > 180.0f) delta -= 360.0f;
                     while (delta < -180.0f) delta += 360.0f;
 
-                    if (delta > -THIGH_ARC_SIDE_MARGIN_DEG) delta = -THIGH_ARC_SIDE_MARGIN_DEG;
-                    if (delta < -maxDelta) delta = -maxDelta;
+                    if (positiveSide)
+                    {
+                        if (delta < THIGH_ARC_SIDE_MARGIN_DEG) delta = THIGH_ARC_SIDE_MARGIN_DEG;
+                        if (delta > maxDelta) delta = maxDelta;
+                    }
+                    else
+                    {
+                        if (delta > -THIGH_ARC_SIDE_MARGIN_DEG) delta = -THIGH_ARC_SIDE_MARGIN_DEG;
+                        if (delta < -maxDelta) delta = -maxDelta;
+                    }
 
                     app->robotScene.stilo.thigh2Arc1Angle = range.centerDeg + delta;
                 }

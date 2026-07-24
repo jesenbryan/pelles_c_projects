@@ -1,10 +1,4 @@
-rocky, 2 legs without knee editor
-export 4 txt data (body, env, thigh, shin) in format like in D:
 
-scale the robot (1 unit = 18.75 mm), whole screen is 32:18
-arc segment ( 2 schnittpunkte, 1 punkt irgendwo ideally mittelpunkt)
 
-better reconstruction for environment, no gap
 
-env scaling
 
