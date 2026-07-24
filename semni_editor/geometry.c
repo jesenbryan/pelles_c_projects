@@ -304,6 +304,124 @@ static double arcSagitta(double chordLen, double r)
     return r - sqrt(inner);
 }
 
+// --- Sharp-corner detection (run BEFORE recursiveArcFit, see buildSegments) ---
+//
+// A true corner (e.g. an L-shaped/right-angle bend in a hand-drawn shape)
+// is neither a line nor a circle: a line can't bend, and a circle tight
+// enough to explain a real corner over just a few pixels would have to be
+// absurdly small. Left for recursiveArcFit's bisection to find on its own,
+// the split that finally isolates it almost never lands exactly ON the
+// corner pixel (bisection just cuts at n/2), so the small leaf segment
+// that eventually gives up and falls back to a straight chord
+// (MIN_POINTS_FOR_ARC) typically spans a few pixels on EACH side of the
+// actual vertex -- cutting the corner off with a diagonal shortcut instead
+// of reaching it, which is what shows up on screen as a small gap/notch
+// right at a sharp corner. Detecting corners explicitly beforehand and
+// forcing a hard split exactly AT the corner pixel (shared between both
+// arms, same convention recursiveArcFit already uses at its own bisection
+// midpoints) means neither arm's fit ever has to average across the
+// vertex.
+// NOTE: an earlier version of this detector tried "does neither a line NOR
+// a circle fit this small window within ARC_FIT_TOLERANCE" -- it turns out
+// a small enough circle (a couple pixels' radius) fits a real right-angle
+// corner's own immediate neighborhood almost perfectly too (a corner IS the
+// limit of a circle as its radius shrinks to zero), so that test simply
+// never fired on a real corner at any window size small enough to still
+// localize it precisely. What actually distinguishes a genuine corner from
+// a genuine tight curve isn't the LOCAL fit residual, it's how the turning
+// is distributed: a corner concentrates all of its direction change at one
+// point (dead straight immediately either side of it), while a real circle
+// -- however tight -- turns at close to the same steady rate everywhere
+// along it. So this compares the turn angle AT a candidate point against
+// the turn angle safely further along the path on either side: a large,
+// ISOLATED spike is a corner; a turn angle that's just as large a bit
+// further away too is ordinary (if tight) curvature.
+// Values below were swept against synthetic test paths (see the buildSegments
+// verification harness), not guessed: a noisy-but-straight line (independent
+// +/-1..2px per-point jitter, well beyond what real tracing/thinning noise
+// usually looks like) never scores above 0 with these settings, a genuine
+// 90-degree corner scores 90, a 60-degree corner still scores correctly, a
+// gentle 15-degree bend correctly scores below 0 (left for ordinary arc-
+// fitting), and real circles from radius 10 to 80px never false-positive.
+#define CORNER_PI            3.14159265358979323846
+#define CORNER_HALF_WINDOW   8      // points sampled on each side, right at the candidate, to measure its own turn angle
+#define CORNER_OFFSET        32     // how far away (each side) the "is this turning everywhere, or just here" comparison point sits
+#define CORNER_ANGLE_MIN_DEG 55.0   // minimum turn (degrees) to even consider a point -- ordinary curve/raster noise stays well under this
+#define CORNER_SPIKE_RATIO   2.0    // candidate's turn angle must exceed the neighboring comparison angle by at least this factor
+#define CORNER_MERGE_WINDOW  (CORNER_HALF_WINDOW * 2)  // candidate corners this close together are the same corner
+#define MAX_CORNERS          256
+
+// Angle (degrees, 0..180) between the chord INTO pts[i] (from pts[i-hw])
+// and the chord OUT OF pts[i] (to pts[i+hw]) -- 0 means dead straight
+// through pts[i], larger means a sharper local turn. Returns -1 if the
+// window falls outside the path.
+static double turnAngleDeg(Point* pts, int n, int i, int hw)
+{
+    int back = i - hw, fwd = i + hw;
+    if (back < 0 || fwd >= n) return -1.0;
+
+    double ax = pts[i].x - pts[back].x, ay = pts[i].y - pts[back].y;
+    double bx = pts[fwd].x - pts[i].x,  by = pts[fwd].y - pts[i].y;
+    double la = sqrt(ax * ax + ay * ay);
+    double lb = sqrt(bx * bx + by * by);
+    if (la < 1e-6 || lb < 1e-6) return 0.0;
+
+    double cosA = (ax * bx + ay * by) / (la * lb);
+    if (cosA > 1.0) cosA = 1.0;
+    if (cosA < -1.0) cosA = -1.0;
+    return acos(cosA) * (180.0 / CORNER_PI);
+}
+
+// Returns pts[i]'s "corner sharpness" score (its own turn angle) if it
+// passes both the minimum-angle and isolated-spike tests, or a negative
+// value if it doesn't qualify as a corner at all. Higher score = sharper.
+static double cornerScore(Point* pts, int n, int i)
+{
+    if (i - CORNER_OFFSET < 0 || i + CORNER_OFFSET >= n) return -1.0;
+
+    double angC = turnAngleDeg(pts, n, i, CORNER_HALF_WINDOW);
+    if (angC < CORNER_ANGLE_MIN_DEG) return -1.0;
+
+    double angBefore = turnAngleDeg(pts, n, i - CORNER_OFFSET, CORNER_HALF_WINDOW);
+    double angAfter  = turnAngleDeg(pts, n, i + CORNER_OFFSET, CORNER_HALF_WINDOW);
+    double neighborMax = (angBefore > angAfter) ? angBefore : angAfter;
+    if (neighborMax < 1e-6) neighborMax = 1e-6;
+
+    if (angC <= neighborMax * CORNER_SPIKE_RATIO) return -1.0;
+    return angC;
+}
+
+// Scans the whole path for corner candidates and collapses any cluster of
+// adjacent candidates (a real corner's transition typically scores above
+// threshold at several consecutive indices, not just one) down to
+// whichever single index in that cluster scored sharpest -- that's the
+// pixel closest to the actual vertex. Returns the count; indices are
+// written in path order.
+static int findCorners(Point* pts, int n, int* cornerIdx, int maxCorners)
+{
+    int count = 0;
+    int pendingIdx = -1;
+    double pendingScore = -1.0;
+
+    for (int i = 0; i < n; i++)
+    {
+        double score = cornerScore(pts, n, i);
+        if (score < 0.0) continue;
+
+        if (pendingIdx >= 0 && (i - pendingIdx) <= CORNER_MERGE_WINDOW) {
+            if (score > pendingScore) { pendingIdx = i; pendingScore = score; }
+            continue;
+        }
+
+        if (pendingIdx >= 0 && count < maxCorners) cornerIdx[count++] = pendingIdx;
+        pendingIdx = i;
+        pendingScore = score;
+    }
+
+    if (pendingIdx >= 0 && count < maxCorners) cornerIdx[count++] = pendingIdx;
+    return count;
+}
+
 // Returns 0 once maxSegments has been hit, so the caller stops recursing.
 static int recursiveArcFit(Point* pts, int n, ArcSegment* out, int maxSegments, int* segCount)
 {
@@ -361,7 +479,41 @@ static int recursiveArcFit(Point* pts, int n, ArcSegment* out, int maxSegments, 
 int buildSegments(Point* path, int n, ArcSegment* out)
 {
     int segCount = 0;
-    recursiveArcFit(path, n, out, MAX_ARC_SEGMENTS, &segCount);
+
+    // Split the path at any detected sharp corners FIRST, then run the
+    // normal recursive line/arc fit independently on each corner-to-corner
+    // piece (see findCorners above for why -- this is what stops a right-
+    // angle bend from getting cut off by a leaf line segment that
+    // straddles it). Each piece shares its boundary point with its
+    // neighbor (pieceStart of one == pieceEndIdx of the previous), same
+    // "shared joint" convention recursiveArcFit's own bisection uses, so
+    // there's never a gap introduced at a corner split itself.
+    int cornerIdx[MAX_CORNERS];
+    int cornerCount = findCorners(path, n, cornerIdx, MAX_CORNERS);
+
+    // Marks the last out[] index produced by each piece (except the very
+    // last one) so the straight-line merge pass below can never fuse
+    // segments from two DIFFERENT pieces back together across a real
+    // corner -- doing so would draw one straight chord from the start of
+    // one arm to the end of the next, cutting the actual vertex off again,
+    // exactly the bug the corner split above exists to prevent.
+    int noMergeAfter[MAX_ARC_SEGMENTS];
+    memset(noMergeAfter, 0, sizeof(noMergeAfter));
+
+    int pieceStart = 0;
+    for (int c = 0; c <= cornerCount; c++)
+    {
+        int pieceEndIdx = (c < cornerCount) ? cornerIdx[c] : (n - 1);
+        int pieceLen = pieceEndIdx - pieceStart + 1;
+
+        if (pieceLen >= 2)
+            recursiveArcFit(path + pieceStart, pieceLen, out, MAX_ARC_SEGMENTS, &segCount);
+
+        if (c < cornerCount && segCount > 0 && segCount <= MAX_ARC_SEGMENTS)
+            noMergeAfter[segCount - 1] = 1;
+
+        pieceStart = pieceEndIdx;
+    }
 
     // NEW: recursiveArcFit's bisection can chop one long straight run into
     // several small consecutive line segments - each individually correct
@@ -373,14 +525,15 @@ int buildSegments(Point* path, int n, ArcSegment* out)
     // pushLineSegment() already uses for "no meaningful circle here" (see
     // sampleArcPoints() in canvas_bridge.c) - so this never touches or
     // reinterprets any segment that was actually curve-fit; it only merges
-    // segments the fitter already agreed were straight lines.
+    // segments the fitter already agreed were straight lines (and never
+    // crosses a noMergeAfter corner boundary - see above).
     int mergedCount = 0;
     for (int i = 0; i < segCount; )
     {
         if (out[i].circle.r == 0.0f)
         {
             int j = i;
-            while (j + 1 < segCount && out[j + 1].circle.r == 0.0f) j++;
+            while (j + 1 < segCount && out[j + 1].circle.r == 0.0f && !noMergeAfter[j]) j++;
 
             if (j > i)
             {
