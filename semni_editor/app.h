@@ -351,6 +351,24 @@ typedef struct {
     RobotScene robotScene;
     UIState ui;
 
+    // TRUE whenever the currently-hovered joint (Semni's Hip/Knee, Rocky's
+    // Knee, Stilo's Hip1/Hip2 -- see input.c's WM_MOUSEMOVE, right
+    // alongside the hoverLabel/rockyHoverLabel/stiloHoverLabel
+    // assignments) supports the Shift+Scroll rotate gesture. Drives a
+    // floating "(Shift + Scroll: rotate)" hint drawn directly in GL (no
+    // backdrop, unlike the native hHoverLabel control) just above the
+    // bottom-left hover panel -- see canvas.c's canvasRenderFrame and
+    // hoverPanelScreenX/Y below.
+    int showRotateHint;
+
+    // The bottom-left hover panel's own screen-space top-left corner (see
+    // input.c's WM_SIZE, which computes and stores these every resize) --
+    // exposed here so canvas.c's canvasRenderFrame can position the
+    // showRotateHint text directly above it without recomputing (and
+    // risking drifting out of sync with) input.c's own layout constants.
+    int hoverPanelScreenX;
+    int hoverPanelScreenY;
+
     // handle interaction: which handle is active, which are being
     // dragged, and which are merely being hovered over
     int activeHandle;

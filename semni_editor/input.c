@@ -973,12 +973,7 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 if (app->hoverRockyBody)
                     rockyHoverLabel = L"Body";
                 else if (app->hoverRockyKnee)
-                    // Same control-hint-in-the-label idea as Semni's own
-                    // Hip/Knee above -- Rocky's knee is the only joint that
-                    // supports Shift+Scroll rotate (see WM_MOUSEWHEEL's
-                    // ROBOT_KIND_ROCKY branch); the body/foot handles are
-                    // plain-scroll resize only, so they don't get this hint.
-                    rockyHoverLabel = L"Knee (Shift + Scroll: rotate)";
+                    rockyHoverLabel = L"Knee";
                 else if (app->hoverRockyFoot)
                     rockyHoverLabel = L"Foot";
                 else if (isNear(app->mouseGL, rockyShin1World, ROCKY_SHIN_HANDLE_RADIUS))
@@ -990,6 +985,13 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 else if (app->hoverRockyEdge == ROCKY_EDGE_TOP || app->hoverRockyEdge == ROCKY_EDGE_BOTTOM)
                     rockyHoverLabel = L"Body Height";
                 SetWindowText(app->ui.hHoverLabel, rockyHoverLabel);
+
+                // Drives the floating "(Shift + Scroll: rotate)" hint --
+                // see canvas.c's canvasRenderFrame. Rocky's knee is the
+                // only joint with that gesture (WM_MOUSEWHEEL's
+                // ROBOT_KIND_ROCKY branch); body/foot are plain-scroll
+                // resize only.
+                app->showRotateHint = app->hoverRockyKnee;
 
                 if (app->draggingRockyBody)
                 {
@@ -1234,12 +1236,7 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     else if (isNear(stiloMouse, stiloSeamArc2HandleWorldHover, ARC_HANDLE_RADIUS))
                         stiloHoverLabel = L"Seam Arc 2";
                     else if (app->hoverStiloHip1)
-                        // Same control-hint-in-the-label idea as Semni's/
-                        // Rocky's own hip/knee above -- Stilo's hips are its
-                        // only joints with a Shift+Scroll rotate gesture
-                        // (see WM_MOUSEWHEEL's ROBOT_KIND_STILO branch);
-                        // Feet 1/2 are plain-scroll resize only.
-                        stiloHoverLabel = L"Hip 1 (Shift + Scroll: rotate)";
+                        stiloHoverLabel = L"Hip 1";
                     else if (isNear(stiloMouse, stiloThigh1Arc1WorldHover, THIGH_HANDLE_RADIUS))
                         stiloHoverLabel = L"Thigh 1 Arc 1";
                     else if (isNear(stiloMouse, stiloThigh1Arc2WorldHover, THIGH_HANDLE_RADIUS))
@@ -1247,7 +1244,7 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     else if (app->hoverStiloFeet1)
                         stiloHoverLabel = L"Feet 1";
                     else if (app->hoverStiloHip2)
-                        stiloHoverLabel = L"Hip 2 (Shift + Scroll: rotate)";
+                        stiloHoverLabel = L"Hip 2";
                     else if (isNear(stiloMouse, stiloThigh2Arc1WorldHover, THIGH_HANDLE_RADIUS))
                         stiloHoverLabel = L"Thigh 2 Arc 1";
                     else if (isNear(stiloMouse, stiloThigh2Arc2WorldHover, THIGH_HANDLE_RADIUS))
@@ -1260,6 +1257,13 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                         stiloHoverLabel = L"Head";
 
                     SetWindowText(app->ui.hHoverLabel, stiloHoverLabel);
+
+                    // Drives the floating "(Shift + Scroll: rotate)" hint --
+                    // see canvas.c's canvasRenderFrame. Stilo's hips are its
+                    // only joints with that gesture (WM_MOUSEWHEEL's
+                    // ROBOT_KIND_STILO branch); Feet 1/2 are plain-scroll
+                    // resize only.
+                    app->showRotateHint = app->hoverStiloHip1 || app->hoverStiloHip2;
                 }
 
                 if (!app->draggingStiloSeamArc1 && !app->draggingStiloSeamArc2 &&
@@ -1633,14 +1637,9 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 else if (isNear(mouse, seamArc2HandleWorldHover, ARC_HANDLE_RADIUS))
                     hoverLabel = L"Seam Arc 2";
                 else if (app->hoverHip)
-                    // Control hint appended right in the hover label itself
-                    // -- same bottom-left strip, only shown while actually
-                    // hovering a joint that supports it (see WM_MOUSEWHEEL's
-                    // shiftHeld-gated hipAngle rotate), so it never clutters
-                    // the screen for handles that don't have this gesture.
-                    hoverLabel = L"Hip (Shift + Scroll: rotate)";
+                    hoverLabel = L"Hip";
                 else if (app->hoverKnee)
-                    hoverLabel = L"Knee (Shift + Scroll: rotate)";
+                    hoverLabel = L"Knee";
                 else if (isNear(mouse, thigh1WorldHover, THIGH_HANDLE_RADIUS))
                     hoverLabel = L"Thigh Arc 1";
                 else if (isNear(mouse, thigh2WorldHover, THIGH_HANDLE_RADIUS))
@@ -1670,6 +1669,13 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     hoverLabel = L"Head";
 
                 SetWindowText(app->ui.hHoverLabel, hoverLabel);
+
+                // Drives the separate floating "(Shift + Scroll: rotate)"
+                // hint (drawn in GL, no backdrop, above the hover panel --
+                // see canvas.c's canvasRenderFrame) -- Hip/Knee are the only
+                // joints on Semni with that gesture (WM_MOUSEWHEEL's
+                // shiftHeld-gated hipAngle/kneeAngle rotate).
+                app->showRotateHint = app->hoverHip || app->hoverKnee;
             }
 
             if (!app->draggingSeamArc1 && !app->draggingSeamArc2 &&
@@ -2697,19 +2703,22 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                  SWP_NOZORDER);
 
             // ---- bottom-left hover status strip ----
-            // Widened from 280 -- the Hip/Knee/Hip 1/Hip 2 labels now
-            // append a "(Shift + Scroll: rotate)" control hint (see
-            // WM_MOUSEMOVE's hoverLabel/rockyHoverLabel/stiloHoverLabel
-            // assignments) whenever hovering one of those joints, and the
-            // longest of those ("Hip 2 (Shift + Scroll: rotate)") didn't
-            // fit in the old width.
             int hoverPad = 8;
-            int hoverLabelW = 340;
+            int hoverLabelW = 280;
             int hoverLabelH = 20;
             int hoverPanelW = hoverLabelW + hoverPad * 2;
             int hoverPanelH = hoverLabelH + hoverPad * 2;
             int hoverPanelX = outerMargin;
             int hoverPanelY = rect.bottom - outerMargin - hoverPanelH;
+
+            // Shared with canvas.c's canvasRenderFrame -- the floating
+            // "(Shift + Scroll: rotate)" hint (app->showRotateHint, GL-
+            // drawn with no backdrop, unlike this native hover panel) is
+            // positioned directly above this same panel, so its exact
+            // screen rect is exposed here instead of canvas.c recomputing
+            // (and risking drifting out of sync with) these same numbers.
+            app->hoverPanelScreenX = hoverPanelX;
+            app->hoverPanelScreenY = hoverPanelY;
 
             // Same HWND_BOTTOM pinning as hControlPanel above.
             SetWindowPos(app->ui.hHoverPanel, HWND_BOTTOM,

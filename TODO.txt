@@ -6,5 +6,3 @@ arc segment ( 2 schnittpunkte, 1 punkt irgendwo ideally mittelpunkt)
 
 better reconstruction for environment, no gap
 
-laborbericht
-bezier curve

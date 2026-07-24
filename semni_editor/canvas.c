@@ -1529,6 +1529,35 @@ void canvasRenderFrame(float dimAmount)
         glPopAttrib();
     }
 
+    // Floating "(Shift + Scroll: rotate)" control hint -- Robot-mode-only
+    // (app.showRotateHint, see input.c's WM_MOUSEMOVE, is only ever set
+    // TRUE while hovering a joint that actually has this gesture: Semni's
+    // Hip/Knee, Rocky's Knee, Stilo's Hip1/Hip2), drawn with NO backdrop
+    // quad at all -- unlike the native hHoverLabel/hHoverPanel controls
+    // just below it on screen, this is plain GL text straight over
+    // whatever's rendered behind it, so there's nothing to make
+    // "invisible" in the first place. Positioned directly above that same
+    // hover panel using its exact screen rect (app.hoverPanelScreenX/Y,
+    // computed in input.c's WM_SIZE) rather than recomputing input.c's own
+    // layout constants here and risking the two drifting apart -- flipped
+    // from Windows' top-down client Y into this ortho's bottom-up Y
+    // (glWindowHeight - hoverPanelScreenY lands exactly on the panel's own
+    // top edge), then nudged up a few more pixels for clearance.
+    if (semniModeActive && app.showRotateHint)
+    {
+        const char* hintStr = "(Shift + Scroll: rotate)";
+
+        int hintX = app.hoverPanelScreenX + 8; // 8 == input.c's hoverPad, lines up with the label's own left edge
+        int hintY = (glWindowHeight - app.hoverPanelScreenY) + 6;
+
+        glColor4f(0.3f, 0.3f, 0.3f, 1.0f);
+        glRasterPos2i(hintX, hintY);
+        glPushAttrib(GL_LIST_BIT);
+        glListBase(fontBase - 32);
+        glCallLists((GLsizei)strlen(hintStr), GL_UNSIGNED_BYTE, hintStr);
+        glPopAttrib();
+    }
+
     // NEW: persistent top-left mode/layer indicator - otherwise the
     // only way to tell Design/Robot/Environment apart is to open the
     // Mode menu and see which item is checked.
