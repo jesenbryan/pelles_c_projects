@@ -1286,13 +1286,20 @@ void canvasRenderFrame(float dimAmount)
 	        // canvas_bridge.c), so the reconstruction respects each stroke's
 	        // actual original thickness instead of rendering every segment
 	        // at the same made-up width regardless of how thick it really was.
-	        // 2x'd on top of the recovered original thickness -- this ribbon
-	        // (not the dashed ghost CIRCLE outline further below) is the
-	        // actual colorful reconstructed line the user sees for View
-	        // Segments/Comparison Mode, and at its original 1x width the
-	        // hovered segment's highlight color was hard to make out against
-	        // its neighbors.
-	        float ghostHalfW = (segmentAvgRadiusPx[s] * canvas.zoom) / (float)glWindowWidth * 2.0f;
+	        //
+	        // The 2x bump is View-Segments-only: that ribbon (not the dashed
+	        // ghost CIRCLE outline further below) is the actual colorful
+	        // reconstructed line the user sees, and at its original 1x width
+	        // the hovered segment's highlight color was hard to make out
+	        // against its neighbors. Comparison Mode's whole point is an
+	        // apples-to-apples look against the real original stroke, so it
+	        // keeps the true 1x width (segmentAvgRadiusPx is already
+	        // corrected to match strokeThickness's own units, same as the
+	        // untouched original-stroke render above) -- doubling it there
+	        // too made the reconstruction visibly thicker than the drawing
+	        // it's supposed to be compared against.
+	        float baseHalfW = (segmentAvgRadiusPx[s] * canvas.zoom) / (float)glWindowWidth;
+	        float ghostHalfW = isComparisonActive ? baseHalfW : baseHalfW * 2.0f;
 	        float halfW = isHovered ? ghostHalfW * 1.5f : ghostHalfW;
 
 	        glBegin(GL_TRIANGLE_STRIP);

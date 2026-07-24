@@ -2,13 +2,18 @@
 
 #include <math.h>
 
-// Previously 64 - too tight for a long, genuinely straight line. Every
-// failed circle-fit on a (near-)collinear run forces another bisection
-// (see recursiveArcFit in geometry.c), and a long straight stroke can need
-// well over 100 tiny leaf segments before settling - hitting the old cap
-// mid-bisection silently dropped the rest of the stroke instead of just
-// producing more (later merged, see buildSegments) segments.
-#define MAX_ARC_SEGMENTS 256
+// Previously 64, then 256 - both turned out too tight. recursiveArcFit's
+// cap is checked DURING recursion (buildSegments never looks at its return
+// value), so once a single long/jittery hand-drawn curve's bisection hits
+// the cap mid-stroke, the rest of that path - or, since pipeline.c
+// accumulates every component's segments into one shared MAX_ARC_SEGMENTS-
+// sized array, every OTHER stroke/component still waiting to be traced -
+// is silently dropped instead of appearing as more (later merged, see
+// buildSegments) segments. That silent drop is exactly what shows up on
+// screen as "part of the drawing never got reconstructed, it's just the
+// original underneath". Bumped well past any realistic single-drawing
+// segment count instead of nudging it again.
+#define MAX_ARC_SEGMENTS 2048
 
 typedef struct {
     int x;
