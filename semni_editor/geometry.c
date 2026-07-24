@@ -259,6 +259,51 @@ static double maxCircleDeviation(Point* pts, int n, Circle c)
     return maxErr;
 }
 
+// Max perpendicular deviation of pts[] from the straight chord connecting
+// pts[0] to pts[n-1] -- the "is this run of points already a line?" test,
+// checked BEFORE ever attempting a circle fit. fitCircleToPoints is an
+// unconstrained algebraic (Kasa) fit: handed a handful of pixels with
+// ordinary tracing/thinning noise, it will always return SOME circle, and
+// that circle's residual (maxCircleDeviation) can easily land under
+// ARC_FIT_TOLERANCE even when the points are, for all practical purposes,
+// straight -- silently turning one straight stroke into a string of small
+// separate arcs (each carrying its own ghost-circle overlay). Testing the
+// simpler straight-line explanation first means a genuinely straight run
+// never reaches the circle fit at all.
+static double maxLineDeviation(Point* pts, int n)
+{
+    double x0 = pts[0].x, y0 = pts[0].y;
+    double x1 = pts[n - 1].x, y1 = pts[n - 1].y;
+    double dx = x1 - x0, dy = y1 - y0;
+    double len = sqrt(dx * dx + dy * dy);
+    if (len < 1e-6) return 1e18;   // coincident endpoints - can't define a line, let the circle fit decide
+
+    double maxErr = 0.0;
+    for (int i = 0; i < n; i++) {
+        double d = fabs(dy * (pts[i].x - x0) - dx * (pts[i].y - y0)) / len;
+        if (d > maxErr) maxErr = d;
+    }
+    return maxErr;
+}
+
+// How far a circular arc of radius r spanning chord length `chordLen`
+// bulges away from its own straight chord (the sagitta). Used to catch
+// circle fits that technically pass maxCircleDeviation but describe a
+// curve so shallow it's visually identical to a straight line at this same
+// ARC_FIT_TOLERANCE -- e.g. a huge-radius circle quietly explaining a bit
+// of S-shaped tracing noise the straight-line test above rejected. Rather
+// than accept that as a "real" arc (another source of straight strokes
+// rendering as strings of circles), this is checked against the SAME
+// tolerance already used to accept the fit in the first place, so there's
+// no new magic constant to tune.
+static double arcSagitta(double chordLen, double r)
+{
+    double half = chordLen * 0.5;
+    double inner = r * r - half * half;
+    if (inner < 0.0) inner = 0.0;
+    return r - sqrt(inner);
+}
+
 // Returns 0 once maxSegments has been hit, so the caller stops recursing.
 static int recursiveArcFit(Point* pts, int n, ArcSegment* out, int maxSegments, int* segCount)
 {
@@ -270,12 +315,28 @@ static int recursiveArcFit(Point* pts, int n, ArcSegment* out, int maxSegments, 
         return 1;
     }
 
+    // Straight-line check FIRST (see maxLineDeviation) -- a run that's
+    // already collinear within tolerance is reported as a line outright,
+    // without ever risking a spurious circle fit.
+    if (maxLineDeviation(pts, n) <= ARC_FIT_TOLERANCE) {
+        pushLineSegment(pts, n, out, segCount);
+        return 1;
+    }
+
     Circle c = {0};
     int ok = fitCircleToPoints(pts, n, &c);
     int radiusReasonable = ok && c.r < 100000.0f;
     double err = (ok && radiusReasonable) ? maxCircleDeviation(pts, n, c) : 1e18;
 
-    if (ok && radiusReasonable && err <= ARC_FIT_TOLERANCE) {
+    // A fit can pass err <= ARC_FIT_TOLERANCE yet still describe a curve so
+    // shallow (sagitta below that same tolerance) it's indistinguishable
+    // from straight -- reject it here too so it falls through to the
+    // bisect-then-remerge path below instead of being drawn as its own arc.
+    double chordLen = hypot((double)pts[n - 1].x - pts[0].x, (double)pts[n - 1].y - pts[0].y);
+    int curvatureNegligible = ok && radiusReasonable &&
+                               (arcSagitta(chordLen, (double)c.r) <= ARC_FIT_TOLERANCE);
+
+    if (ok && radiusReasonable && err <= ARC_FIT_TOLERANCE && !curvatureNegligible) {
         out[*segCount].pts          = pts;
         out[*segCount].count        = n;
         out[*segCount].circle       = c;

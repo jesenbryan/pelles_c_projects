@@ -189,6 +189,28 @@ static void sampleArcPoints(ArcSegment* seg, SampleF* outPts, int* outCount, int
         outPts[i].x = (float)(c.cx + c.r * cos(a));
         outPts[i].y = (float)(c.cy + c.r * sin(a));
     }
+
+    // NEW: force the two ends of this sampled arc to be the EXACT raw path
+    // pixel (p0/p1), not their circle-projected position. p0/p1 are
+    // themselves ordinary pixels from the single shared path buffer, and
+    // buildSegments's recursive split always hands the two halves of a run
+    // a literal shared boundary point (out[i].pts/out[i+1].pts overlap by
+    // exactly that one Point) -- so the neighboring segment on either side
+    // of this one has that exact same raw pixel as ITS p1/p0. But each
+    // segment fits its OWN circle independently, and that fit is rarely
+    // perfect (residual up to ARC_FIT_TOLERANCE), so projecting the shared
+    // point onto two different circles yields two slightly different
+    // world positions - a visible gap in the reconstructed ribbon
+    // (segmentPointsWorld), since canvas.c draws each segment's ribbon
+    // separately. Snapping both ends back to the one raw pixel they
+    // actually share makes adjacent segments meet at a bit-identical
+    // world coordinate; only the interior of the arc still follows the
+    // fitted circle.
+    outPts[0].x        = (float)p0.x;
+    outPts[0].y        = (float)p0.y;
+    outPts[steps - 1].x = (float)p1.x;
+    outPts[steps - 1].y = (float)p1.y;
+
     *outCount = steps;
 }
 
