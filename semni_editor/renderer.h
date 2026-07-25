@@ -248,6 +248,14 @@ void computeSemniArcPoints(Semni b, PointF out[NUM_ROBOT_CIRCLE_SEGMENTS][ARC_SA
 // instead of dashed -- same idea as the ArcSpline canvas's hoveredSegment.
 void drawSemniCircleSegments(Semni b, int hoveredIndex, float opacity);
 
+// One distinguishable color per fillet index (see NUM_ROBOT_CIRCLE_SEGMENTS'
+// seam1/seam2/thigh1/thigh2/shin1/shin2 ordering above), same palette
+// drawSemniCircleSegments itself renders with. Exposed so canvas.c's
+// hover-tooltip HUD can color the "Segment N/M" label to match whichever
+// fillet is currently hovered (app->hoveredCircleSegment) -- caller must
+// only pass a valid 0..NUM_ROBOT_CIRCLE_SEGMENTS-1 index.
+void circleSegmentColor(int index, float* r, float* g, float* b);
+
 // The 5 always-visible body circles, in a fixed order: head, butt,
 // hip (innerCircle), knee, foot -- indices into computeSemniBodyCircles'
 // output and into app->hoveredBodyCircle.
@@ -268,3 +276,10 @@ void computeSemniBodyCircles(Semni b, CircleSegment out[NUM_ROBOT_BODY_CIRCLES])
 // this only adds hover feedback confirming "this outline is genuinely a
 // full circle," once View Segments is turned on.
 void drawSemniBodyCircleHover(Semni b, int hoveredIndex, float opacity);
+
+// One distinguishable color per body circle index (head/butt/hip/knee/foot,
+// see NUM_ROBOT_BODY_CIRCLES's ordering above), same palette
+// drawSemniBodyCircleHover itself renders with. Exposed for the same reason
+// as circleSegmentColor above -- caller must only pass a valid
+// 0..NUM_ROBOT_BODY_CIRCLES-1 index.
+void bodyCircleColor(int index, float* r, float* g, float* b);

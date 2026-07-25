@@ -1563,13 +1563,19 @@ void canvasRenderFrame(float dimAmount)
 
     // NEW: View Segments hover readout -- tells you WHICH segment (by
     // position) the cursor is currently over, not just that it's
-    // highlighted. Same "Segment N/M" format in both modes (Design > Robot
-    // and Design > Environment), stacked one row above the Pixel readout in
-    // the same bottom-right column. Only one of the two branches can ever
-    // be true at once (Design > Robot forces EDITOR_MODE_SEMNI, Design >
-    // Environment/Simulation don't), so there's no need to pick between
-    // them beyond the existing semniModeActive check both other HUD blocks
-    // in this function already use.
+    // highlighted. Follows the cursor itself (drawn just up and to the
+    // right of it, using the same client-pixel `pt` the Pixel readout just
+    // above already fetched) rather than sitting in a fixed HUD corner, so
+    // it always reads right next to whatever you're actually pointing at.
+    // Colored to match the hovered circle/segment's own highlight color
+    // (circleSegmentColor/bodyCircleColor/segmentGhostColor) instead of the
+    // HUD's usual gray, so the label and the thing it's naming visually tie
+    // together at a glance. Same "Segment N/M" format in both modes
+    // (Design > Robot and Design > Environment). Only one of the two
+    // branches can ever be true at once (Design > Robot forces
+    // EDITOR_MODE_SEMNI, Design > Environment/Simulation don't), so there's
+    // no need to pick between them beyond the existing semniModeActive
+    // check both other HUD blocks in this function already use.
     //
     // Robot mode: input.c's WM_MOUSEMOVE hit-test (gated on
     // app.showCircleSegments the same way this is) already resolves the
@@ -1590,6 +1596,7 @@ void canvasRenderFrame(float dimAmount)
     {
         char hoverSegStr[64];
         BOOL showHoverSeg = FALSE;
+        float segR = 0.3f, segG = 0.3f, segB = 0.3f;
 
         if (semniModeActive)
         {
@@ -1598,24 +1605,43 @@ void canvasRenderFrame(float dimAmount)
             if (app.showCircleSegments && app.hoveredCircleSegment != -1)
             {
                 wsprintfA(hoverSegStr, "Segment %d/%d", app.hoveredCircleSegment + 1, totalRobotSegments);
+                circleSegmentColor(app.hoveredCircleSegment, &segR, &segG, &segB);
                 showHoverSeg = TRUE;
             }
             else if (app.showCircleSegments && app.hoveredBodyCircle != -1)
             {
                 wsprintfA(hoverSegStr, "Segment %d/%d", NUM_ROBOT_CIRCLE_SEGMENTS + app.hoveredBodyCircle + 1, totalRobotSegments);
+                bodyCircleColor(app.hoveredBodyCircle, &segR, &segG, &segB);
                 showHoverSeg = TRUE;
             }
         }
         else if (canvas.showSegments && hoveredSegment != -1)
         {
             wsprintfA(hoverSegStr, "Segment %d/%d", hoveredSegment + 1, canvas.segmentResultCount);
+            segmentGhostColor(hoveredSegment, &segR, &segG, &segB);
             showHoverSeg = TRUE;
         }
 
         if (showHoverSeg)
         {
-            glColor4f(0.3f, 0.3f, 0.3f, 1.0f);
-            glRasterPos2i(glWindowWidth - 160, 60);
+            // Same GetCursorPos/ScreenToClient technique the Pixel readout
+            // above uses (its own `pt` is scoped to that block, so this
+            // fetches its own rather than reaching outside it) -- client
+            // pixels, origin top-left, Y growing DOWNWARD. This block's
+            // ortho (glOrtho(0, glWindowWidth, 0, glWindowHeight, ...), set
+            // up before the Zoom readout earlier in this function) has
+            // origin bottom-left, Y growing UPWARD instead, so Y has to
+            // flip (glWindowHeight - pt.y) before adding the "up and to the
+            // right" offset.
+            POINT pt;
+            GetCursorPos(&pt);
+            ScreenToClient(hWndGL, &pt);
+
+            int tooltipX = (int)pt.x + 16;
+            int tooltipY = (glWindowHeight - (int)pt.y) + 16;
+
+            glColor4f(segR, segG, segB, 1.0f);
+            glRasterPos2i(tooltipX, tooltipY);
             glPushAttrib(GL_LIST_BIT);
             glListBase(fontBase - 32);
             glCallLists((GLsizei)strlen(hoverSegStr), GL_UNSIGNED_BYTE, hoverSegStr);

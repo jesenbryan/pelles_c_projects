@@ -902,8 +902,11 @@ void computeSemniArcPoints(Semni b, PointF out[NUM_ROBOT_CIRCLE_SEGMENTS][ARC_SA
 
 // One distinguishable color per circle segment, same palette values as
 // the ArcSpline canvas's own segmentGhostColor (canvas.c) for a consistent
-// look between the two modes' View Segments overlays.
-static void circleSegmentColor(int index, float* r, float* g, float* b)
+// look between the two modes' View Segments overlays. Non-static (declared
+// in renderer.h) so canvas.c's hover-tooltip HUD can color a hovered
+// fillet's "Segment N/M" label to match the ghost circle it's naming,
+// without having to duplicate this exact palette itself.
+void circleSegmentColor(int index, float* r, float* g, float* b)
 {
     static const float palette[NUM_ROBOT_CIRCLE_SEGMENTS][3] = {
         {0.85f, 0.20f, 0.20f}, {0.20f, 0.55f, 0.85f}, {0.20f, 0.75f, 0.35f},
@@ -977,8 +980,9 @@ void computeSemniBodyCircles(Semni b, CircleSegment out[NUM_ROBOT_BODY_CIRCLES])
 // One distinguishable color per body circle -- deliberately a different
 // palette from circleSegmentColor's so a hovered body circle never reads
 // as "one of the View Segments fillets" even if both happen to be
-// on-screen at once.
-static void bodyCircleColor(int index, float* r, float* g, float* b)
+// on-screen at once. Non-static for the same reason as circleSegmentColor
+// above -- canvas.c's hover-tooltip HUD needs it too.
+void bodyCircleColor(int index, float* r, float* g, float* b)
 {
     static const float palette[NUM_ROBOT_BODY_CIRCLES][3] = {
         {0.95f, 0.75f, 0.15f}, {0.15f, 0.85f, 0.95f}, {0.85f, 0.25f, 0.65f},
