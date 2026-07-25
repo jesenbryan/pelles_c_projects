@@ -227,7 +227,6 @@ static void runPipelineOnImage(Image* img, const char* sourceLabel, BOOL stretch
 
     static ArcSegment allSegments[MAX_ARC_SEGMENTS];
     int totalSegCount = 0;
-    BOOL haveMarkers = FALSE;   // only the first curve's endpoints get the red/blue markers
 
     for (int y = 0; y < h && totalSegCount < MAX_ARC_SEGMENTS && componentPathCount < MAX_TRACE_COMPONENTS; y++)
     {
@@ -241,11 +240,6 @@ static void runPipelineOnImage(Image* img, const char* sourceLabel, BOOL stretch
             int sx, sy, ex, ey;
             int found = find_start_end_pixels(compBin, w, h, &sx, &sy, &ex, &ey);
             if (found != 2) continue;   // closed loop or a noise speck - not an open curve, skip it
-
-            if (!haveMarkers) {
-                setEndpointMarkers(w, h, sx, sy, ex, ey, stretched);
-                haveMarkers = TRUE;
-            }
 
             Point* path = (Point*)malloc(sizeof(Point) * 10000);
             componentPaths[componentPathCount++] = path;
@@ -382,7 +376,6 @@ void RunUploadPipeline(void)
     freePendingBmpImage();
     canvas.showSegments = FALSE;
     canvas.segmentResultCount = 0;
-    canvas.hasEndpointMarkers = FALSE;
 
     s_pendingBmpImage = img;   // traced later, on demand (see RunPendingUploadTrace)
 }

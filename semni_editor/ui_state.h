@@ -10,8 +10,10 @@
 #define MAX_STROKES 1000
 #define ID_CLEAR  1
 #define ID_COLOR  2
-#define ID_TRACE  3
-#define ID_UPLOAD 4   
+// 3 (ID_TRACE) is retired -- the standalone Trace button was removed since
+// View Segments/Comparison Mode already trace on demand (see ui.c). Left
+// unused rather than renumbering everything after it.
+#define ID_UPLOAD 4
 #define ID_VIEW_SEGMENTS 5
 #define ID_SAVE   6
 #define ID_COMPARISON 7
@@ -61,7 +63,6 @@ typedef struct {
     int   pointCount;
     int   strokeCount;
     BOOL  hasBackgroundImage;
-    BOOL  hasEndpointMarkers;
     float panX;
     float panY;
     float zoom;
@@ -99,12 +100,9 @@ extern GLuint canvasTexture;
 // upload time using zoom=1 as reference — do NOT recompute per-frame)
 extern float bgLeft, bgRight, bgBottom, bgTop;
 
-extern float markerStartX, markerStartY;
-extern float markerEndX, markerEndY;
-
 // Branch/junction points found while tracing (a Y/T/X-shaped stroke
 // splits into multiple edges at these points) - drawn as their own
-// marker, separate from the single red/blue start/end pair above.
+// marker.
 #define MAX_BRANCH_MARKERS 64
 extern float branchMarkersWorld[MAX_BRANCH_MARKERS * 2];
 extern int   branchMarkerCount;

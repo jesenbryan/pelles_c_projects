@@ -129,7 +129,6 @@ void ResetCanvas(void)
     canvas.pointCount = 0;
     canvas.strokeCount = 0;
     canvas.hasBackgroundImage = FALSE;
-    canvas.hasEndpointMarkers = FALSE;
     canvas.panX = 0.0f;
     canvas.panY = 0.0f;
     canvas.zoom = 1.0f;
@@ -148,9 +147,6 @@ float bgLeft = -1.0f, bgRight = 1.0f, bgBottom = -1.0f, bgTop = 1.0f; // NEW
 
 float branchMarkersWorld[MAX_BRANCH_MARKERS * 2];
 int   branchMarkerCount = 0;
-
-float markerStartX = 0.0f, markerStartY = 0.0f;
-float markerEndX   = 0.0f, markerEndY   = 0.0f;
 
 // NEW: pan state
 static BOOL panning = FALSE;
@@ -1404,19 +1400,8 @@ void canvasRenderFrame(float dimAmount)
 	    glDisable(GL_BLEND);
 	}
 
-    // Endpoints are part of the trace overlay, so they follow the same
-    // visibility toggle (Trace / View Segments) as the rest of it,
-    // instead of staying on screen after the overlay is hidden.
-    if (canvas.hasEndpointMarkers && canvas.showSegments)
-    {
-        float markerRadius = 0.02f * canvas.zoom;
-        drawMarkerDisc(markerStartX, markerStartY, markerRadius, 1.0f, 0.0f, 0.0f, opacity);
-        drawMarkerDisc(markerEndX,   markerEndY,   markerRadius, 0.0f, 0.0f, 1.0f, opacity);
-    }
-
     // Branch/junction points (a Y/T/X-shaped stroke splits into multiple
-    // edges here) - green, so they read as distinct from the red/blue
-    // start-end pair above.
+    // edges here) - green.
     if (branchMarkerCount > 0)
     {
         float branchMarkerRadius = 0.02f * canvas.zoom;
@@ -3107,11 +3092,10 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	            // pointCollidesWithAnyEnvironmentStroke) tests against the
 	            // arc-fitted RECONSTRUCTION (segmentPointsWorld) now, not the
 	            // raw hand-drawn strokes -- see that function's comment for
-	            // why. That data is normally only produced by a manual Trace
-	            // press (the Environment-only panel's button), which the user
-	            // could easily forget to do before simulating, and even if
-	            // they didn't forget, it goes stale the moment they draw or
-	            // edit another stroke afterward. Re-tracing right here, every
+	            // why. That data is only produced by tracing (View Segments/
+	            // Comparison Mode both trigger it on demand, see ui.c), which
+	            // goes stale the moment the user draws or edits another
+	            // stroke afterward. Re-tracing right here, every
 	            // time Simulation is entered, closes both gaps for free: it's
 	            // always present and always current, without the user having
 	            // to think about it. Cheap to do unconditionally -- environment
@@ -3268,10 +3252,9 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	        // --- Environment: EnvExport\Env.bmp + Env.txt ---
 	        //
 	        // Env.txt's segments come from canvas.segmentResultCount,
-	        // which is normally only produced by a manual Trace press
-	        // (the Environment panel's own button) -- easy to forget
-	        // before saving, and stale the moment another stroke is
-	        // drawn afterward. Re-tracing right here, unconditionally,
+	        // which is only produced by tracing (View Segments/Comparison
+	        // Mode trigger it on demand, see ui.c) -- stale the moment
+	        // another stroke is drawn afterward. Re-tracing right here, unconditionally,
 	        // every time Save runs, closes both gaps for free -- same
 	        // reasoning (and same RunTracePipeline call) the
 	        // ID_MODE_SIMULATION handler above already uses so

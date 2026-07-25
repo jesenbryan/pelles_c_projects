@@ -80,20 +80,6 @@ static void pixelToWorldStretched(float px, float py, int imgW, int imgH, float*
     *wy = bgBottom + v * (bgTop - bgBottom);
 }
 
-void setEndpointMarkers(int imgW, int imgH, int sx, int sy, int ex, int ey, BOOL stretched)
-{
-    if (stretched) {
-        pixelToWorldStretched((float)sx, (float)sy, imgW, imgH, &markerStartX, &markerStartY);
-        pixelToWorldStretched((float)ex, (float)ey, imgW, imgH, &markerEndX,   &markerEndY);
-    } else {
-        pixelToWorldExact((float)sx, (float)sy, imgW, imgH, &markerStartX, &markerStartY);
-        pixelToWorldExact((float)ex, (float)ey, imgW, imgH, &markerEndX,   &markerEndY);
-    }
-
-    canvas.hasEndpointMarkers = TRUE;
-    if (hWndGL) InvalidateRect(hWndGL, NULL, FALSE);
-}
-
 void addBranchMarker(int imgW, int imgH, int px, int py, BOOL stretched)
 {
     if (branchMarkerCount >= MAX_BRANCH_MARKERS) return;

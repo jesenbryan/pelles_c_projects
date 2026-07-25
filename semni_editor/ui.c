@@ -11,11 +11,10 @@ COLORREF brushColor = RGB(0, 0, 0);
 static HWND hClearBtn;
 static HWND hSlider;
 static HWND hColorBtn;
-static HWND hTraceBtn;
 static HWND hThicknessLabel;
 static HWND hViewSegBtn;   // NEW
 static HWND hComparisonBtn;  // NEW: toggle comparison mode
-static int controlCount = 7;
+static int controlCount = 6;
 
 
 static int GetRequiredUIHeight(void)
@@ -55,8 +54,6 @@ static void LayoutUI(HWND hWnd)
     y += btnH + spacing;
     MoveWindow(hColorBtn, centerX, y, btnW, btnH, TRUE);
 	y += btnH + spacing;
-	MoveWindow(hTraceBtn, centerX, y, btnW, btnH, TRUE);
-	y += btnH + spacing;
 	MoveWindow(hViewSegBtn, centerX, y, btnW, btnH, TRUE);
 	y += btnH + spacing;
 	MoveWindow(hComparisonBtn, centerX, y, btnW, btnH, TRUE);
@@ -75,16 +72,15 @@ LRESULT CALLBACK WndProcUI(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         hThicknessLabel = CreateWindowEx(0, L"STATIC", L"Thickness: 2 px", WS_CHILD | WS_VISIBLE, 20, 60, 300, 20, hWnd, NULL, GetModuleHandle(NULL), NULL);
         hSlider   = CreateWindowEx(0, TRACKBAR_CLASS, L"", WS_CHILD | WS_VISIBLE | TBS_AUTOTICKS | TBS_HORZ, 20, 80, 300, 40, hWnd, NULL, GetModuleHandle(NULL), NULL);
         hColorBtn = CreateWindowEx(0, L"BUTTON", L"Color", WS_CHILD | WS_VISIBLE, 20, 130, 300, 30, hWnd, (HMENU)ID_COLOR, GetModuleHandle(NULL), NULL);
-		
-		// BS_AUTOCHECKBOX | BS_PUSHLIKE: a checkbox drawn/behaving like a button
-		// that stays visually pressed while checked - gives "Trace" a native
-		// on/off toggle look instead of a plain momentary click.
-		hTraceBtn = CreateWindowEx(0, L"BUTTON", L"Trace",
-                            WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX | BS_PUSHLIKE,
-                            20, 170, 300, 30, hWnd, (HMENU)ID_TRACE,
-                            GetModuleHandle(NULL), NULL);
 
-		// Same treatment for "View Segments".
+		// BS_AUTOCHECKBOX | BS_PUSHLIKE: a checkbox drawn/behaving like a button
+		// that stays visually pressed while checked - gives "View Segments" a
+		// native on/off toggle look instead of a plain momentary click. (The
+		// separate "Trace" button that used to sit here was removed -- View
+		// Segments and Comparison Mode both already trace on demand the first
+		// time they're checked with nothing traced yet, see their own
+		// ID_VIEW_SEGMENTS/ID_COMPARISON handling below, so the standalone
+		// button was redundant.)
 		hViewSegBtn = CreateWindowEx(0, L"BUTTON", L"View Segments",
 		                              WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX | BS_PUSHLIKE,
 		                              20, 250, 300, 30, hWnd, (HMENU)ID_VIEW_SEGMENTS,
@@ -126,7 +122,6 @@ LRESULT CALLBACK WndProcUI(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         if (LOWORD(wParam) == ID_CLEAR)
 		{
 		    ResetCanvas();
-		    SendMessage(hTraceBtn, BM_SETCHECK, BST_UNCHECKED, 0);
 		    SendMessage(hViewSegBtn, BM_SETCHECK, BST_UNCHECKED, 0);
 		    SendMessage(hComparisonBtn, BM_SETCHECK, BST_UNCHECKED, 0);
 		    if (hWndGL) InvalidateRect(hWndGL, NULL, TRUE);
@@ -142,42 +137,6 @@ LRESULT CALLBACK WndProcUI(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             cc.Flags = CC_FULLOPEN | CC_RGBINIT;
             if (ChooseColor(&cc)) brushColor = cc.rgbResult;
         }
-		else if (LOWORD(wParam) == ID_TRACE)
-		{
-		    // BS_AUTOCHECKBOX already flipped its own check state before this
-		    // notification fires, so read it back rather than tracking a
-		    // separate bool - the button IS the toggle state.
-		    BOOL nowChecked = (SendMessage(hTraceBtn, BM_GETCHECK, 0, 0) == BST_CHECKED);
-
-		    if (nowChecked)
-		    {
-		        RunTracePipeline();
-
-		        // Trace has to be self-sufficient: checking it alone should show
-		        // a visible result immediately, not silently compute segments
-		        // that stay invisible until View Segments is separately checked.
-		        // Sync that checkbox too, so its displayed state matches reality.
-		        if (canvas.segmentResultCount > 0)
-		        {
-		            canvas.showSegments = TRUE;
-		            SendMessage(hViewSegBtn, BM_SETCHECK, BST_CHECKED, 0);
-		        }
-		        else
-		        {
-		            // Nothing traceable - don't leave the button stuck checked.
-		            SendMessage(hTraceBtn, BM_SETCHECK, BST_UNCHECKED, 0);
-		        }
-		    }
-		    else
-		    {
-		        // Unchecking Trace hides the overlay without discarding the
-		        // traced result - same effect as unchecking View Segments -
-		        // so re-checking either box brings it back instantly.
-		        canvas.showSegments = FALSE;
-		        SendMessage(hViewSegBtn, BM_SETCHECK, BST_UNCHECKED, 0);
-		    }
-		    if (hWndGL) InvalidateRect(hWndGL, NULL, FALSE);
-		}
 		else if (LOWORD(wParam) == ID_VIEW_SEGMENTS)
 		{
 		    // BS_AUTOCHECKBOX already flipped its own check state before this
@@ -189,13 +148,13 @@ LRESULT CALLBACK WndProcUI(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		    {
 		        // Nothing traced yet - trace on demand (canvas drawing takes
 		        // priority, falls back to a pending uploaded BMP) so View
-		        // Segments works standalone without requiring Trace first.
+		        // Segments works standalone without requiring a separate
+		        // Trace step first (the old standalone Trace button was
+		        // removed for exactly this reason -- both this and
+		        // Comparison Mode below already trace on demand).
 		        RunTracePipeline();
 		    }
 		    canvas.showSegments = nowChecked;
-		    // Keep the Trace toggle mirroring visibility so both buttons
-		    // always agree on whether the overlay is showing.
-		    SendMessage(hTraceBtn, BM_SETCHECK, nowChecked ? BST_CHECKED : BST_UNCHECKED, 0);
 		    if (hWndGL) InvalidateRect(hWndGL, NULL, FALSE);
 		}
 		else if (LOWORD(wParam) == ID_COMPARISON)
@@ -206,8 +165,8 @@ LRESULT CALLBACK WndProcUI(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		    if (nowChecked && canvas.segmentResultCount == 0)
 		    {
 		        // Same as View Segments: trace on demand so Comparison Mode
-		        // is also usable on its own, without needing Trace or View
-		        // Segments pressed first.
+		        // is also usable on its own, without needing View Segments
+		        // pressed first.
 		        RunTracePipeline();
 		    }
 		    canvas.comparisonMode = nowChecked;
