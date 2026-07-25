@@ -1547,6 +1547,68 @@ void canvasRenderFrame(float dimAmount)
         glPopAttrib();
     }
 
+    // NEW: View Segments hover readout -- tells you WHICH segment (by
+    // position) the cursor is currently over, not just that it's
+    // highlighted. Same "Segment N/M" format in both modes (Design > Robot
+    // and Design > Environment), stacked one row above the Pixel readout in
+    // the same bottom-right column. Only one of the two branches can ever
+    // be true at once (Design > Robot forces EDITOR_MODE_SEMNI, Design >
+    // Environment/Simulation don't), so there's no need to pick between
+    // them beyond the existing semniModeActive check both other HUD blocks
+    // in this function already use.
+    //
+    // Robot mode: input.c's WM_MOUSEMOVE hit-test (gated on
+    // app.showCircleSegments the same way this is) already resolves the
+    // hover down to at most ONE of a fillet (app.hoveredCircleSegment) or a
+    // body circle (app.hoveredBodyCircle) -- see its own comment for why
+    // they share one winner -- so at most one of these two branches fires.
+    // The two are numbered as one combined N/M range (fillets 1..6, body
+    // circles 7..11) rather than each restarting at 1/6 or 1/5, so this
+    // reads as one consistent "N/M" position the same way Environment
+    // mode's flat segment list already does, instead of silently meaning
+    // two different scales depending on what's hovered.
+    //
+    // Environment mode: canvas.c's own hoveredSegment (WM_MOUSEMOVE above)
+    // is an index into canvas.segmentResults, forced back to -1 outright
+    // during Simulation (see that assignment's comment), so this can never
+    // show a stale/wrong-mode readout there even though semniModeActive
+    // alone wouldn't otherwise rule Simulation out.
+    {
+        char hoverSegStr[64];
+        BOOL showHoverSeg = FALSE;
+
+        if (semniModeActive)
+        {
+            int totalRobotSegments = NUM_ROBOT_CIRCLE_SEGMENTS + NUM_ROBOT_BODY_CIRCLES;
+
+            if (app.showCircleSegments && app.hoveredCircleSegment != -1)
+            {
+                wsprintfA(hoverSegStr, "Segment %d/%d", app.hoveredCircleSegment + 1, totalRobotSegments);
+                showHoverSeg = TRUE;
+            }
+            else if (app.showCircleSegments && app.hoveredBodyCircle != -1)
+            {
+                wsprintfA(hoverSegStr, "Segment %d/%d", NUM_ROBOT_CIRCLE_SEGMENTS + app.hoveredBodyCircle + 1, totalRobotSegments);
+                showHoverSeg = TRUE;
+            }
+        }
+        else if (canvas.showSegments && hoveredSegment != -1)
+        {
+            wsprintfA(hoverSegStr, "Segment %d/%d", hoveredSegment + 1, canvas.segmentResultCount);
+            showHoverSeg = TRUE;
+        }
+
+        if (showHoverSeg)
+        {
+            glColor4f(0.3f, 0.3f, 0.3f, 1.0f);
+            glRasterPos2i(glWindowWidth - 160, 60);
+            glPushAttrib(GL_LIST_BIT);
+            glListBase(fontBase - 32);
+            glCallLists((GLsizei)strlen(hoverSegStr), GL_UNSIGNED_BYTE, hoverSegStr);
+            glPopAttrib();
+        }
+    }
+
     // NEW: persistent top-left mode/layer indicator - otherwise the
     // only way to tell Design/Robot/Environment apart is to open the
     // Mode menu and see which item is checked.
