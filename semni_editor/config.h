@@ -264,6 +264,31 @@
 // each of its two call sites, so they can't drift apart from each other.
 #define GROUND_LINE_DESIGN_Y -1.3f
 
+// How many multiples of the CURRENT viewport's half-width the ground
+// reference line extends to either side of center. Deliberately relative
+// to the current view rather than either of the two things already tried:
+//
+//  - A width tied to the view's own halfX (ratio exactly 1, always exactly
+//    matching the viewport) never shows an end at any zoom or pan, since
+//    it's tautologically redefined to fill the screen every frame.
+//
+//  - A true fixed WORLD-space length (e.g. a flat 20.0f) shrinks/grows
+//    with zoom like any ordinary object -- which sounds right, but means
+//    its length RELATIVE to the viewport isn't fixed: halfWidth / halfX
+//    works out to (fixed length * zoom / const), i.e. it scales linearly
+//    with zoom. Zooming in shrinks the viewport far faster than the fixed
+//    length does, so the line balloons to many, many screen-widths across
+//    and panning far enough to reach its actual end becomes impractical --
+//    exactly the "extends infinitely" symptom this constant replaces.
+//
+// Multiplying the CURRENT viewport halfX by this constant keeps the ratio
+// between the line's length and the viewport fixed at every zoom level, so
+// zooming in or out can never make it balloon or shrink -- it's always
+// exactly GROUND_LINE_VIEWPORT_MULTIPLIER screen-widths across, and a user
+// only ever needs to pan a small, zoom-independent distance to actually
+// reach an end.
+#define GROUND_LINE_VIEWPORT_MULTIPLIER 3.0f
+
 // Robot "size" slider (top-right corner, Semni mode only -- see the
 // trackbar created in input.c's WM_CREATE). A separate, permanent
 // multiplier layered on top of the view zoom above (graphicsZoom/

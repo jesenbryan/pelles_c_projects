@@ -169,77 +169,79 @@ void drawHandle(PointF p, int selected, float radius, float opacity)
 // Draws a dashed horizontal "ground" reference line at design-space Y
 // coordinate `y` (must be config.h's GROUND_LINE_DESIGN_Y). Completely
 // unaffected by the "Robot Size" slider -- neither its on-screen size nor
-// its on-screen position changes at all as g_robotScale moves -- while
+// its on-screen position changes AT ALL as g_robotScale moves -- while
 // still panning/zooming normally with the camera (middle-drag, mouse
-// wheel), same as everything else in the scene. Called with the modelview
-// already translated by -graphicsGetPan() (see renderApp/renderRobotScene),
-// which DOES include the Robot-Size-driven pan (graphicsSetRobotScale's
-// g_scaleAnchorX/Y, added so the robot's own center stays put as it
-// resizes) -- so unlike everything else drawn there, this deliberately
-// does NOT use graphicsGetPan()/graphicsGetEffectiveZoom() at all, only:
+// wheel), same as everything else in the scene.
 //
-//  - Position: centerX/centerY are set to just the Robot-Size anchor
-//    (graphicsGetPan() minus graphicsGetManualPan()), which is then
-//    subtracted right back out by the shared -graphicsGetPan() translate
-//    the modelview already has -- leaving only the user's own manual pan
-//    in the final on-screen position. So dragging the slider can never
-//    move this line by so much as a pixel, while genuine camera panning
-//    still moves it exactly like everything else.
+// Earlier versions tried to get this by keeping the shared (robotScale-
+// baked) projection/modelview and algebraically cancelling out the
+// Robot-Size-driven anchor term (g_scaleAnchorX/Y) from the vertex position.
+// That correctly zeroed out the anchor's own contribution, but missed that
+// applyProjection's halfX/halfY themselves are `aspect * 1.5 / (zoom *
+// robotScale)` -- i.e. the whole shared projection scales linearly with
+// robotScale, not just the translate -- so ANY vertex placed through that
+// projection still ends up multiplied by robotScale somewhere, and the
+// line visibly moved/resized as the slider moved (e.g. its Y offset from
+// center literally doubled when robotScale doubled). Fully cancelling that
+// requires the same anchor-solving trick graphicsSetRobotScale itself uses
+// (correct only for the one point it was solved for -- the robot's own
+// center -- not for an arbitrary second point like this line's Y).
 //
-//  - Width: halfWidth is computed from `aspect * 1.5 / robotScale`, i.e.
-//    the SAME halfX formula applyProjection uses, but with robotScale
-//    divided back OUT before it can multiply back in via the shared
-//    projection -- applyProjection's own halfX is `aspect * 1.5 /
-//    (zoom * robotScale)`, so this line's width-to-halfX ratio works out to
-//    exactly `zoom` alone, with the robotScale factor cancelling perfectly.
-//    That's what keeps the line's apparent screen width constant across a
-//    Robot Size change while still shrinking/growing normally with genuine
-//    camera zoom.
-//
-//  - Dash/gap length: divided by robotScale too, for the identical reason
-//    -- so the dash pattern itself stays pixel-for-pixel unaffected by the
-//    slider (it still resizes normally with ordinary camera zoom, same as
-//    everything else).
+// Simplest correct fix: don't share the robotScale-baked projection at
+// all. Push a completely separate projection + modelview for just this
+// draw call, built from graphicsGetZoom() (plain camera zoom, no
+// robotScale factor) and graphicsGetManualPan() (plain user pan, no
+// Robot-Size anchor), then pop back to the caller's shared transform
+// afterward. From this line's point of view the Robot-Size slider simply
+// doesn't exist -- only genuine camera pan/zoom can move or resize it. Its
+// length is GROUND_LINE_VIEWPORT_MULTIPLIER times the CURRENT viewport's
+// half-width (config.h has the full reasoning) -- kept relative to the
+// viewport rather than either exactly matching it (never shows an end at
+// any zoom) or a fixed world-space length (balloons to an impractical
+// number of screen-widths as you zoom in), so it's always a small,
+// zoom-independent number of screen-widths across.
 void drawDashedHorizontalLine(float y, float opacity)
 {
-    float robotScale = graphicsGetRobotScale();
     float aspect = (glWindowHeight != 0) ? ((float)glWindowWidth / (float)glWindowHeight) : 1.0f;
+    float zoom = graphicsGetZoom();
 
-    // renderApp/renderCombinedFrame already translated the modelview by
-    // -graphicsGetPan() (= -(manualPan + anchor)) before calling this. To
-    // land on a vertex that tracks genuine user panning like everything
-    // else on screen but is completely immune to the Robot-Size-driven
-    // anchor, we need to pre-add the anchor back in: vertex + anchor -
-    // (manualPan + anchor) = vertex - manualPan, so only manualPan survives
-    // in the final on-screen position.
-    //
-    // (Previously this used manualPan itself here instead of the anchor,
-    // which cancelled the wrong term: manualPan - (manualPan + anchor) =
-    // -anchor, leaving the line's screen position completely deaf to
-    // dragging -- since its width already exceeds the viewport once zoomed
-    // in (see halfWidth below), that made it look like a line with no
-    // ends, i.e. "infinite", while panning.)
-    float panX, panY, manualPanX, manualPanY;
-    graphicsGetPan(&panX, &panY);
+    float halfY = 1.5f / zoom;
+    float halfX = halfY * aspect;
+
+    glMatrixMode(GL_PROJECTION);
+    glPushMatrix();
+    glLoadIdentity();
+    glOrtho(-halfX, halfX, -halfY, halfY, -1, 1);
+
+    glMatrixMode(GL_MODELVIEW);
+    glPushMatrix();
+    glLoadIdentity();
+
+    // Manual pan only (see graphicsGetManualPan's own comment) -- genuine
+    // camera panning still moves this line exactly like everything else,
+    // but the Robot-Size anchor folded into graphicsGetPan() never reaches
+    // it, since this whole draw bypasses the shared transform entirely.
+    float manualPanX, manualPanY;
     graphicsGetManualPan(&manualPanX, &manualPanY);
-    float anchorX = panX - manualPanX;
-    float anchorY = panY - manualPanY;
-
-    // Cancels the robotScale factor baked into the shared projection -- see
-    // this function's own comment for the derivation.
-    float halfWidth = (1.5f * aspect) / robotScale;
-
-    float centerX = anchorX;
-    float centerY = y + anchorY;
+    glTranslatef(-manualPanX, -manualPanY, 0.0f);
 
     glColor4f(0.6f, 0.6f, 0.6f, opacity); // medium gray, subtle
 
-    float dashLength = 0.08f / robotScale;  // shorter dashes for finer appearance
-    float gapLength = 0.06f / robotScale;   // smaller gaps
+    // Plain world-space lengths -- no division/derivation from zoom, so the
+    // dash pattern shrinks/grows normally with genuine camera zoom exactly
+    // the way any other world-space object drawn through this projection
+    // would.
+    float dashLength = 0.08f;  // shorter dashes for finer appearance
+    float gapLength = 0.06f;   // smaller gaps
     float segmentLength = dashLength + gapLength;
 
-    float left = centerX - halfWidth;
-    float right = centerX + halfWidth;
+    // See GROUND_LINE_VIEWPORT_MULTIPLIER's own comment (config.h) for why
+    // this is halfX (the CURRENT viewport's own half-width) times a fixed
+    // multiplier, rather than exactly halfX (ratio 1, never shows an end)
+    // or a fixed world-space length (ratio balloons with zoom).
+    float halfWidth = halfX * GROUND_LINE_VIEWPORT_MULTIPLIER;
+    float left = -halfWidth;
+    float right = halfWidth;
 
     // start from the left edge and draw dashes across
     for (float x = left; x < right; x += segmentLength)
@@ -249,10 +251,18 @@ void drawDashedHorizontalLine(float y, float opacity)
             dashEnd = right;
 
         glBegin(GL_LINES);
-        glVertex2f(x, centerY);
-        glVertex2f(dashEnd, centerY);
+        glVertex2f(x, y);
+        glVertex2f(dashEnd, y);
         glEnd();
     }
+
+    // Restore the caller's shared (robotScale-baked) projection/modelview
+    // exactly as it was -- renderRobot etc. drawn right after this still
+    // need it untouched.
+    glMatrixMode(GL_PROJECTION);
+    glPopMatrix();
+    glMatrixMode(GL_MODELVIEW);
+    glPopMatrix();
 }
 
 // Draws a rectangle around whichever robot kind is currently active,
