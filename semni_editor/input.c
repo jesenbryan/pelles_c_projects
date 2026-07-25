@@ -99,17 +99,27 @@ static void adjustStiloThigh2Arcs(AppState* app)
 // Axis-aligned bounding box (in whichever robot's own RAW local, pre-
 // rotation/pre-joint-angle fields -- same convention save.c's
 // save*AsEquations functions already use) enclosing whichever robot kind
-// is currently active, for updateRobotSizeLabel below. Approximates every
-// part as its full circle's extent (center +/- radius, or a bare point for
-// Rocky's rectangle corners via a 0 radius) rather than each part's exact
-// trimmed-arc outline -- a slight overestimate, but it's what lets one
-// function cover all three very differently-shaped robots instead of
-// needing bespoke exact-outline math per kind. Since this reads the raw
-// local fields, it reflects each robot's DESIGNED pose, not a mid-drag
-// bend from kneeAngle/hipAngle -- consistent with the rest of this file's
-// "raw fields, not the live rotated pose" convention, but means this
-// specific readout won't visibly react to a kneeAngle/hipAngle-only drag.
-static void robotBoundingBoxLocal(AppState* app, float* minX, float* maxX, float* minY, float* maxY)
+// is currently active, for updateRobotSizeLabel below (and renderer.c's
+// drawRobotSizeBox, which draws this same box directly into the GL scene
+// while the Robot Size slider is being dragged -- see its own comment).
+//
+// BODY ONLY, deliberately, not the whole robot including its leg(s) --
+// requested directly: Semni/Stilo's box is just their head circle, butt
+// circle, and the two seam arcs connecting them (the torso), same
+// approximate-as-a-circle-or-exact-trimmed-arc approach as before, just
+// with every hip/knee/foot/thigh/shin/feet term dropped. Rocky has no
+// head/butt/seam torso at all -- its "body" is just its rectangle, so
+// that's the whole box for it (see its own case below for why the
+// rectangle's width/height are swapped there too, also requested
+// directly). Since this reads the raw local fields, it reflects each
+// robot's DESIGNED pose, not a mid-drag bend from kneeAngle/hipAngle --
+// consistent with the rest of this file's "raw fields, not the live
+// rotated pose" convention.
+//
+// Deliberately NOT static -- renderer.h declares this too, so
+// renderRobotScene/renderApp can draw the exact same box input.c's own
+// label is built from, rather than risk the two drifting apart.
+void robotBoundingBoxLocal(AppState* app, float* minX, float* maxX, float* minY, float* maxY)
 {
     *minX = *minY = 1e9f;
     *maxX = *maxY = -1e9f;
@@ -125,6 +135,25 @@ static void robotBoundingBoxLocal(AppState* app, float* minX, float* maxX, float
         if (_bbY + _bbR > *maxY) *maxY = _bbY + _bbR; \
     } while (0)
 
+    // Same idea as ROBOT_BB_INCLUDE above, but for a seam fillet ARC
+    // instead of a bare circle: walks the exact trimmed curve
+    // renderer.c's computeArcPoints returns (the same circumcircle +
+    // sweep it renders through drawArc) and includes every sampled point.
+    // Using the fillet's FULL circle here instead -- the same
+    // "approximate as a full circle" shortcut ROBOT_BB_INCLUDE itself is
+    // for the head/butt circles above -- would badly OVERSHOOT: an arc's
+    // underlying circle can be far bigger than the sliver of it that's
+    // actually visible (MAX_ARC_R alone is 6.0 world units, config.h,
+    // several times the whole robot), so only the genuinely trimmed curve
+    // gives a tight box.
+#define ROBOT_BB_INCLUDE_ARC(p0, p1, p2) \
+    do { \
+        PointF _arcPts[ARC_SAMPLE_COUNT]; \
+        int _arcCount = computeArcPoints((p0), (p1), (p2), _arcPts); \
+        for (int _i = 0; _i < _arcCount; _i++) \
+            ROBOT_BB_INCLUDE(_arcPts[_i].x, _arcPts[_i].y, 0.0f); \
+    } while (0)
+
     switch (app->robotScene.activeKind)
     {
         case ROBOT_KIND_SEMNI:
@@ -132,19 +161,46 @@ static void robotBoundingBoxLocal(AppState* app, float* minX, float* maxX, float
             Semni* s = &app->robotScene.robot;
             ROBOT_BB_INCLUDE(s->headX, s->y, s->headRadius);
             ROBOT_BB_INCLUDE(s->buttX, s->y, s->buttRadius);
-            ROBOT_BB_INCLUDE(s->innerCircle.x, s->innerCircle.y, s->innerRadius);
-            ROBOT_BB_INCLUDE(s->kneeCircle.x, s->kneeCircle.y, s->kneeRadius);
-            ROBOT_BB_INCLUDE(s->footCircle.x, s->footCircle.y, s->footRadius);
+
+            // The 2 seam arcs connecting head/butt can bulge past them --
+            // same local-frame p0/p1/p2 construction drawSemniBody
+            // (renderer.c) uses for the actual curve, just without its
+            // final rotatePoint step, since this function deliberately
+            // stays in the same pre-rotation local frame the 2 circles
+            // above are already in.
+            {
+                PointF headLocal = { s->headX, s->y };
+                PointF buttLocal = { s->buttX, s->y };
+                PointF bodyMidLocal = { (headLocal.x + buttLocal.x) * 0.5f, (headLocal.y + buttLocal.y) * 0.5f };
+
+                Fillet seamArc1Fillet = filletFromAttachAngle(headLocal, s->headRadius, buttLocal, s->buttRadius, s->seamArc1Angle, MIN_ARC_R, MAX_ARC_R);
+                ROBOT_BB_INCLUDE_ARC(
+                    circleEdge(headLocal, s->headRadius, s->seamArc1Angle),
+                    circleTowardPoint(seamArc1Fillet.center, seamArc1Fillet.radius, bodyMidLocal),
+                    internalTangentPoint(seamArc1Fillet.center, seamArc1Fillet.radius, buttLocal, s->buttRadius));
+
+                Fillet seamArc2Fillet = filletFromAttachAngle(headLocal, s->headRadius, buttLocal, s->buttRadius, s->seamArc2Angle, MIN_ARC_R, MAX_ARC_R);
+                ROBOT_BB_INCLUDE_ARC(
+                    circleEdge(headLocal, s->headRadius, s->seamArc2Angle),
+                    circleTowardPoint(seamArc2Fillet.center, seamArc2Fillet.radius, bodyMidLocal),
+                    internalTangentPoint(seamArc2Fillet.center, seamArc2Fillet.radius, buttLocal, s->buttRadius));
+            }
             break;
         }
 
         case ROBOT_KIND_ROCKY:
         {
+            // Rocky's "body" is just its rectangle -- no head/butt/seam
+            // torso the way Semni/Stilo have, so that's the whole box.
+            // X/Y extents match drawRockyBodyRect (renderer.c) exactly
+            // (bodyHalfWidth as X extent, bodyHalfHeight as Y extent) --
+            // the earlier version of this case swapped them here, but that
+            // was moved to the "Size: W x H mm" label/UI text instead (see
+            // updateRobotSizeLabel and drawRobotSizeBox), so the actual
+            // drawn box goes back to matching the real rectangle exactly.
             Rocky* r = &app->robotScene.rocky;
             ROBOT_BB_INCLUDE(r->bodyX - r->bodyHalfWidth, r->bodyY - r->bodyHalfHeight, 0.0f);
             ROBOT_BB_INCLUDE(r->bodyX + r->bodyHalfWidth, r->bodyY + r->bodyHalfHeight, 0.0f);
-            ROBOT_BB_INCLUDE(r->kneeCircle.x, r->kneeCircle.y, r->kneeRadius);
-            ROBOT_BB_INCLUDE(r->footCircle.x, r->footCircle.y, r->footRadius);
             break;
         }
 
@@ -153,10 +209,28 @@ static void robotBoundingBoxLocal(AppState* app, float* minX, float* maxX, float
             Stilo* st = &app->robotScene.stilo;
             ROBOT_BB_INCLUDE(st->headX, st->y, st->headRadius);
             ROBOT_BB_INCLUDE(st->buttX, st->y, st->buttRadius);
-            ROBOT_BB_INCLUDE(st->hip1Circle.x, st->hip1Circle.y, st->hip1Radius);
-            ROBOT_BB_INCLUDE(st->feet1Circle.x, st->feet1Circle.y, st->feet1Radius);
-            ROBOT_BB_INCLUDE(st->hip2Circle.x, st->hip2Circle.y, st->hip2Radius);
-            ROBOT_BB_INCLUDE(st->feet2Circle.x, st->feet2Circle.y, st->feet2Radius);
+
+            // Seam arcs (head-butt, shared torso) -- same construction as
+            // Semni's above, see drawStiloBody (renderer.c). Both legs
+            // (hip1/feet1/thigh1, hip2/feet2/thigh2) are deliberately
+            // excluded, same "body only" scope as Semni's case above.
+            {
+                PointF headLocal = { st->headX, st->y };
+                PointF buttLocal = { st->buttX, st->y };
+                PointF bodyMidLocal = { (headLocal.x + buttLocal.x) * 0.5f, (headLocal.y + buttLocal.y) * 0.5f };
+
+                Fillet seamArc1Fillet = filletFromAttachAngle(headLocal, st->headRadius, buttLocal, st->buttRadius, st->seamArc1Angle, MIN_ARC_R, MAX_ARC_R);
+                ROBOT_BB_INCLUDE_ARC(
+                    circleEdge(headLocal, st->headRadius, st->seamArc1Angle),
+                    circleTowardPoint(seamArc1Fillet.center, seamArc1Fillet.radius, bodyMidLocal),
+                    internalTangentPoint(seamArc1Fillet.center, seamArc1Fillet.radius, buttLocal, st->buttRadius));
+
+                Fillet seamArc2Fillet = filletFromAttachAngle(headLocal, st->headRadius, buttLocal, st->buttRadius, st->seamArc2Angle, MIN_ARC_R, MAX_ARC_R);
+                ROBOT_BB_INCLUDE_ARC(
+                    circleEdge(headLocal, st->headRadius, st->seamArc2Angle),
+                    circleTowardPoint(seamArc2Fillet.center, seamArc2Fillet.radius, bodyMidLocal),
+                    internalTangentPoint(seamArc2Fillet.center, seamArc2Fillet.radius, buttLocal, st->buttRadius));
+            }
             break;
         }
 
@@ -164,12 +238,18 @@ static void robotBoundingBoxLocal(AppState* app, float* minX, float* maxX, float
             break;
     }
 
+#undef ROBOT_BB_INCLUDE_ARC
+
 #undef ROBOT_BB_INCLUDE
 }
 
 // Refreshes the "Size: W x H mm" control-panel label (app.h's
 // hRobotSizeLabel) from robotBoundingBoxLocal's bounding box, converted to
-// millimeters via config.h's MM_PER_WORLD_UNIT. Rounded to the nearest
+// millimeters via config.h's MM_PER_WORLD_UNIT and scaled by the current
+// "Robot Size" slider (graphicsGetRobotScale) -- dragging that slider is
+// meant to read as actually resizing the robot's real-world footprint, not
+// just how it's being viewed, so this number has to move with it instead
+// of staying pinned to the fixed designed size. Rounded to the nearest
 // whole mm and hand-split into an integer for wsprintf, same reason
 // WM_HSCROLL's own Scale label splits its float by hand just below --
 // wsprintf has no floating-point conversion at all.
@@ -187,11 +267,28 @@ static void updateRobotSizeLabel(AppState* app)
         return;
     }
 
-    int widthMM = (int)((maxX - minX) * MM_PER_WORLD_UNIT + 0.5f);
-    int heightMM = (int)((maxY - minY) * MM_PER_WORLD_UNIT + 0.5f);
+    float robotScale = graphicsGetRobotScale();
+    int widthMM = (int)((maxX - minX) * MM_PER_WORLD_UNIT * robotScale + 0.5f);
+    int heightMM = (int)((maxY - minY) * MM_PER_WORLD_UNIT * robotScale + 0.5f);
+
+    // Rocky specifically prints these swapped (height where width would
+    // normally go, width where height would normally go) -- requested
+    // directly, so the label's numbers read the way Rocky's own
+    // bodyHalfWidth/bodyHalfHeight fields are actually meant to be
+    // interpreted for this readout, without changing the drawn box itself
+    // (robotBoundingBoxLocal's ROBOT_KIND_ROCKY case) or the rectangle's
+    // own real on-screen rendering (drawRockyBodyRect, renderer.c), both
+    // of which are left matching bodyHalfWidth/bodyHalfHeight exactly.
+    int displayWidthMM = widthMM;
+    int displayHeightMM = heightMM;
+    if (app->robotScene.activeKind == ROBOT_KIND_ROCKY)
+    {
+        displayWidthMM = heightMM;
+        displayHeightMM = widthMM;
+    }
 
     wchar_t buf[64];
-    wsprintf(buf, L"Size: %d x %d mm", widthMM, heightMM);
+    wsprintf(buf, L"Size: %d x %d mm", displayWidthMM, displayHeightMM);
     SetWindowText(app->ui.hRobotSizeLabel, buf);
 }
 
@@ -2535,6 +2632,14 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 }
                 graphicsSetRobotScale(pos / 100.0f, scaleCenter.x, scaleCenter.y);
 
+                // (Re)start the real-world-size bounding box overlay's
+                // hold+fade window -- see renderer.c's drawRobotSizeBox and
+                // config.h's ROBOT_SIZE_BOX_HOLD_MS/FADE_MS. Stamped fresh
+                // on every scroll step (not just the first), so the box
+                // stays fully visible for as long as the user keeps
+                // dragging, and only starts fading once they actually stop.
+                app->robotSizeBoxStartTick = GetTickCount();
+
                 // Live value in the label instead of a static "Scale" --
                 // matches the ArcSpline panel's "Thickness: N px" label
                 // (ui.c). wsprintf has no float conversion, so the
@@ -2543,6 +2648,26 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 wchar_t scaleBuf[32];
                 wsprintf(scaleBuf, L"Scale: %d.%02d", pos / 100, pos % 100);
                 SetWindowText(app->ui.hScaleLabel, scaleBuf);
+
+                // "Size: W x H mm" now moves WITH this slider (see
+                // updateRobotSizeLabel's own comment) instead of staying
+                // pinned to the fixed designed size, so it has to refresh
+                // live on every step here too, not just on kind-switch/
+                // handle-release.
+                updateRobotSizeLabel(app);
+
+                // Hand keyboard focus back to the main window after every
+                // slider step (mouse-drag or the trackbar's own native
+                // arrow-key nav) -- a focused trackbar otherwise keeps
+                // Left/Right for itself (nudging its own position) instead
+                // of passing them through to WM_KEYDOWN's whole-body
+                // rotate below, so without this, adjusting Robot Size and
+                // then immediately pressing Left/Right to rotate the robot
+                // would just move the slider again instead. Safe to call
+                // on every WM_HSCROLL tick, including mid-drag -- an
+                // active trackbar drag is driven by mouse CAPTURE, not
+                // keyboard focus, so this doesn't interrupt it.
+                SetFocus(hwnd);
 
                 InvalidateRect(hwnd, NULL, FALSE);
             }

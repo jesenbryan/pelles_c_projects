@@ -39,10 +39,34 @@ void graphicsGetPan(float* panX, float* panY);
 // when only the "Robot Size" slider moves.
 void graphicsGetManualPan(float* panX, float* panY);
 
+// The ground reference line's OWN pan/scale anchor (mirrors
+// graphicsSetRobotScale's g_scaleAnchorY, just computed against the
+// line's fixed design Y, config.h's GROUND_LINE_DESIGN_Y, instead of the
+// robot's own live center) -- see graphicsSetRobotScale's comment for why
+// a second, independently-tracked anchor is needed rather than reusing
+// the robot's: the invariance graphicsSetRobotScale guarantees is
+// specific to the exact (centerX, centerY) point it was given, and the
+// ground line generally isn't that point, so it needs the identical math
+// run again against its own target to get the same guarantee for itself.
+float graphicsGetGroundLineAnchorY(void);
+
 // Current Semni view zoom (see graphicsZoom) -- exposed so canvas.c's
 // shared HUD overlay can show it alongside the ArcSpline canvas's own
 // zoom%, since the two modes now zoom independently of each other.
 float graphicsGetZoom(void);
+
+// The zoom applyProjection is ACTUALLY rendering with this frame:
+// camera zoom * Robot Size normally, but sim_camera's own zoom * Robot
+// Size during Simulation mode (see applyProjection's comment -- Simulation
+// drives the shared view through sim_camera instead of g_zoom).
+// graphicsGetZoom() above always returns just the Design-mode camera zoom,
+// which silently disagrees with the real projection while simulating.
+// Exposed for drawDashedHorizontalLine (renderer.c), which needs its
+// on-screen half-width to match the CURRENT projection's own half-extent
+// exactly, in every mode -- using graphicsGetZoom() there let the ground
+// line's width fall out of sync with the actual glOrtho bounds during
+// Simulation, visibly overshooting/undershooting the window edges.
+float graphicsGetEffectiveZoom(void);
 
 // Sets the "Robot Size" slider's value directly (see config.h's
 // ROBOT_SCALE_MIN/MAX) -- folds multiplicatively into this file's own

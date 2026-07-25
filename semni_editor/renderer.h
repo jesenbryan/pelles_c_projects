@@ -193,6 +193,37 @@ void computeSemniCircleSegments(Semni b, CircleSegment out[NUM_ROBOT_CIRCLE_SEGM
 // straight-line fallback (nearly-collinear p0/p1/p2), which uses far fewer.
 #define ARC_SAMPLE_COUNT 41
 
+// Computes the same circumcircle + sweep-direction curve drawArc renders
+// between p0 and p2 (sweeping the short way around, through p1 -- p1 is
+// the "bulge" handle), as a poly-line written into out (up to
+// ARC_SAMPLE_COUNT points). Returns how many points were written: 3 if
+// p0/p1/p2 are (nearly) collinear (out just holds p0, p1, p2 directly), or
+// ARC_SAMPLE_COUNT otherwise. See renderer.c's own comment on its
+// definition for the full derivation -- exposed here (rather than kept
+// static) so input.c's robotBoundingBoxLocal can bound the exact trimmed
+// arc actually drawn: a fillet's full circle can be far bigger than what's
+// visible (see MAX_ARC_R etc. in config.h), so sampling the real trimmed
+// curve, the same points drawArc itself walks, is what keeps the box
+// tight instead of wildly overshooting.
+int computeArcPoints(PointF p0, PointF p1, PointF p2, PointF out[ARC_SAMPLE_COUNT]);
+
+// Axis-aligned bounding box (raw local coordinates, pre-rotation/pre-
+// joint-angle) enclosing whichever robot kind is currently active's BODY
+// ONLY -- head/butt circles + their 2 seam arcs for Semni/Stilo (legs
+// excluded), or just the rectangle for Rocky (with its width/height
+// swapped from how it's actually rendered -- see input.c's own comment,
+// both deliberate). Defined in input.c (used there for the "Size: W x H
+// mm" side-panel label), declared here too so renderer.c's drawRobotSizeBox
+// can draw the exact same box into the GL scene instead of a second,
+// possibly-drifting copy of the same per-kind math. See input.c's own
+// comment on this function for why the head/butt circles are approximated
+// as full circles (a deliberate, small overestimate) while the connecting
+// seam ARCS use computeArcPoints above instead (their full circles are NOT
+// a safe overestimate -- see that function's own comment), and why the
+// whole thing reflects the DESIGNED pose rather than a live joint-angle
+// bend.
+void robotBoundingBoxLocal(AppState* app, float* minX, float* maxX, float* minY, float* maxY);
+
 // Computes a world-space poly-line approximation of each of the 6 fillet
 // ARCS -- the actual TRIMMED curve drawSemniBody/drawThigh/drawShin render
 // via drawArc, not the full circle computeSemniCircleSegments above

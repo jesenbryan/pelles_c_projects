@@ -40,14 +40,23 @@ typedef struct {
     int end;
     Circle circle;
 
-    // Average local stroke radius (in SOURCE IMAGE pixels), measured from
-    // the pre-thinning binary raster at each of this segment's skeleton
-    // points (see pipeline.c's measureLocalRadiusPx/runPipelineOnImage) --
-    // thinningZhangSuen collapses every stroke down to a 1px-wide
-    // centerline before arc-fitting ever runs, which is what the fit
-    // needs, but it also destroys the original stroke's width in the
-    // process. This is how that width gets recovered, so the "reconstructed"
-    // arcs (canvas.c's segment ghost overlay, render.c's
+    // Average stroke radius (in SOURCE IMAGE pixels), measured from the
+    // pre-thinning binary raster at every skeleton point along the WHOLE
+    // traced path this segment came from -- not just this segment's own
+    // slice of it (see pipeline.c's measureLocalRadiusPxDirectional/
+    // runPipelineOnImage) -- so every segment buildSegments splits one
+    // stroke into ends up with the exact same value, matching how the
+    // original stroke only ever has one thickness for its whole length
+    // (canvas.c's strokeThickness[], set once per stroke). Measuring per-
+    // segment instead used to let each piece's own (sometimes tiny)
+    // subset of points drift slightly from its neighbors', showing up as
+    // a visible width "pinch" right at a segment boundary -- worst at the
+    // smallest 1px thickness setting, where that's a big fraction of the
+    // total width. thinningZhangSuen collapses every stroke down to a
+    // 1px-wide centerline before arc-fitting ever runs, which is what the
+    // fit needs, but it also destroys the original stroke's width in the
+    // process -- this is how that width gets recovered, so the
+    // "reconstructed" arcs (canvas.c's segment ghost overlay, render.c's
     // renderSegmentsToImage) can be drawn at roughly the same thickness as
     // the drawing they were fit from instead of one hardcoded flat width.
     // Set to 0 for segments this wasn't computed for (e.g. a segment built

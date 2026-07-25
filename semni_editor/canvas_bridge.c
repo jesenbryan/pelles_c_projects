@@ -175,15 +175,38 @@ static void sampleArcPoints(ArcSegment* seg, SampleF* outPts, int* outCount, int
     Circle c = seg->circle;
 
     if (c.r < 1e-3f) {
-        // degenerate/near-straight segment - no meaningful circle, fall back
-        // FIXED: sample evenly across the ENTIRE segment, not just the first N points
-        int n = seg->count;
-        int sampleCount = (n > maxOut) ? maxOut : n;
-        
+        // degenerate/near-straight segment - no meaningful circle to sample
+        // from, so fit a straight line instead: interpolate evenly between
+        // the segment's two raw endpoint pixels (p0/p1), the same way the
+        // circle branch below samples evenly by ANGLE around its fitted
+        // circle rather than using raw traced pixels directly.
+        //
+        // This used to copy raw seg->pts[idx] pixels straight through.
+        // Those are the THINNED SKELETON's actual integer pixel positions,
+        // which -- for anything but a perfectly axis-aligned line -- zigzag
+        // in a staircase pattern (a 1px-wide raster line can only ever move
+        // in whole-pixel steps). canvas.c's ribbon renderer derives each
+        // vertex's extrusion NORMAL from the direction to its neighboring
+        // vertex; on a short/steep segment (few raw points, so little
+        // averaging-out of the zigzag between consecutive sampled points)
+        // that per-step direction is often purely horizontal or purely
+        // vertical instead of the line's true diagonal direction. Extruding
+        // by halfW along that wrong-angle normal is never WIDER than the
+        // correct perpendicular extrusion (off by a cos(theta) <= 1
+        // factor), so the ribbon reads as visibly thinner than the
+        // original stroke -- exactly the "still thinner, but only for
+        // straight lines" symptom, since width MEASUREMENT (avgRadiusPx,
+        // pipeline.c) is unbiased and the circle branch below already
+        // samples smooth analytic positions instead of raw pixels.
+        Point p0 = seg->pts[0];
+        Point p1 = seg->pts[seg->count - 1];
+        int sampleCount = (maxOut < 24) ? maxOut : 24;
+        if (sampleCount < 2) sampleCount = 2;
+
         for (int i = 0; i < sampleCount; i++) {
-            int idx = (n > 1) ? (i * (n - 1)) / (sampleCount - 1) : 0;
-            outPts[i].x = (float)seg->pts[idx].x;
-            outPts[i].y = (float)seg->pts[idx].y;
+            float t = (float)i / (float)(sampleCount - 1);
+            outPts[i].x = (float)p0.x + (float)(p1.x - p0.x) * t;
+            outPts[i].y = (float)p0.y + (float)(p1.y - p0.y) * t;
         }
         *outCount = sampleCount;
         return;
@@ -402,8 +425,22 @@ Image* canvasToImage(void)
         int count = (end - start) / 2;
         if (count < 1) continue;
 
+        // No floor on r here (there used to be one, clamping up to 1.0px)
+        // -- stampDisc/stampSegment's own pixel-CENTER test ((x+0.5)-cx,
+        // not a bare integer compare) reliably rasterizes a genuine 0.5px
+        // disc to at least one real "on" pixel regardless of sub-pixel
+        // alignment (verified numerically: 0 empty rasters across a full
+        // sweep of offsets), so the floor wasn't actually needed to avoid
+        // an invisible stroke. What it WAS doing: at thickness == 1 (the
+        // slider's minimum, the only value where this floor ever
+        // triggered), it silently inflated the raster's true radius from
+        // 0.5 to 1.0 -- pipeline.c's width measurement then faithfully
+        // measured that INFLATED 1.0, and canvas_bridge.c's own *2
+        // conversion back below took it from there, so the reconstructed
+        // line rendered at fully double the actual thickness=1 stroke's
+        // width. Letting r go down to its true 0.5 here is what the
+        // measurement needs to recover the CORRECT width instead.
         float r = strokeThickness[s] / 2.0f;
-        if (r < 1.0f) r = 1.0f;
 
         float px0, py0;
         worldToPixel(points[start], points[start + 1], w, h, &px0, &py0);

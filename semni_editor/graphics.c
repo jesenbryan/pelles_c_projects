@@ -62,6 +62,19 @@ static float g_panY = 0.0f;
 static float g_scaleAnchorX = 0.0f;
 static float g_scaleAnchorY = 0.0f;
 
+// The ground reference line's OWN version of g_scaleAnchorY above --
+// updated by graphicsSetRobotScale using the exact same math, just
+// against the line's fixed design Y (config.h's GROUND_LINE_DESIGN_Y)
+// instead of the robot's live center. g_scaleAnchorY only guarantees
+// invariance for the SPECIFIC point it was solved for (the robot's own
+// center) -- an arbitrary different point drifts under a Robot Size
+// change unless it gets this same treatment against its own target, which
+// is exactly what left the ground line moving at the wrong rate relative
+// to the robot before this existed (see drawDashedHorizontalLine's own
+// comment, renderer.c, for the full picture of why one shared anchor
+// can't serve two different target points at once).
+static float g_groundLineAnchorY = 0.0f;
+
 // last known viewport size, cached so a zoom change can reapply the
 // projection without waiting for the next WM_SIZE
 static int g_lastW = 800;
@@ -257,6 +270,14 @@ float graphicsGetZoom(void)
     return g_zoom;
 }
 
+// Keep in sync with applyProjection's own zoom branch above -- this is
+// deliberately just that same expression exposed as a callable, not a
+// reimplementation, so the two can never drift apart independently.
+float graphicsGetEffectiveZoom(void)
+{
+    return (appMode == APP_MODE_SIMULATION) ? (simCameraGetZoom() * g_robotScale) : effectiveZoom();
+}
+
 // Sets the "Robot Size" slider's value directly (input.c's WM_HSCROLL
 // passes pos/100.0f, see ROBOT_SCALE_MIN/MAX in config.h) -- folds
 // straight into effectiveZoom/applyProjection/screenToGL/graphicsGetPan,
@@ -294,6 +315,14 @@ void graphicsSetRobotScale(float scale, float centerX, float centerY)
 
         g_scaleAnchorX = dx - ratio * (dx - g_scaleAnchorX);
         g_scaleAnchorY = dy - ratio * (dy - g_scaleAnchorY);
+
+        // Identical solve, run again for the ground reference line's own
+        // fixed Y (GROUND_LINE_DESIGN_Y, config.h) instead of the robot's
+        // live center -- see g_groundLineAnchorY's own comment for why
+        // g_scaleAnchorY above can't double as this too (it's only valid
+        // for the exact point it was solved for).
+        float dLine = GROUND_LINE_DESIGN_Y - g_panY;
+        g_groundLineAnchorY = dLine - ratio * (dLine - g_groundLineAnchorY);
     }
 
     g_robotScale = scale;
@@ -310,6 +339,11 @@ float graphicsGetRobotScale(void)
     return g_robotScale;
 }
 
+float graphicsGetGroundLineAnchorY(void)
+{
+    return g_groundLineAnchorY;
+}
+
 void graphicsResetView(void)
 {
     g_zoom = 1.0f;
@@ -317,6 +351,7 @@ void graphicsResetView(void)
     g_panY = 0.0f;
     g_scaleAnchorX = 0.0f;
     g_scaleAnchorY = 0.0f;
+    g_groundLineAnchorY = 0.0f;
 
     applyProjection();
 }

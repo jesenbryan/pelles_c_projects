@@ -9,6 +9,7 @@
 #include "bmp.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <math.h>   // NEW: sqrtf/floorf -- measureLocalRadiusPxDirectional's tangent handling
 
 #include "ui_state.h"   // NEW: needed for BOOL
 #include "geometry.h"   // NEW
@@ -107,6 +108,16 @@ static void extractComponent(uint8_t* remaining, uint8_t* compBin, int w, int h,
 // only 1px wide). Chebyshev rather than a true Euclidean distance transform
 // -- cheaper, and the difference is negligible for the roughly-circular
 // brush strokes this measures.
+//
+// Only used as a FALLBACK now (see measureLocalRadiusPxDirectional below)
+// for the rare case a local tangent direction can't be worked out (a
+// segment with just one point). A square ring measures distance the same
+// in every direction, which is exactly its weakness for a stroke that
+// ISN'T running along one of that ring's own axes: cutting straight down
+// a DIAGONAL stroke this way crosses more of it than the stroke's true
+// (perpendicular) width, overshooting the real radius by up to sqrt(2) --
+// confirmed numerically (thickness_sim4.py) alongside the same-order
+// quantization bias this has even at 0/90 degrees (below).
 static float measureLocalRadiusPx(const uint8_t* bin, int w, int h, int x, int y, int maxR)
 {
     for (int r = 1; r <= maxR; r++)
@@ -131,6 +142,56 @@ static float measureLocalRadiusPx(const uint8_t* bin, int w, int h, int x, int y
     }
 
     return (float)maxR;
+}
+
+// Same job as measureLocalRadiusPx above (approximating the local stroke
+// half-width at skeleton point (x,y) from the preserved pre-thinning
+// raster), but measured along the direction ACTUALLY PERPENDICULAR to the
+// stroke's own local tangent (dirX, dirY -- a unit vector along the
+// skeleton path at this point, see its caller below) instead of always
+// along a fixed square ring. A cross-section cut anywhere off the true
+// perpendicular measures MORE than the stroke's real width (you're
+// slicing through it at a slant), which is exactly why the old ring-based
+// version could overshoot a diagonal stroke's radius by up to sqrt(2)x --
+// cutting exactly perpendicular, whatever the stroke's own angle happens
+// to be, avoids that regardless of angle. Verified numerically
+// (thickness_sim5.py): worst-case error across a full sweep of angles
+// (0-90 degrees) and sub-pixel alignments dropped from consistently
+// +-0.5px-or-worse down to +-0.5px in only the rarest cases and usually
+// exact.
+//
+// Walks outward one integer pixel step at a time on EACH side of (x,y)
+// along the perpendicular, counting how many steps stay inside the
+// stroke before hitting background/the image edge, then converts that
+// total run length back into a radius (run/2, +1 for the center pixel
+// itself -- see the derivation in thickness_sim5.py).
+static float measureLocalRadiusPxDirectional(const uint8_t* bin, int w, int h,
+                                              int x, int y,
+                                              float dirX, float dirY,
+                                              int maxR)
+{
+    float pdx = -dirY;
+    float pdy = dirX;
+
+    int posSteps = 0;
+    for (int t = 1; t <= maxR; t++)
+    {
+        int ix = (int)floorf((x + 0.5f) + pdx * (float)t);
+        int iy = (int)floorf((y + 0.5f) + pdy * (float)t);
+        if (ix < 0 || ix >= w || iy < 0 || iy >= h || !bin[iy * w + ix]) break;
+        posSteps++;
+    }
+
+    int negSteps = 0;
+    for (int t = 1; t <= maxR; t++)
+    {
+        int ix = (int)floorf((x + 0.5f) - pdx * (float)t);
+        int iy = (int)floorf((y + 0.5f) - pdy * (float)t);
+        if (ix < 0 || ix >= w || iy < 0 || iy >= h || !bin[iy * w + ix]) break;
+        negSteps++;
+    }
+
+    return (float)(posSteps + negSteps + 1) * 0.5f;
 }
 
 // Generous enough for any thickness the brush slider actually allows, small
@@ -195,24 +256,67 @@ static void runPipelineOnImage(Image* img, const char* sourceLabel, BOOL stretch
             ArcSegment segs[MAX_ARC_SEGMENTS];
             int segCount = buildSegments(path, numPoints, segs);
 
-            // Recover each segment's original stroke width (see
-            // measureLocalRadiusPx above) from the preserved pre-thinning
-            // raster, before the segment (and the path buffer its pts[]
-            // point into) gets copied off and this component's own
-            // buildSegments locals go out of scope.
-            for (int i = 0; i < segCount; i++)
+            // Recover ONE average stroke width for the WHOLE traced path
+            // (not one independent measurement per arc-fit segment) from
+            // the preserved pre-thinning raster, before the path buffer
+            // gets copied off and this component's own buildSegments
+            // locals go out of scope. The original stroke only ever has
+            // ONE thickness for its entire length (strokeThickness[] is
+            // set once per stroke at draw-start, see canvas.c's
+            // WM_LBUTTONDOWN, never varied along it) -- measuring per
+            // ARC SEGMENT instead let each piece's own subset of points
+            // (sometimes just a handful, right at a buildSegments split)
+            // pull its own estimate slightly away from its neighbors',
+            // which showed up as a visible width "pinch" right at a
+            // segment boundary -- invisible at a large overall thickness,
+            // but a big fraction of the total width (and so very visible)
+            // at the smallest 1px setting, even though the segments'
+            // POSITIONS still joined up perfectly (that's a separate,
+            // already-fixed guarantee -- see sampleArcPoints' shared-
+            // endpoint snapping in canvas_bridge.c). Averaging over the
+            // whole path first keeps every segment of the same stroke
+            // rendered at the exact same, more representative width.
+            double sum = 0.0;
+            for (int k = 0; k < numPoints; k++)
             {
-                double sum = 0.0;
-                int n = segs[i].count;
-                for (int k = 0; k < n; k++)
+                // Local tangent direction at path[k], from its two
+                // immediate neighbors (one-sided at either end of the
+                // path) -- lets the width measurement below cut straight
+                // across the stroke's TRUE perpendicular regardless of
+                // which way it happens to run, instead of always
+                // measuring along a fixed pair of axes (see
+                // measureLocalRadiusPxDirectional's comment for why that
+                // matters).
+                int kPrev = (k > 0) ? k - 1 : k;
+                int kNext = (k < numPoints - 1) ? k + 1 : k;
+
+                float tdx = (float)(path[kNext].x - path[kPrev].x);
+                float tdy = (float)(path[kNext].y - path[kPrev].y);
+                float tlen = sqrtf(tdx * tdx + tdy * tdy);
+
+                if (tlen > 1e-3f)
                 {
-                    sum += measureLocalRadiusPx(origBin, w, h,
-                                                 segs[i].pts[k].x, segs[i].pts[k].y,
+                    sum += measureLocalRadiusPxDirectional(origBin, w, h,
+                                                 path[k].x, path[k].y,
+                                                 tdx / tlen, tdy / tlen,
                                                  MAX_MEASURED_STROKE_RADIUS_PX);
                 }
-                segs[i].avgRadiusPx = (n > 0) ? (float)(sum / n) : 1.0f;
-                if (segs[i].avgRadiusPx < 1.0f) segs[i].avgRadiusPx = 1.0f;
+                else
+                {
+                    // Degenerate (a single-point path, or repeated
+                    // coordinates) -- no tangent to measure across, so
+                    // fall back to the old direction-agnostic ring
+                    // search rather than dividing by a near-zero tlen.
+                    sum += measureLocalRadiusPx(origBin, w, h,
+                                                 path[k].x, path[k].y,
+                                                 MAX_MEASURED_STROKE_RADIUS_PX);
+                }
             }
+            float pathAvgRadiusPx = (numPoints > 0) ? (float)(sum / numPoints) : 1.0f;
+            if (pathAvgRadiusPx < 1.0f) pathAvgRadiusPx = 1.0f;
+
+            for (int i = 0; i < segCount; i++)
+                segs[i].avgRadiusPx = pathAvgRadiusPx;
 
             for (int i = 0; i < segCount && totalSegCount < MAX_ARC_SEGMENTS; i++)
                 allSegments[totalSegCount++] = segs[i];

@@ -1257,7 +1257,17 @@ void canvasRenderFrame(float dimAmount)
 	    glEnable(GL_BLEND);
 	    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-	    float ghostAlpha = isComparisonActive ? 0.95f : 0.35f;
+	    // Comparison Mode HIDES the original strokes entirely while it's on
+	    // (see the "!isComparisonActive" guard around the real-stroke render
+	    // loop above) -- so the user is judging width by memory/toggling,
+	    // not a simultaneous overlay. Full opacity here (was 0.95) matches
+	    // the original stroke's own strokeAlpha exactly, so a lower-contrast
+	    // ghost line isn't ALSO reading as visually thinner/fainter on top
+	    // of whatever the true geometric width difference is -- the actual
+	    // width itself comes entirely from segmentAvgRadiusPx below, this
+	    // is just making sure alpha doesn't quietly stack another
+	    // "apples-to-apples" mismatch on top of it.
+	    float ghostAlpha = isComparisonActive ? 1.0f : 0.35f;
 	    if (isRobotLayerActive) ghostAlpha *= 0.3f;  // extra-dim: Environment reference while on Robot layer
 
 	    for (int s = 0; s < canvas.segmentResultCount; s++)

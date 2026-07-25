@@ -258,6 +258,15 @@
 #define MAX_ZOOM 8.0f
 #define ZOOM_STEP 1.1f
 
+// Design-space Y of the ground reference line (renderer.c's
+// drawDashedHorizontalLine, called from renderApp/renderRobotScene) --
+// pulled out to a shared constant rather than left as a literal -1.3f at
+// each call site, since graphics.c's graphicsSetRobotScale needs this
+// exact same value too (to give the line its own pan/scale anchor -- see
+// g_groundLineAnchorY there): the two computations only stay consistent
+// with each other if both ever use the identical number.
+#define GROUND_LINE_DESIGN_Y -1.3f
+
 // Robot "size" slider (top-right corner, Semni mode only -- see the
 // trackbar created in input.c's WM_CREATE). A separate, permanent
 // multiplier layered on top of the view zoom above (graphicsZoom/
@@ -266,6 +275,17 @@
 // bigger than the default size) since "zoom in past normal" is already
 // covered by MAX_ZOOM -- this slider is only for shrinking the robot
 // down, not magnifying it further.
+//
+// Implemented purely as a projection-level multiplier (graphics.c's
+// g_robotScale, folded into effectiveZoom()) -- it never touches any
+// robot struct's own raw fields (headRadius, kneeCircle, etc.), the same
+// way ordinary camera zoom doesn't. But input.c's updateRobotSizeLabel and
+// renderer.c's drawRobotSizeBox both deliberately treat it as if it DOES
+// resize the robot for real, multiplying MM_PER_WORLD_UNIT's conversion by
+// this slider's current value -- so the "Size: W x H mm" readout (and the
+// matching in-scene bounding box label) tracks the slider instead of
+// staying pinned to the fixed designed size. That's a presentation-layer
+// choice, not a change to this constant's own meaning.
 #define ROBOT_SCALE_MIN 0.25f
 #define ROBOT_SCALE_MAX 1.0f
 
@@ -275,11 +295,26 @@
 // single uniform scale, independent of X vs Y. This does NOT change any
 // existing world-unit coordinate (robot/environment geometry, camera
 // zoom/pan, hit-test radii, etc. are all untouched) -- it's purely a
-// read-only conversion factor. Currently only used by input.c's live robot
-// size readout (hRobotSizeLabel) -- NOT used by save.c's saveRockyAsRobArm
-// Rob.txt/Arm.txt export any more (see ROCKY_EXPORT_SCALE below, a
-// separate, unrelated conversion for that specific external consumer).
+// read-only conversion factor. Used by input.c's live robot size readout
+// (hRobotSizeLabel) and renderer.c's drawRobotSizeBox (both also scaled by
+// the current ROBOT_SCALE_MIN/MAX slider value -- see its own comment
+// above) -- NOT used by save.c's saveRockyAsRobArm Rob.txt/Arm.txt export
+// any more (see ROCKY_EXPORT_SCALE below, a separate, unrelated conversion
+// for that specific external consumer).
 #define MM_PER_WORLD_UNIT 37.5f
+
+// Real-world-size bounding box overlay (renderer.c's drawRobotSizeBox) --
+// appears around the robot while the "Robot Size" slider (input.c's
+// hScaleSlider) is being dragged, so the user can see its current real-
+// world footprint (see MM_PER_WORLD_UNIT above, scaled by the slider) as
+// it's being resized. Same stateless hold-then-fade shape as Simulation's
+// gravity/gait toasts (SIMULATION_GRAVITY_TOAST_HOLD_MS/FADE_MS below) --
+// HOLD keeps it fully visible for a moment after the last slider move,
+// FADE eases it back out rather than popping off abruptly, so a quick
+// nudge of the slider still reads clearly and a longer drag doesn't leave
+// it stuck on screen once released.
+#define ROBOT_SIZE_BOX_HOLD_MS 700
+#define ROBOT_SIZE_BOX_FADE_MS 400
 
 // Rob.txt/Arm.txt export scale (see save.c's saveRockyAsRobArm) -- converts
 // our world units into whatever unit the specific external "his program"

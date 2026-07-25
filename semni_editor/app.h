@@ -604,6 +604,18 @@ typedef struct {
     // duration of a drag (WM_MOUSEMOVE's drag branch returns before
     // reaching the code that updates this).
     int hoveringRobotSim;
+
+    // GetTickCount() timestamp from the most recent time the "Robot Size"
+    // slider moved (see input.c's WM_HSCROLL), or 0 if it's never been
+    // touched / the box has fully faded back out. renderer.c's
+    // drawRobotSizeBox reads this every frame to compute how visible the
+    // real-world-size bounding box overlay should be right now (see
+    // config.h's ROBOT_SIZE_BOX_HOLD_MS/FADE_MS) -- same "stateless fade
+    // derived fresh from an elapsed-time snapshot" pattern as canvas.c's
+    // gravityToastStartTick/gaitToastStartTick, just living on AppState
+    // instead of as a canvas.c static since renderer.c (not canvas.c) is
+    // what needs to read it.
+    DWORD robotSizeBoxStartTick;
 } AppState;
 
 // The single running instance of the Semni app's state, defined in main.c.

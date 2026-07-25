@@ -8,6 +8,7 @@
 #include "editor_mode.h"
 #include "ui_state.h"   // for glWindowWidth/glWindowHeight -- drawDashedHorizontalLine's aspect ratio
 #include <stdio.h>
+#include <string.h>     // for strlen -- drawRobotSizeBox's mm label
 
 // opacity multiplies every color's alpha (1.0 = fully opaque, down toward
 // 0.0 = nearly invisible) -- this is how the whole Semni scene gets
@@ -67,10 +68,11 @@ void drawCircle(PointF c, float r)
 // (nearly) collinear (out just holds p0, p1, p2 directly, matching
 // drawArc's own straight-line fallback), ARC_SAMPLE_COUNT otherwise.
 // Factored out of drawArc so other code (canvas.c's ground-collision
-// check) can walk the exact same curve without duplicating this math --
-// same "shared computation" reasoning as computeSemniCircleSegments/
-// computeSemniBodyCircles elsewhere in this file.
-static int computeArcPoints(PointF p0, PointF p1, PointF p2, PointF out[ARC_SAMPLE_COUNT])
+// check, input.c's robotBoundingBoxLocal) can walk the exact same curve
+// without duplicating this math -- same "shared computation" reasoning as
+// computeSemniCircleSegments/computeSemniBodyCircles elsewhere in this
+// file. Deliberately NOT static -- see renderer.h's declaration.
+int computeArcPoints(PointF p0, PointF p1, PointF p2, PointF out[ARC_SAMPLE_COUNT])
 {
     CircleF circle = circumcircle(p0, p1, p2);
 
@@ -165,14 +167,20 @@ void drawHandle(PointF p, int selected, float radius, float opacity)
 }
 
 // Draws a dashed horizontal "ground" reference line at design-space Y
-// coordinate `y` (world units as if Robot Size == 1.0, camera zoom == 1.0,
-// and no pan), always spanning the full visible viewport width -- a fixed
-// ruler the user can lay the robot against or compare its size to. Called
-// with the modelview already translated by -graphicsGetPan() (see
-// renderApp/renderRobotScene), so everything drawn here is implicitly
-// shifted by that combined pan -- three things are deliberately
+// coordinate `y` (must be config.h's GROUND_LINE_DESIGN_Y -- see below for
+// why), always spanning the full visible viewport width -- a reference
+// the user can lay the robot against or compare its size to, that moves
+// under manual panning exactly the same screen-space amount the robot
+// itself does (so panning around still shows the robot sitting on it,
+// the same way panning around a real scene keeps you standing on the same
+// floor), while staying visually anchored to the robot specifically
+// through "Robot Size" slider changes instead of drifting away from it
+// the way an ordinary world-space line would. Called with the modelview
+// already translated by -graphicsGetPan() (see renderApp/renderRobotScene),
+// so everything drawn here is implicitly shifted by that combined pan,
+// same as the robot's own vertices are -- two things are deliberately
 // compensated for on top of that, rather than left to fall out of the
-// shared projection/pan the way everything else on screen does:
+// shared projection/pan the way most geometry does:
 //
 //  - Width: computed from the CURRENT projection's own halfX (aspect *
 //    1.5 / (zoom * robotScale), exactly matching graphics.c's
@@ -181,55 +189,70 @@ void drawHandle(PointF p, int selected, float radius, float opacity)
 //    than stopping short (or overshooting) at whichever one size a fixed
 //    constant happened to fit.
 //
-//  - Y position and dash/gap length: divided by graphicsGetRobotScale(),
-//    which exactly cancels the robotScale factor the projection
-//    multiplies back in -- so this line's dash pattern (and, combined
-//    with the next point, its position) stays pixel-for-pixel identical
-//    no matter where the "Robot Size" slider is set. It still moves and
-//    resizes normally with ordinary camera zoom/manual pan, same as
-//    everything else -- only the slider is cancelled out.
+//  - Dash/gap length: divided by graphicsGetRobotScale(), which exactly
+//    cancels the robotScale factor the projection multiplies back in --
+//    so the dash pattern itself stays pixel-for-pixel identical no matter
+//    where the "Robot Size" slider is set (it still resizes normally with
+//    ordinary camera zoom, same as everything else).
 //
-//  - The Robot-Size-driven ANCHOR half of the combined pan: graphicsGetPan
-//    includes whatever graphicsSetRobotScale added to keep the robot's
-//    own center fixed on screen (see its comment) -- left alone, that
-//    would drag this line along with it every time the slider moves,
-//    which is exactly the bug the two points above don't fix by
-//    themselves. Adding the combined pan back in, then re-subtracting
-//    just the MANUAL half (graphicsGetManualPan) scaled by 1/robotScale,
-//    cancels that anchor out algebraically while still letting genuine
-//    user panning/zooming move this line like anything else.
-//
-// That's the whole point of all three: with a fixed ruler like this on
-// screen, moving the slider now visibly changes the robot's size RELATIVE
-// to it, instead of looking like the whole scene just zoomed together
-// (see graphics.c's g_robotScale comment for the underlying reason that
-// ambiguity exists at all).
+//  - Y position: graphicsGetPan()'s own robot-center anchor
+//    (graphicsSetRobotScale's g_scaleAnchorY) ONLY keeps THAT specific
+//    point -- the robot's live center -- fixed on screen across a slider
+//    change; an unrelated fixed point like this line drifts at the wrong
+//    rate if it just borrows that same anchor value (dividing a plain
+//    world Y by robotScale looks right at first, but it also scales how
+//    fast the line reacts to genuine PANNING, which is wrong -- it ends
+//    up panning 1/robotScale times faster or slower than the robot,
+//    visibly sliding apart from it the moment you pan at anything other
+//    than Robot Size == 1.0). So the line gets its OWN independently
+//    solved anchor instead (graphicsGetGroundLineAnchorY, updated by
+//    graphicsSetRobotScale using this exact `y` as its target -- see
+//    g_groundLineAnchorY's own comment, graphics.c) -- centerY below
+//    swaps the robot's anchor contribution out of the combined pan for
+//    the line's own, which is what finally gives this line the same pan
+//    rate as the robot AND the same "doesn't move for just a slider
+//    change" invariance the robot's own center enjoys. This is also why
+//    `y` has to be GROUND_LINE_DESIGN_Y specifically: it's the exact
+//    value graphicsSetRobotScale solves the anchor against, so calling
+//    this with any other Y would be solving for the wrong point.
 void drawDashedHorizontalLine(float y, float opacity)
 {
     float robotScale = graphicsGetRobotScale();
-    float zoom = graphicsGetZoom();
+    // NOT graphicsGetZoom() -- that's only the Design-mode camera zoom and
+    // silently disagrees with the actual projection during Simulation mode
+    // (which renders through sim_camera's own zoom instead -- see
+    // applyProjection, graphics.c). graphicsGetEffectiveZoom() mirrors
+    // applyProjection's exact zoom-selection branch and already has
+    // robotScale folded in, which is why halfWidth below no longer
+    // multiplies zoom*robotScale itself.
+    float effZoom = graphicsGetEffectiveZoom();
     float aspect = (glWindowHeight != 0) ? ((float)glWindowWidth / (float)glWindowHeight) : 1.0f;
 
     float combinedPanX, combinedPanY;
     graphicsGetPan(&combinedPanX, &combinedPanY);
 
-    // Only the Y half is used below -- unlike height, the line's
-    // horizontal centering doesn't need to stay anchored to a "design"
-    // reference (see centerX's own comment just below).
+    // The robot's own scale anchor, recovered from the combined pan
+    // (combinedPanY == manualPanY + robotAnchorY by construction -- see
+    // graphicsGetPan/graphicsGetManualPan) -- swapped out for the line's
+    // own anchor just below.
     float manualPanX, manualPanY;
     graphicsGetManualPan(&manualPanX, &manualPanY);
     (void)manualPanX;
+    float robotAnchorY = combinedPanY - manualPanY;
 
-    float halfWidth = (1.5f / (zoom * robotScale)) * aspect;
+    float lineAnchorY = graphicsGetGroundLineAnchorY();
 
-    // Horizontal center: exactly the CURRENT combined pan, not anti-
-    // anchored the way Y is below -- this one just needs to always land
-    // exactly on the current view's own center so the line reaches both
-    // screen edges (see halfWidth above), whatever that view happens to
-    // be right now. There's no separate "design" horizontal reference to
-    // stay anchored to the way there is for height.
+    float halfWidth = (1.5f / effZoom) * aspect;
+
+    // Horizontal center: exactly the CURRENT combined pan -- this one just
+    // needs to always land exactly on the current view's own center so the
+    // line reaches both screen edges (see halfWidth above), whatever that
+    // view happens to be right now. There's no separate "design"
+    // horizontal reference to stay anchored to the way there is for
+    // height (a full-width horizontal line looks identical regardless of
+    // where its own center sits, so there's nothing to solve for here).
     float centerX = combinedPanX;
-    float centerY = combinedPanY + (y - manualPanY) / robotScale;
+    float centerY = y + robotAnchorY - lineAnchorY;
 
     glColor4f(0.6f, 0.6f, 0.6f, opacity); // medium gray, subtle
 
@@ -252,6 +275,150 @@ void drawDashedHorizontalLine(float y, float opacity)
         glVertex2f(dashEnd, centerY);
         glEnd();
     }
+}
+
+// Draws a rectangle around whichever robot kind is currently active,
+// rotated rigidly to match robotBoundingBoxLocal's box (input.c -- also
+// what the "Size: W x H mm" side-panel label is computed from) to however
+// that robot is currently posed, plus that same W x H mm text floating
+// just above its top edge. Like drawDashedHorizontalLine above, this rides
+// along with the shared pan/zoom/robotScale projection automatically
+// (drawn in the same local coordinates the robot's own body circles are),
+// so its SCREEN size shrinks/grows with the "Robot Size" slider just like
+// the robot's own outline does.
+//
+// alpha is the caller's already-computed hold+fade value (see
+// ROBOT_SIZE_BOX_HOLD_MS/FADE_MS, config.h) multiplied by whatever scene-
+// level opacity/dimming applies -- 0 means fully invisible, and callers
+// are expected to skip calling this entirely once it reaches that (no
+// point issuing GL calls for something nobody can see).
+static void drawRobotSizeBox(AppState* app, float alpha)
+{
+    float minX, maxX, minY, maxY;
+    robotBoundingBoxLocal(app, &minX, &maxX, &minY, &maxY);
+    if (maxX < minX || maxY < minY) return; // no geometry for this kind
+
+    // Rotate the box rigidly by whatever the robot's own whole-body angle
+    // currently is -- robotBoundingBoxLocal's box is computed in
+    // UNROTATED local space (same convention as save.c's export), but the
+    // robot itself is drawn rotated by its own b.angle around its own
+    // center (getCenter/rotatePoint throughout drawSemniBody/drawRocky/
+    // drawStiloBody). Home/Standing poses default to a decidedly non-zero
+    // angle (e.g. Semni's Home pose is 178 degrees, app_init.c) -- drawing
+    // this box axis-aligned in that same local space, unrotated, would
+    // miss the robot almost entirely rather than merely "not quite cover"
+    // it, which is exactly the bug this fixes. Rotating the box's own 4
+    // corners by the same angle/center is enough to keep it fully
+    // enclosing: it's a rigid copy of a box that already fully contains
+    // the (unrotated) local shape, and rotation preserves containment.
+    PointF center;
+    float angle;
+    switch (app->robotScene.activeKind)
+    {
+        case ROBOT_KIND_ROCKY:
+            center = getRockyCenter(app->robotScene.rocky);
+            angle = app->robotScene.rocky.angle;
+            break;
+
+        case ROBOT_KIND_STILO:
+            center = getStiloCenter(app->robotScene.stilo);
+            angle = app->robotScene.stilo.angle;
+            break;
+
+        case ROBOT_KIND_SEMNI:
+        default:
+            center = getCenter(app->robotScene.robot);
+            angle = app->robotScene.robot.angle;
+            break;
+    }
+
+    PointF corners[4] = {
+        { minX, minY },
+        { maxX, minY },
+        { maxX, maxY },
+        { minX, maxY },
+    };
+
+    glColor4f(0.15f, 0.55f, 0.95f, alpha);
+    glLineWidth(1.5f);
+    glBegin(GL_LINE_LOOP);
+    for (int i = 0; i < 4; i++)
+    {
+        PointF w = rotatePoint(corners[i], center, angle);
+        glVertex2f(w.x, w.y);
+    }
+    glEnd();
+    glLineWidth(1.0f);
+
+    // "W x H mm" label, floating in world space just above the box's
+    // (rotated) top edge -- glRasterPos2f is transformed by the current
+    // modelview/projection like any vertex, so this tracks the box's
+    // on-screen position automatically instead of needing a separate
+    // screen-pixel placement pass. The glyphs themselves are a fixed 16px
+    // regardless of zoom (see canvas.c's WM_CREATE, where fontBase is
+    // built) -- same "readable at any scale" reasoning as every other HUD
+    // text in this app (zoom readout, pixel readout, mode indicator, ...).
+    //
+    // Multiplied by the CURRENT "Robot Size" slider value
+    // (graphicsGetRobotScale) rather than left at the fixed designed size
+    // -- matches updateRobotSizeLabel's own identical change (input.c):
+    // dragging this slider is meant to read as actually resizing the
+    // robot's real-world footprint, not just how it's being viewed, so
+    // the number shown here has to move together with the box itself.
+    if (fontBase != 0)
+    {
+        float robotScale = graphicsGetRobotScale();
+        int widthMM  = (int)((maxX - minX) * MM_PER_WORLD_UNIT * robotScale + 0.5f);
+        int heightMM = (int)((maxY - minY) * MM_PER_WORLD_UNIT * robotScale + 0.5f);
+
+        // Rocky specifically shown swapped -- same requested override as
+        // input.c's updateRobotSizeLabel, kept in sync with it so the
+        // side-panel text and this in-scene label never disagree.
+        int displayWidthMM = widthMM;
+        int displayHeightMM = heightMM;
+        if (app->robotScene.activeKind == ROBOT_KIND_ROCKY)
+        {
+            displayWidthMM = heightMM;
+            displayHeightMM = widthMM;
+        }
+
+        char buf[64];
+        wsprintfA(buf, "%d x %d mm", displayWidthMM, displayHeightMM);
+
+        PointF labelWorld = rotatePoint((PointF){ minX, maxY + 0.05f }, center, angle);
+
+        glColor4f(0.15f, 0.55f, 0.95f, alpha);
+        glRasterPos2f(labelWorld.x, labelWorld.y);
+        glPushAttrib(GL_LIST_BIT);
+        glListBase(fontBase - 32);
+        glCallLists((GLsizei)strlen(buf), GL_UNSIGNED_BYTE, buf);
+        glPopAttrib();
+    }
+}
+
+// Computes drawRobotSizeBox's current hold/fade alpha from
+// app->robotSizeBoxStartTick (see its own comment in app.h), 0 meaning
+// "don't draw it at all" -- either the slider has never been touched, or
+// enough time has passed since the last move that it's fully faded out.
+// Factored out of renderApp/renderRobotScene since both need the identical
+// computation.
+static float robotSizeBoxAlpha(AppState* app)
+{
+    if (app->robotSizeBoxStartTick == 0)
+        return 0.0f;
+
+    DWORD elapsed = GetTickCount() - app->robotSizeBoxStartTick;
+
+    if (elapsed < (DWORD)ROBOT_SIZE_BOX_HOLD_MS)
+        return 1.0f;
+
+    if (elapsed < (DWORD)(ROBOT_SIZE_BOX_HOLD_MS + ROBOT_SIZE_BOX_FADE_MS))
+    {
+        float fadeElapsed = (float)(elapsed - ROBOT_SIZE_BOX_HOLD_MS);
+        return 1.0f - (fadeElapsed / (float)ROBOT_SIZE_BOX_FADE_MS);
+    }
+
+    return 0.0f;
 }
 
 void drawSemniBody(Semni b, RenderState* rs, float opacity)
@@ -1432,11 +1599,22 @@ void renderApp(AppState* app, HDC hdc)
     // Draw ground reference line at the bottom, low enough to read as a
     // floor the robot stands/lies on rather than a line cutting through
     // its body -- see drawDashedHorizontalLine's own comment for how it
-    // stays a fixed on-screen ruler regardless of camera zoom/aspect and
-    // the "Robot Size" slider.
-    drawDashedHorizontalLine(-1.3f, 1.0f);
+    // pans in lockstep with the robot while staying anchored to it through
+    // "Robot Size" slider changes. Must be GROUND_LINE_DESIGN_Y (config.h)
+    // specifically -- see that function's comment for why.
+    drawDashedHorizontalLine(GROUND_LINE_DESIGN_Y, 1.0f);
 
     renderRobot(app, 1, 1.0f);
+
+    // Real-world-size bounding box: see drawRobotSizeBox's own comment.
+    // Drawn on top of the robot (after renderRobot, not before) so its
+    // outline reads clearly against the body instead of being drawn under
+    // and potentially traced over by it.
+    {
+        float boxAlpha = robotSizeBoxAlpha(app);
+        if (boxAlpha > 0.0f)
+            drawRobotSizeBox(app, boxAlpha);
+    }
 
     SwapBuffers(hdc);
 }
@@ -1490,7 +1668,21 @@ void renderRobotScene(AppState* app, float dimAmount)
     // background copy of the robot either, since nothing is being edited
     // there.
     if (editorModeState.currentMode == EDITOR_MODE_SEMNI)
-        drawDashedHorizontalLine(-1.3f, opacity);
+        drawDashedHorizontalLine(GROUND_LINE_DESIGN_Y, opacity);
 
     renderRobot(app, 1, opacity);
+
+    // Real-world-size bounding box overlay while the "Robot Size" slider
+    // is being (or was just) dragged -- see drawRobotSizeBox's own
+    // comment. Same currentMode gate as the ground reference line just
+    // above: the slider only exists in Design > Robot's own control panel,
+    // so this has nothing meaningful to show as part of Design >
+    // Environment's dimmed background copy of the robot, or in Simulation.
+    // Drawn after renderRobot so its outline sits on top of the body.
+    if (editorModeState.currentMode == EDITOR_MODE_SEMNI)
+    {
+        float boxAlpha = robotSizeBoxAlpha(app) * opacity;
+        if (boxAlpha > 0.0f)
+            drawRobotSizeBox(app, boxAlpha);
+    }
 }
