@@ -88,7 +88,23 @@ static HMENU buildMainMenu(void)
     // (ID_LAYER_ROBOT/ID_LAYER_ENVIRONMENT handling) locates Mode/Design
     // via GetSubMenu(hMenuBar, 1)/GetSubMenu(hModeMenu, 0) by fixed index,
     // and inserting anything before Mode would silently shift it to the
-    // wrong slot.
+    // wrong slot. Same reasoning applies to View just below (index 2) --
+    // it also has to land after Mode, not before it.
+    //
+    // Holds general rendering preferences, as opposed to Mode's "what am I
+    // doing right now" choices -- "Hide Inactive Layer" (canvas.c's
+    // hideInactiveLayer, WM_COMMAND's ID_TOGGLE_HIDE_INACTIVE handling) is
+    // the first thing that belongs here: whether switching between Design >
+    // Robot/Environment makes whichever one isn't active disappear
+    // entirely, rather than the normal partial dim. Off by default --
+    // canvas.c's own ID_TOGGLE_HIDE_INACTIVE handler locates this menu via
+    // GetSubMenu(hMenuBar, 2) by fixed index, same as Mode/Design above --
+    // inserting anything between Mode and View, or before View, would
+    // silently break that lookup too.
+    HMENU hViewMenu = CreatePopupMenu();
+    AppendMenu(hViewMenu, MF_STRING, ID_TOGGLE_HIDE_INACTIVE, L"Hide Inactive Layer");
+    AppendMenu(hMenuBar, MF_POPUP, (UINT_PTR)hViewMenu, L"&View");
+
     HMENU hHelpMenu = CreatePopupMenu();
     // Lists every keyboard/mouse control for posing/simulating the robot
     // (see canvas.c's WM_COMMAND ID_HELP handler).
@@ -100,6 +116,11 @@ static HMENU buildMainMenu(void)
     // first frame instead of only updating after the user picks something.
     CheckMenuItem(hDesignMenu, ID_LAYER_ROBOT, MF_BYCOMMAND | MF_UNCHECKED);
     CheckMenuItem(hDesignMenu, ID_LAYER_ENVIRONMENT, MF_BYCOMMAND | MF_CHECKED);
+
+    // Matches hideInactiveLayer's own default (FALSE, canvas.c) for the
+    // same "checkmark agrees with reality from the first frame" reason as
+    // above.
+    CheckMenuItem(hViewMenu, ID_TOGGLE_HIDE_INACTIVE, MF_BYCOMMAND | MF_UNCHECKED);
 
     return hMenuBar;
 }

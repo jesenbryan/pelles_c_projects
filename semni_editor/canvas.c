@@ -32,6 +32,20 @@ AppMode appMode = APP_MODE_DESIGN;
 // than just tagging strokes.
 DesignLayer designLayer = LAYER_ENVIRONMENT;
 
+// Whether renderCombinedFrame HIDES whichever Design-mode layer (Robot or
+// Environment) ISN'T the active one entirely (opacity 0) instead of just
+// dimming it (the normal INACTIVE_MODE_DIM_ALPHA fade) -- see
+// renderCombinedFrame's own dimAmount comment. Off by default, matching
+// this app's original dimming-only behavior from before this toggle
+// existed; toggled from the new View > Hide Inactive Layer menu item
+// (main.c's buildMainMenu, WM_COMMAND's ID_TOGGLE_HIDE_INACTIVE handling
+// below) for anyone who'd rather the inactive layer vanish outright, e.g.
+// to see the active one completely unobstructed. Simulation is unaffected
+// either way -- it already always draws both layers at full opacity
+// regardless of this flag (see renderCombinedFrame's own simulationActive
+// handling).
+BOOL hideInactiveLayer = FALSE;
+
 float segmentPointsWorld[MAX_SEGMENT_POINTS * 2];   // NEW
 int   segmentStarts[MAX_ARC_SEGMENTS];              // NEW
 int   segmentCounts[MAX_ARC_SEGMENTS];              // NEW
@@ -1752,8 +1766,14 @@ void renderCombinedFrame(void)
     BOOL semniActive = (editorModeState.currentMode == EDITOR_MODE_SEMNI);
     BOOL simulationActive = (appMode == APP_MODE_SIMULATION);
 
-    float robotDimAmount  = (semniActive || simulationActive) ? 0.0f : INACTIVE_MODE_DIM_ALPHA;
-    float canvasDimAmount = (!semniActive || simulationActive) ? 0.0f : INACTIVE_MODE_DIM_ALPHA;
+    // hideInactiveLayer (View > Hide Inactive Layer, see its own comment)
+    // swaps the inactive layer's dim amount from the normal partial fade
+    // (INACTIVE_MODE_DIM_ALPHA) up to 1.0 -- renderRobotScene/
+    // canvasRenderFrame both compute opacity = 1.0 - dimAmount, so 1.0
+    // means fully invisible rather than just faded.
+    float inactiveDimAmount = hideInactiveLayer ? 1.0f : INACTIVE_MODE_DIM_ALPHA;
+    float robotDimAmount  = (semniActive || simulationActive) ? 0.0f : inactiveDimAmount;
+    float canvasDimAmount = (!semniActive || simulationActive) ? 0.0f : inactiveDimAmount;
 
     // Semni's own projection/blend state has to be (re)asserted right
     // before it draws, and the ArcSpline canvas's projection right before
@@ -3258,6 +3278,23 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	        // itself), not the Environment canvas's own drawing controls,
 	        // since that's what was actually asked for.
 	        showControlsHelpDialog(hWnd);
+	    }
+	    else if (LOWORD(wParam) == ID_TOGGLE_HIDE_INACTIVE)
+	    {
+	        // View > Hide Inactive Layer -- independent on/off toggle, not
+	        // part of the Design/Simulation mode-switching group above, so
+	        // it gets its own small handler rather than folding into that
+	        // one. The menu item IS the toggle state (flipped here, then
+	        // the checkmark re-synced to match) same as the mode radio
+	        // group's own CheckMenuItem calls just do it for one item
+	        // instead of a group.
+	        hideInactiveLayer = !hideInactiveLayer;
+
+	        HMENU hMenuBar = GetMenu(hWnd);
+	        HMENU hViewMenu = GetSubMenu(hMenuBar, 2);
+	        CheckMenuItem(hViewMenu, ID_TOGGLE_HIDE_INACTIVE, MF_BYCOMMAND | (hideInactiveLayer ? MF_CHECKED : MF_UNCHECKED));
+
+	        InvalidateRect(hWnd, NULL, FALSE);
 	    }
 	    return 0;
 	}

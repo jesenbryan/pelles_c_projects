@@ -21,6 +21,7 @@
 #define ID_SLOW_MOTION       12
 #define ID_WALK_TOGGLE       13
 #define ID_HELP              14
+#define ID_TOGGLE_HIDE_INACTIVE 15
 
 // App-wide mode, switched from the "Mode" menu on the GL window.
 // Design = draw/trace/edit arc-spline paths (current behavior).
@@ -46,6 +47,14 @@ typedef enum {
 } DesignLayer;
 
 extern DesignLayer designLayer;
+
+// Whether renderCombinedFrame HIDES whichever Design-mode layer isn't
+// currently active (opacity 0, fully invisible) instead of just dimming it
+// (the normal INACTIVE_MODE_DIM_ALPHA fade) -- see canvas.c's own
+// definition/comment. Toggled from the View > Hide Inactive Layer menu item
+// (ID_TOGGLE_HIDE_INACTIVE above). FALSE by default -- matches this app's
+// original dimming-only behavior from before this toggle existed.
+extern BOOL hideInactiveLayer;
 
 // Canvas state that should always reset together (see ResetCanvas)
 typedef struct {
