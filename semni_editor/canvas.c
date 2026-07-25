@@ -2282,9 +2282,24 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         // -- see UpdateProjection/sim_camera.h) instead of canvas.zoom, so
         // Design > Environment's own zoom is left untouched by anything
         // that happens while simulating.
+        //
+        // Design > Robot's own camera zoom (graphics.c's g_zoom) is
+        // deliberately advanced by the SAME factor right alongside
+        // sim_camera's, even though applyProjection ignores g_zoom entirely
+        // while Simulation is active (see its own comment) -- so it has no
+        // effect on anything drawn THIS frame. The point is purely for
+        // later: g_zoom and sim_camera's zoom start at the same default
+        // (1.0) and share the exact same MIN_ZOOM/MAX_ZOOM clamp (config.h),
+        // so stepping both by the same ZOOM_STEP factor here keeps them in
+        // exact lockstep -- meaning leaving Simulation and going back into
+        // Design > Robot lands on the same zoom level you were just looking
+        // at, instead of snapping back to whatever g_zoom was last left at
+        // before you ever entered Simulation.
         if (appMode == APP_MODE_SIMULATION)
         {
-            simCameraZoom(zDelta > 0 ? ZOOM_STEP : (1.0f / ZOOM_STEP));
+            float simZoomFactor = (zDelta > 0) ? ZOOM_STEP : (1.0f / ZOOM_STEP);
+            simCameraZoom(simZoomFactor);
+            graphicsZoom(simZoomFactor);
         }
         else
         {
