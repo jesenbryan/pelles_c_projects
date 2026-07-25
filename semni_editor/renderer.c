@@ -178,11 +178,13 @@ void drawHandle(PointF p, int selected, float radius, float opacity)
 // resizes) -- so unlike everything else drawn there, this deliberately
 // does NOT use graphicsGetPan()/graphicsGetEffectiveZoom() at all, only:
 //
-//  - Position: graphicsGetManualPan() instead of graphicsGetPan() -- the
-//    user's own manual camera pan alone, with the Robot-Size anchor
-//    excluded entirely, so dragging the slider can never move this line by
-//    so much as a pixel; genuine camera panning still moves it exactly like
-//    everything else.
+//  - Position: centerX/centerY are set to just the Robot-Size anchor
+//    (graphicsGetPan() minus graphicsGetManualPan()), which is then
+//    subtracted right back out by the shared -graphicsGetPan() translate
+//    the modelview already has -- leaving only the user's own manual pan
+//    in the final on-screen position. So dragging the slider can never
+//    move this line by so much as a pixel, while genuine camera panning
+//    still moves it exactly like everything else.
 //
 //  - Width: halfWidth is computed from `aspect * 1.5 / robotScale`, i.e.
 //    the SAME halfX formula applyProjection uses, but with robotScale
@@ -203,18 +205,32 @@ void drawDashedHorizontalLine(float y, float opacity)
     float robotScale = graphicsGetRobotScale();
     float aspect = (glWindowHeight != 0) ? ((float)glWindowWidth / (float)glWindowHeight) : 1.0f;
 
-    // The user's own manual pan ONLY -- deliberately not graphicsGetPan(),
-    // which would also fold in the Robot-Size-driven anchor and let the
-    // slider move this line (see this function's own comment).
-    float manualPanX, manualPanY;
+    // renderApp/renderCombinedFrame already translated the modelview by
+    // -graphicsGetPan() (= -(manualPan + anchor)) before calling this. To
+    // land on a vertex that tracks genuine user panning like everything
+    // else on screen but is completely immune to the Robot-Size-driven
+    // anchor, we need to pre-add the anchor back in: vertex + anchor -
+    // (manualPan + anchor) = vertex - manualPan, so only manualPan survives
+    // in the final on-screen position.
+    //
+    // (Previously this used manualPan itself here instead of the anchor,
+    // which cancelled the wrong term: manualPan - (manualPan + anchor) =
+    // -anchor, leaving the line's screen position completely deaf to
+    // dragging -- since its width already exceeds the viewport once zoomed
+    // in (see halfWidth below), that made it look like a line with no
+    // ends, i.e. "infinite", while panning.)
+    float panX, panY, manualPanX, manualPanY;
+    graphicsGetPan(&panX, &panY);
     graphicsGetManualPan(&manualPanX, &manualPanY);
+    float anchorX = panX - manualPanX;
+    float anchorY = panY - manualPanY;
 
     // Cancels the robotScale factor baked into the shared projection -- see
     // this function's own comment for the derivation.
     float halfWidth = (1.5f * aspect) / robotScale;
 
-    float centerX = manualPanX;
-    float centerY = y + manualPanY;
+    float centerX = anchorX;
+    float centerY = y + anchorY;
 
     glColor4f(0.6f, 0.6f, 0.6f, opacity); // medium gray, subtle
 

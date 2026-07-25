@@ -3423,13 +3423,13 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
              // Robot size slider: 0.25 - 1.0 (see ROBOT_SCALE_MIN/MAX in
              // config.h), mapped to an integer trackbar range of 25-100
              // (WM_HSCROLL below divides the position back down by 100).
-             // Starts at 50 (scale 0.5), matching graphics.c's
+             // Starts at 100 (scale 1.0), matching graphics.c's
              // g_robotScale default. Label shows the live value (see
              // WM_HSCROLL below), matching the ArcSpline panel's
              // "Thickness: N px" label (ui.c).
              app->ui.hScaleLabel = CreateWindow(
                 L"STATIC",
-                L"Scale: 0.50",
+                L"Scale: 1.00",
                 WS_VISIBLE | WS_CHILD | SS_LEFT,
                 0, 0, 10, 10,
                 hwnd,
@@ -3451,7 +3451,7 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             );
 
              SendMessage(app->ui.hScaleSlider, TBM_SETRANGE, TRUE, MAKELONG(25, 100));
-             SendMessage(app->ui.hScaleSlider, TBM_SETPOS, TRUE, 50);
+             SendMessage(app->ui.hScaleSlider, TBM_SETPOS, TRUE, 100);
 
              // View Segments toggle: every curve on Semni (seam/thigh/shin
              // arcs) is a trimmed segment of some circle -- this reveals

@@ -30,7 +30,7 @@ static float g_zoom = 1.0f;
 // input.c's WM_HSCROLL) -- folded directly into effectiveZoom below so
 // resizing the robot and zooming the camera share the exact same
 // projection math.
-static float g_robotScale = 0.5f;
+static float g_robotScale = 1.0f;
 
 static float effectiveZoom(void)
 {
