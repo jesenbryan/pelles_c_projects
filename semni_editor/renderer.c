@@ -168,26 +168,35 @@ void drawHandle(PointF p, int selected, float radius, float opacity)
 
 // Draws a dashed horizontal "ground" reference line at design-space Y
 // coordinate `y` (must be config.h's GROUND_LINE_DESIGN_Y -- see below for
-// why), always spanning the full visible viewport width -- a reference
-// the user can lay the robot against or compare its size to, that moves
-// under manual panning exactly the same screen-space amount the robot
-// itself does (so panning around still shows the robot sitting on it,
-// the same way panning around a real scene keeps you standing on the same
-// floor), while staying visually anchored to the robot specifically
-// through "Robot Size" slider changes instead of drifting away from it
-// the way an ordinary world-space line would. Called with the modelview
-// already translated by -graphicsGetPan() (see renderApp/renderRobotScene),
-// so everything drawn here is implicitly shifted by that combined pan,
-// same as the robot's own vertices are -- two things are deliberately
-// compensated for on top of that, rather than left to fall out of the
-// shared projection/pan the way most geometry does:
+// why). Its CENTER is a genuinely fixed point in world space (config.h's
+// GROUND_LINE_DESIGN_X), not something that re-centers itself onto the
+// current viewport -- that's what gives it a visible end once you pan far
+// enough away. Its WIDTH, on the other hand, DOES track the current
+// projection: at pan == 0 it always spans exactly the visible width no
+// matter what the camera zoom or "Robot Size" slider are currently set to,
+// the same way it always has -- scaling the robot down zooms the shared
+// view out, and the line has to widen right along with everything else to
+// still reach both edges from its fixed center at THAT zoom, or it would
+// visibly fall short of the screen the moment you left the default zoom
+// even without ever panning. (Center fixed + width fixed together was an
+// earlier, wrong attempt at this -- it gave visible ends under panning, but
+// also made the line fall short of the screen under an ordinary Robot Size
+// change, since nothing was left to grow the line back out to match the
+// now-wider view.) Called with the modelview already translated by
+// -graphicsGetPan() (see renderApp/renderRobotScene), so everything drawn
+// here is implicitly shifted by that combined pan, same as the robot's own
+// vertices are -- three things are deliberately compensated for on top of
+// that, rather than left to fall out of the shared projection/pan the way
+// most geometry does:
 //
-//  - Width: computed from the CURRENT projection's own halfX (aspect *
-//    1.5 / (zoom * robotScale), exactly matching graphics.c's
-//    applyProjection) instead of a fixed constant, so the line reaches
-//    exactly both screen edges at any aspect ratio or zoom level, rather
-//    than stopping short (or overshooting) at whichever one size a fixed
-//    constant happened to fit.
+//  - Width: computed from the CURRENT projection's own halfX (aspect * 1.5
+//    / effective zoom, exactly matching graphics.c's applyProjection --
+//    see graphicsGetEffectiveZoom's own comment for why that's used here
+//    instead of graphicsGetZoom() directly: the latter silently disagrees
+//    with the real projection during Simulation mode, which renders
+//    through sim_camera's own zoom instead of g_zoom) rather than a fixed
+//    constant, so at pan == 0 the line reaches exactly both screen edges at
+//    any aspect ratio, camera zoom, or Robot Size setting.
 //
 //  - Dash/gap length: divided by graphicsGetRobotScale(), which exactly
 //    cancels the robotScale factor the projection multiplies back in --
@@ -195,63 +204,53 @@ void drawHandle(PointF p, int selected, float radius, float opacity)
 //    where the "Robot Size" slider is set (it still resizes normally with
 //    ordinary camera zoom, same as everything else).
 //
-//  - Y position: graphicsGetPan()'s own robot-center anchor
-//    (graphicsSetRobotScale's g_scaleAnchorY) ONLY keeps THAT specific
+//  - X/Y position: graphicsGetPan()'s own robot-center anchor
+//    (graphicsSetRobotScale's g_scaleAnchorX/Y) ONLY keeps THAT specific
 //    point -- the robot's live center -- fixed on screen across a slider
-//    change; an unrelated fixed point like this line drifts at the wrong
-//    rate if it just borrows that same anchor value (dividing a plain
-//    world Y by robotScale looks right at first, but it also scales how
-//    fast the line reacts to genuine PANNING, which is wrong -- it ends
-//    up panning 1/robotScale times faster or slower than the robot,
+//    change; an unrelated fixed point like this line's own center drifts at
+//    the wrong rate if it just borrows that same anchor value (dividing a
+//    plain world coordinate by robotScale looks right at first, but it also
+//    scales how fast the line reacts to genuine PANNING, which is wrong --
+//    it ends up panning 1/robotScale times faster or slower than the robot,
 //    visibly sliding apart from it the moment you pan at anything other
-//    than Robot Size == 1.0). So the line gets its OWN independently
-//    solved anchor instead (graphicsGetGroundLineAnchorY, updated by
-//    graphicsSetRobotScale using this exact `y` as its target -- see
-//    g_groundLineAnchorY's own comment, graphics.c) -- centerY below
-//    swaps the robot's anchor contribution out of the combined pan for
-//    the line's own, which is what finally gives this line the same pan
-//    rate as the robot AND the same "doesn't move for just a slider
-//    change" invariance the robot's own center enjoys. This is also why
-//    `y` has to be GROUND_LINE_DESIGN_Y specifically: it's the exact
-//    value graphicsSetRobotScale solves the anchor against, so calling
-//    this with any other Y would be solving for the wrong point.
+//    than Robot Size == 1.0). So the line gets its OWN independently solved
+//    anchors instead (graphicsGetGroundLineAnchorX/Y, updated by
+//    graphicsSetRobotScale using GROUND_LINE_DESIGN_X/this exact `y` as
+//    their targets -- see their own comments, graphics.c) -- centerX/
+//    centerY below swap the robot's anchor contribution out of the combined
+//    pan for the line's own, which is what finally gives this line the same
+//    pan rate as the robot AND the same "doesn't move for just a slider
+//    change" invariance the robot's own center enjoys. This is also why `y`
+//    has to be GROUND_LINE_DESIGN_Y specifically: it's the exact value
+//    graphicsSetRobotScale solves the Y anchor against, so calling this
+//    with any other Y would be solving for the wrong point.
 void drawDashedHorizontalLine(float y, float opacity)
 {
     float robotScale = graphicsGetRobotScale();
-    // NOT graphicsGetZoom() -- that's only the Design-mode camera zoom and
-    // silently disagrees with the actual projection during Simulation mode
-    // (which renders through sim_camera's own zoom instead -- see
-    // applyProjection, graphics.c). graphicsGetEffectiveZoom() mirrors
-    // applyProjection's exact zoom-selection branch and already has
-    // robotScale folded in, which is why halfWidth below no longer
-    // multiplies zoom*robotScale itself.
+    // NOT graphicsGetZoom() -- see graphicsGetEffectiveZoom's comment
+    // (graphics.h): it silently disagrees with the actual projection during
+    // Simulation mode.
     float effZoom = graphicsGetEffectiveZoom();
     float aspect = (glWindowHeight != 0) ? ((float)glWindowWidth / (float)glWindowHeight) : 1.0f;
 
     float combinedPanX, combinedPanY;
     graphicsGetPan(&combinedPanX, &combinedPanY);
 
-    // The robot's own scale anchor, recovered from the combined pan
-    // (combinedPanY == manualPanY + robotAnchorY by construction -- see
-    // graphicsGetPan/graphicsGetManualPan) -- swapped out for the line's
-    // own anchor just below.
+    // The robot's own scale anchors, recovered from the combined pan
+    // (combinedPanX/Y == manualPanX/Y + robotAnchorX/Y by construction --
+    // see graphicsGetPan/graphicsGetManualPan) -- swapped out for the
+    // line's own anchors just below.
     float manualPanX, manualPanY;
     graphicsGetManualPan(&manualPanX, &manualPanY);
-    (void)manualPanX;
+    float robotAnchorX = combinedPanX - manualPanX;
     float robotAnchorY = combinedPanY - manualPanY;
 
+    float lineAnchorX = graphicsGetGroundLineAnchorX();
     float lineAnchorY = graphicsGetGroundLineAnchorY();
 
     float halfWidth = (1.5f / effZoom) * aspect;
 
-    // Horizontal center: exactly the CURRENT combined pan -- this one just
-    // needs to always land exactly on the current view's own center so the
-    // line reaches both screen edges (see halfWidth above), whatever that
-    // view happens to be right now. There's no separate "design"
-    // horizontal reference to stay anchored to the way there is for
-    // height (a full-width horizontal line looks identical regardless of
-    // where its own center sits, so there's nothing to solve for here).
-    float centerX = combinedPanX;
+    float centerX = GROUND_LINE_DESIGN_X + robotAnchorX - lineAnchorX;
     float centerY = y + robotAnchorY - lineAnchorY;
 
     glColor4f(0.6f, 0.6f, 0.6f, opacity); // medium gray, subtle

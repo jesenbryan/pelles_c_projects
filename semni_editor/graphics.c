@@ -75,6 +75,15 @@ static float g_scaleAnchorY = 0.0f;
 // can't serve two different target points at once).
 static float g_groundLineAnchorY = 0.0f;
 
+// The ground line's X counterpart to g_groundLineAnchorY above -- same
+// reasoning, just solved against GROUND_LINE_DESIGN_X (config.h) instead of
+// GROUND_LINE_DESIGN_Y. Needed once the line got a real fixed X position
+// (see GROUND_LINE_DESIGN_X's comment) instead of always tracking the
+// current combined pan: without its own anchor, the line would drift
+// sideways relative to the robot across a Robot Size change, the exact same
+// wrong-rate bug g_groundLineAnchorY was added to fix for the vertical axis.
+static float g_groundLineAnchorX = 0.0f;
+
 // last known viewport size, cached so a zoom change can reapply the
 // projection without waiting for the next WM_SIZE
 static int g_lastW = 800;
@@ -323,6 +332,10 @@ void graphicsSetRobotScale(float scale, float centerX, float centerY)
         // for the exact point it was solved for).
         float dLine = GROUND_LINE_DESIGN_Y - g_panY;
         g_groundLineAnchorY = dLine - ratio * (dLine - g_groundLineAnchorY);
+
+        // Same again for the line's fixed X (GROUND_LINE_DESIGN_X).
+        float dLineX = GROUND_LINE_DESIGN_X - g_panX;
+        g_groundLineAnchorX = dLineX - ratio * (dLineX - g_groundLineAnchorX);
     }
 
     g_robotScale = scale;
@@ -344,6 +357,11 @@ float graphicsGetGroundLineAnchorY(void)
     return g_groundLineAnchorY;
 }
 
+float graphicsGetGroundLineAnchorX(void)
+{
+    return g_groundLineAnchorX;
+}
+
 void graphicsResetView(void)
 {
     g_zoom = 1.0f;
@@ -352,6 +370,7 @@ void graphicsResetView(void)
     g_scaleAnchorX = 0.0f;
     g_scaleAnchorY = 0.0f;
     g_groundLineAnchorY = 0.0f;
+    g_groundLineAnchorX = 0.0f;
 
     applyProjection();
 }

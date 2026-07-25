@@ -50,22 +50,29 @@ void graphicsGetManualPan(float* panX, float* panY);
 // run again against its own target to get the same guarantee for itself.
 float graphicsGetGroundLineAnchorY(void);
 
+// The ground reference line's X counterpart to graphicsGetGroundLineAnchorY
+// above -- same purpose, solved against GROUND_LINE_DESIGN_X instead of
+// GROUND_LINE_DESIGN_Y. Needed now that the line has a real fixed X
+// position (config.h's GROUND_LINE_DESIGN_X) rather than always tracking
+// the current combined pan.
+float graphicsGetGroundLineAnchorX(void);
+
 // Current Semni view zoom (see graphicsZoom) -- exposed so canvas.c's
 // shared HUD overlay can show it alongside the ArcSpline canvas's own
 // zoom%, since the two modes now zoom independently of each other.
 float graphicsGetZoom(void);
 
-// The zoom applyProjection is ACTUALLY rendering with this frame:
-// camera zoom * Robot Size normally, but sim_camera's own zoom * Robot
-// Size during Simulation mode (see applyProjection's comment -- Simulation
-// drives the shared view through sim_camera instead of g_zoom).
-// graphicsGetZoom() above always returns just the Design-mode camera zoom,
-// which silently disagrees with the real projection while simulating.
-// Exposed for drawDashedHorizontalLine (renderer.c), which needs its
-// on-screen half-width to match the CURRENT projection's own half-extent
-// exactly, in every mode -- using graphicsGetZoom() there let the ground
-// line's width fall out of sync with the actual glOrtho bounds during
-// Simulation, visibly overshooting/undershooting the window edges.
+// The zoom applyProjection is ACTUALLY rendering with this frame: camera
+// zoom * Robot Size normally, but sim_camera's own zoom * Robot Size during
+// Simulation mode (see applyProjection's comment -- Simulation drives the
+// shared view through sim_camera instead of g_zoom). graphicsGetZoom()
+// above always returns just the Design-mode camera zoom, which silently
+// disagrees with the real projection while simulating. Exposed for
+// drawDashedHorizontalLine (renderer.c), which sizes itself to exactly
+// match the CURRENT projection's own half-extent (so it still fills the
+// screen at pan == 0 no matter how far the "Robot Size" slider or camera
+// zoom have moved it) -- using graphicsGetZoom() there let that width fall
+// out of sync with the actual glOrtho bounds during Simulation.
 float graphicsGetEffectiveZoom(void);
 
 // Sets the "Robot Size" slider's value directly (see config.h's
