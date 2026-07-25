@@ -261,27 +261,8 @@
 // Design-space Y of the ground reference line (renderer.c's
 // drawDashedHorizontalLine, called from renderApp/renderRobotScene) --
 // pulled out to a shared constant rather than left as a literal -1.3f at
-// each call site, since graphics.c's graphicsSetRobotScale needs this
-// exact same value too (to give the line its own pan/scale anchor -- see
-// g_groundLineAnchorY there): the two computations only stay consistent
-// with each other if both ever use the identical number.
+// each of its two call sites, so they can't drift apart from each other.
 #define GROUND_LINE_DESIGN_Y -1.3f
-
-// Design-space X of the ground reference line's own CENTER -- world origin,
-// same as the robot's own rotation pivot (getCenter()). Previously the line
-// had no fixed X position at all: drawDashedHorizontalLine centered it on
-// whatever the current view's combined pan happened to be, so it always
-// re-centered and re-sized to exactly fill the viewport no matter how far
-// you panned or zoomed -- meaning it never had visible ends, which is the
-// whole reason a finite reference line is useful (you couldn't tell how far
-// you'd panned from it). Giving it a real, fixed world X (mirroring
-// GROUND_LINE_DESIGN_Y's role for the vertical axis) means panning now
-// moves the viewport relative to the line like any other fixed object in
-// the scene, so its two ends become visible once you've panned far enough.
-// graphics.c's graphicsSetRobotScale needs this exact same value too, to
-// give the line its own X pan/scale anchor (g_groundLineAnchorX) -- see
-// that anchor's comment.
-#define GROUND_LINE_DESIGN_X 0.0f
 
 // Robot "size" slider (top-right corner, Semni mode only -- see the
 // trackbar created in input.c's WM_CREATE). A separate, permanent

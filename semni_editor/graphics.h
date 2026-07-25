@@ -35,45 +35,25 @@ void graphicsGetPan(float* panX, float* panY);
 // excludes the Robot-Size-driven addition graphicsGetPan includes. Meant
 // for the one caller that specifically needs to ignore that part: the
 // ground reference line (renderer.c's drawDashedHorizontalLine), which
-// should still pan/zoom with the camera like everything else but stay put
-// when only the "Robot Size" slider moves.
+// should still pan/zoom with the camera like everything else but stay
+// completely fixed (position AND size) when only the "Robot Size" slider
+// moves.
 void graphicsGetManualPan(float* panX, float* panY);
-
-// The ground reference line's OWN pan/scale anchor (mirrors
-// graphicsSetRobotScale's g_scaleAnchorY, just computed against the
-// line's fixed design Y, config.h's GROUND_LINE_DESIGN_Y, instead of the
-// robot's own live center) -- see graphicsSetRobotScale's comment for why
-// a second, independently-tracked anchor is needed rather than reusing
-// the robot's: the invariance graphicsSetRobotScale guarantees is
-// specific to the exact (centerX, centerY) point it was given, and the
-// ground line generally isn't that point, so it needs the identical math
-// run again against its own target to get the same guarantee for itself.
-float graphicsGetGroundLineAnchorY(void);
-
-// The ground reference line's X counterpart to graphicsGetGroundLineAnchorY
-// above -- same purpose, solved against GROUND_LINE_DESIGN_X instead of
-// GROUND_LINE_DESIGN_Y. Needed now that the line has a real fixed X
-// position (config.h's GROUND_LINE_DESIGN_X) rather than always tracking
-// the current combined pan.
-float graphicsGetGroundLineAnchorX(void);
 
 // Current Semni view zoom (see graphicsZoom) -- exposed so canvas.c's
 // shared HUD overlay can show it alongside the ArcSpline canvas's own
 // zoom%, since the two modes now zoom independently of each other.
 float graphicsGetZoom(void);
 
-// The zoom applyProjection is ACTUALLY rendering with this frame: camera
-// zoom * Robot Size normally, but sim_camera's own zoom * Robot Size during
-// Simulation mode (see applyProjection's comment -- Simulation drives the
-// shared view through sim_camera instead of g_zoom). graphicsGetZoom()
-// above always returns just the Design-mode camera zoom, which silently
-// disagrees with the real projection while simulating. Exposed for
-// drawDashedHorizontalLine (renderer.c), which sizes itself to exactly
-// match the CURRENT projection's own half-extent (so it still fills the
-// screen at pan == 0 no matter how far the "Robot Size" slider or camera
-// zoom have moved it) -- using graphicsGetZoom() there let that width fall
-// out of sync with the actual glOrtho bounds during Simulation.
-float graphicsGetEffectiveZoom(void);
+// Switches which robot kind's Robot-Size scale anchor (g_scaleAnchorX/Y)
+// is currently live -- kind is a RobotKind (app.h) value, 0=Semni/1=Rocky/
+// 2=Stilo, passed as int to avoid this header needing app.h's full
+// RobotKind definition. See
+// its own comment in graphics.c for why each kind needs an independent
+// anchor slot rather than sharing one, and why switching is a plain slot
+// swap rather than a reset. input.c's ID_ROBOT_SELECTOR handler calls this
+// right after updating app->robotScene.activeKind.
+void graphicsSetActiveRobotKind(int kind);
 
 // Sets the "Robot Size" slider's value directly (see config.h's
 // ROBOT_SCALE_MIN/MAX) -- folds multiplicatively into this file's own

@@ -3540,7 +3540,16 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     {
                         int sel = (int)SendMessage(app->ui.hRobotSelector, CB_GETCURSEL, 0, 0);
                         if (sel >= 0 && sel < ROBOT_KIND_COUNT)
+                        {
                             app->robotScene.activeKind = (RobotKind)sel;
+
+                            // Switch which kind's Robot-Size scale anchor
+                            // (and ground-line anchor) is live -- see
+                            // graphicsSetActiveRobotKind's comment for why
+                            // each kind keeps its own independent anchor
+                            // slot instead of sharing/resetting one.
+                            graphicsSetActiveRobotKind(sel);
+                        }
 
                         // Reset the newly-selected robot to its Home pose
                         // -- same "custom file first, hardcoded default as

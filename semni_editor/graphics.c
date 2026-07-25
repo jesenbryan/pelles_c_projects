@@ -59,30 +59,31 @@ static float g_panY = 0.0f;
 // hit-testing) via graphicsGetPan -- but graphicsGetManualPan deliberately
 // exposes g_panX/g_panY alone, without this, for the one caller that needs
 // to ignore it (the ground reference line).
-static float g_scaleAnchorX = 0.0f;
-static float g_scaleAnchorY = 0.0f;
+//
+// Indexed by robot kind (see app.h's RobotKind -- ROBOT_KIND_SEMNI/ROCKY/
+// STILO, 0..2) rather than a single shared value. Each kind's anchor is
+// only ever solved against THAT kind's own center (graphicsSetRobotScale
+// is called with whichever kind is active's own getCenter/getRockyCenter/
+// getStiloCenter -- see input.c's WM_HSCROLL), so a single shared anchor
+// would only stay valid for whichever kind's slider was touched most
+// recently: switching to a different kind would render it offset (wrong
+// anchor for its center), and switching BACK would then also render
+// wrong, because switching away had stomped the original kind's own
+// still-valid anchor with the other kind's. Giving every kind its own
+// slot means switching kinds is a pure read of a DIFFERENT already-correct
+// slot -- nothing is ever overwritten by a different kind's scale change,
+// and no explicit "reset" step is needed on switch (see
+// graphicsSetActiveRobotKind below, which just changes which slot the rest
+// of this file reads).
+static float g_scaleAnchorX[3] = { 0.0f, 0.0f, 0.0f };
+static float g_scaleAnchorY[3] = { 0.0f, 0.0f, 0.0f };
 
-// The ground reference line's OWN version of g_scaleAnchorY above --
-// updated by graphicsSetRobotScale using the exact same math, just
-// against the line's fixed design Y (config.h's GROUND_LINE_DESIGN_Y)
-// instead of the robot's live center. g_scaleAnchorY only guarantees
-// invariance for the SPECIFIC point it was solved for (the robot's own
-// center) -- an arbitrary different point drifts under a Robot Size
-// change unless it gets this same treatment against its own target, which
-// is exactly what left the ground line moving at the wrong rate relative
-// to the robot before this existed (see drawDashedHorizontalLine's own
-// comment, renderer.c, for the full picture of why one shared anchor
-// can't serve two different target points at once).
-static float g_groundLineAnchorY = 0.0f;
-
-// The ground line's X counterpart to g_groundLineAnchorY above -- same
-// reasoning, just solved against GROUND_LINE_DESIGN_X (config.h) instead of
-// GROUND_LINE_DESIGN_Y. Needed once the line got a real fixed X position
-// (see GROUND_LINE_DESIGN_X's comment) instead of always tracking the
-// current combined pan: without its own anchor, the line would drift
-// sideways relative to the robot across a Robot Size change, the exact same
-// wrong-rate bug g_groundLineAnchorY was added to fix for the vertical axis.
-static float g_groundLineAnchorX = 0.0f;
+// Which robot kind's anchor slot (g_scaleAnchorX/Y) is currently live --
+// kept in sync with app->robotScene.activeKind by
+// input.c's ID_ROBOT_SELECTOR handler via graphicsSetActiveRobotKind
+// (below). Defaults to 0 (ROBOT_KIND_SEMNI), matching app_init.c's
+// initAppState default.
+static int g_activeRobotKind = 0;
 
 // last known viewport size, cached so a zoom change can reapply the
 // projection without waiting for the next WM_SIZE
@@ -202,8 +203,8 @@ void screenToGL(HWND hwnd, int mx, int my, float *x, float *y)
         zoom = effectiveZoom();
         halfY = 1.5f / zoom;
         halfX = halfY * aspect;
-        panX = g_panX + g_scaleAnchorX;
-        panY = g_panY + g_scaleAnchorY;
+        panX = g_panX + g_scaleAnchorX[g_activeRobotKind];
+        panY = g_panY + g_scaleAnchorY[g_activeRobotKind];
     }
 
     *x = (nx * halfX) + panX;
@@ -257,8 +258,8 @@ void graphicsGetPan(float* panX, float* panY)
         simCameraGetWorldPan(halfX, halfY, panX, panY);
         return;
     }
-    *panX = g_panX + g_scaleAnchorX;
-    *panY = g_panY + g_scaleAnchorY;
+    *panX = g_panX + g_scaleAnchorX[g_activeRobotKind];
+    *panY = g_panY + g_scaleAnchorY[g_activeRobotKind];
 }
 
 // The pure user-drag component of the Design-mode pan (graphicsPan/
@@ -277,14 +278,6 @@ void graphicsGetManualPan(float* panX, float* panY)
 float graphicsGetZoom(void)
 {
     return g_zoom;
-}
-
-// Keep in sync with applyProjection's own zoom branch above -- this is
-// deliberately just that same expression exposed as a callable, not a
-// reimplementation, so the two can never drift apart independently.
-float graphicsGetEffectiveZoom(void)
-{
-    return (appMode == APP_MODE_SIMULATION) ? (simCameraGetZoom() * g_robotScale) : effectiveZoom();
 }
 
 // Sets the "Robot Size" slider's value directly (input.c's WM_HSCROLL
@@ -322,20 +315,11 @@ void graphicsSetRobotScale(float scale, float centerX, float centerY)
         float dx = centerX - g_panX;
         float dy = centerY - g_panY;
 
-        g_scaleAnchorX = dx - ratio * (dx - g_scaleAnchorX);
-        g_scaleAnchorY = dy - ratio * (dy - g_scaleAnchorY);
-
-        // Identical solve, run again for the ground reference line's own
-        // fixed Y (GROUND_LINE_DESIGN_Y, config.h) instead of the robot's
-        // live center -- see g_groundLineAnchorY's own comment for why
-        // g_scaleAnchorY above can't double as this too (it's only valid
-        // for the exact point it was solved for).
-        float dLine = GROUND_LINE_DESIGN_Y - g_panY;
-        g_groundLineAnchorY = dLine - ratio * (dLine - g_groundLineAnchorY);
-
-        // Same again for the line's fixed X (GROUND_LINE_DESIGN_X).
-        float dLineX = GROUND_LINE_DESIGN_X - g_panX;
-        g_groundLineAnchorX = dLineX - ratio * (dLineX - g_groundLineAnchorX);
+        // Only touches the CURRENTLY ACTIVE kind's own anchor slot -- see
+        // g_scaleAnchorX/Y's comment for why each kind needs its own slot
+        // rather than sharing one.
+        g_scaleAnchorX[g_activeRobotKind] = dx - ratio * (dx - g_scaleAnchorX[g_activeRobotKind]);
+        g_scaleAnchorY[g_activeRobotKind] = dy - ratio * (dy - g_scaleAnchorY[g_activeRobotKind]);
     }
 
     g_robotScale = scale;
@@ -352,25 +336,51 @@ float graphicsGetRobotScale(void)
     return g_robotScale;
 }
 
-float graphicsGetGroundLineAnchorY(void)
+// Switches which robot kind's anchor slot (g_scaleAnchorX/Y) the rest of
+// this file reads/writes -- meant for
+// input.c's ID_ROBOT_SELECTOR handler to call right after updating
+// app->robotScene.activeKind.
+//
+// This used to instead ZERO the shared (single, not per-kind) anchor on
+// every switch, on the theory that the anchor is only ever valid for
+// whichever kind/pose was on screen the last time the "Robot Size" slider
+// moved, so it needed clearing when switching to a different kind's
+// different Home pose. That was wrong in a way that only showed up on a
+// round trip: zeroing it also destroyed the ORIGINAL kind's own
+// still-correct anchor (solved earlier, whenever its slider was last
+// touched), so switching away and back rendered that original kind at a
+// visibly different position than before the round trip -- exactly the
+// "switching kinds moves Semni's position" bug this was meant to fix, now
+// happening on the return leg instead of the original leg, plus a second-
+// order regression in the ground line (whose own anchor was zeroed the
+// same unconditional way). Giving every kind its own independent anchor
+// slot (see g_scaleAnchorX/Y's comment) removes the need to reset
+// anything at all: each kind's slot is only ever written while THAT kind
+// is active, so switching away and back always reads back exactly what
+// was there before, with no cross-kind contamination in either direction.
+void graphicsSetActiveRobotKind(int kind)
 {
-    return g_groundLineAnchorY;
+    if (kind >= 0 && kind < 3)
+    {
+        g_activeRobotKind = kind;
+    }
 }
 
-float graphicsGetGroundLineAnchorX(void)
-{
-    return g_groundLineAnchorX;
-}
-
+// Resets zoom/pan and EVERY kind's anchor slot -- unlike
+// graphicsSetActiveRobotKind, which only switches which slot is live, this
+// is the deliberate full reset (Ctrl+0), so it clears all three rather
+// than just the currently active one.
 void graphicsResetView(void)
 {
     g_zoom = 1.0f;
     g_panX = 0.0f;
     g_panY = 0.0f;
-    g_scaleAnchorX = 0.0f;
-    g_scaleAnchorY = 0.0f;
-    g_groundLineAnchorY = 0.0f;
-    g_groundLineAnchorX = 0.0f;
+
+    for (int i = 0; i < 3; i++)
+    {
+        g_scaleAnchorX[i] = 0.0f;
+        g_scaleAnchorY[i] = 0.0f;
+    }
 
     applyProjection();
 }
