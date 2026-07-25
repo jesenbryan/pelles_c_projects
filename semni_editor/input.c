@@ -557,6 +557,12 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 PointF rockyBodyLocalMouseDown = inverseRotate(app->mouseGL, rockyCenter, app->robotScene.rocky.angle);
                 PointF rockyShinLocalMouseDown = inverseRotate(rockyBodyLocalMouseDown, app->robotScene.rocky.kneeCircle, app->robotScene.rocky.kneeAngle);
 
+                // Computed once up front (rather than only in the fallback
+                // branch, as before) so the 4 rectangle-edge midpoints can
+                // be checked right after the move-handle -- see this
+                // chain's own comment below for the full priority ordering.
+                int rockyEdgeHitDown = hitTestRockyEdge(app->robotScene.rocky, rockyBodyLocalMouseDown);
+
                 if (isNear(app->mouseGL, rockyCenter, HIP_HANDLE_RADIUS))
                 {
                     app->draggingRockyBody = 1;
@@ -570,6 +576,15 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
 
                     app->rockyDragFootOffset.x = app->robotScene.rocky.footCircle.x - app->robotScene.rocky.bodyX;
                     app->rockyDragFootOffset.y = app->robotScene.rocky.footCircle.y - app->robotScene.rocky.bodyY;
+                }
+                // The 4 rectangle-edge midpoints (body Width/Height resize)
+                // now take priority right after the move-handle, ahead of
+                // knee/foot/shin -- see rockyEdgeHitDown's own comment
+                // above for why this no longer has to be a last-resort
+                // fallback check.
+                else if (rockyEdgeHitDown != ROCKY_EDGE_NONE)
+                {
+                    app->draggingRockyEdge = rockyEdgeHitDown;
                 }
                 else if (isNear(app->mouseGL, kneeWorld, KNEE_HANDLE_RADIUS))
                 {
@@ -606,15 +621,6 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
 
                     app->rockyShinArcDragStartPerp = perpOffsetOnAxis(rockyShinLocalMouseDown, app->robotScene.rocky.kneeCircle, app->robotScene.rocky.footCircle);
                     app->rockyShinArcDragStartAngle = app->robotScene.rocky.shinArc2Angle;
-                }
-                else
-                {
-                    // Not on the move-handle, knee handle, foot handle, or
-                    // either shin handle -- check the 4 edge midpoints
-                    // instead, in the rectangle's own local (unrotated)
-                    // frame, same as hitTestRockyEdge expects.
-                    PointF localMouseDown = inverseRotate(app->mouseGL, rockyCenter, app->robotScene.rocky.angle);
-                    app->draggingRockyEdge = hitTestRockyEdge(app->robotScene.rocky, localMouseDown);
                 }
                 break;
             }
@@ -942,10 +948,19 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 // already knee-frame-relative angles, unaffected by moving
                 // kneeCircle itself
             }
+            // Foot's priority moved up to right after Knee (was after both
+            // thigh handles) -- see this file's own comment above this
+            // whole chain for the full Head/Butt/Seam/Hip/Knee/Feet/
+            // Thigh/Shin ordering this now follows.
+            else if (isNear(mouse, footWorld, FOOT_HANDLE_RADIUS))
+            {
+                app->draggingFoot = 1;
+                app->activeHandle = 5;
+            }
             else if (isNear(mouse, thigh1World, THIGH_HANDLE_RADIUS))
             {
                 app->draggingThigh1 = 1;
-                app->activeHandle = 5;
+                app->activeHandle = 6;
 
                 // remember where the drag started (mouse's perpendicular-
                 // to-axis offset + current angle) so WM_MOUSEMOVE can nudge
@@ -957,15 +972,10 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             else if (isNear(mouse, thigh2World, THIGH_HANDLE_RADIUS))
             {
                 app->draggingThigh2 = 1;
-                app->activeHandle = 6;
+                app->activeHandle = 7;
 
                 app->thighArcDragStartPerp = perpOffsetOnAxis(legLocalMouseDown, app->robotScene.robot.innerCircle, app->robotScene.robot.kneeCircle);
                 app->thighArcDragStartAngle = app->robotScene.robot.thighArc2Angle;
-            }
-            else if (isNear(mouse, footWorld, FOOT_HANDLE_RADIUS))
-            {
-                app->draggingFoot = 1;
-                app->activeHandle = 7;
             }
             else if (isNear(mouse, shin1World, SHIN_HANDLE_RADIUS))
             {
@@ -1066,10 +1076,15 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 PointF kneeWorld = rotatePoint(app->robotScene.rocky.kneeCircle, rockyCenter, app->robotScene.rocky.angle);
                 PointF footWorld = jointToWorld(app->robotScene.rocky.footCircle, app->robotScene.rocky.kneeCircle, app->robotScene.rocky.kneeAngle, rockyCenter, app->robotScene.rocky.angle);
 
+                // Priority order: Body, the 4 rectangle-edge segments
+                // (Width/Height resize), Knee, Foot, Shin Arc 1, Shin Arc 2
+                // -- edges now win over Knee/Foot instead of only being
+                // checked as a last resort, mirroring WM_LBUTTONDOWN's own
+                // rockyEdgeHitDown ordering.
                 app->hoverRockyBody = isNear(app->mouseGL, rockyCenter, HIP_HANDLE_RADIUS);
-                app->hoverRockyKnee = !app->hoverRockyBody && isNear(app->mouseGL, kneeWorld, KNEE_HANDLE_RADIUS);
-                app->hoverRockyFoot = !app->hoverRockyBody && !app->hoverRockyKnee && isNear(app->mouseGL, footWorld, FOOT_HANDLE_RADIUS);
-                app->hoverRockyEdge = (app->hoverRockyBody || app->hoverRockyKnee || app->hoverRockyFoot) ? ROCKY_EDGE_NONE : hitTestRockyEdge(app->robotScene.rocky, localMouse);
+                app->hoverRockyEdge = app->hoverRockyBody ? ROCKY_EDGE_NONE : hitTestRockyEdge(app->robotScene.rocky, localMouse);
+                app->hoverRockyKnee = !app->hoverRockyBody && app->hoverRockyEdge == ROCKY_EDGE_NONE && isNear(app->mouseGL, kneeWorld, KNEE_HANDLE_RADIUS);
+                app->hoverRockyFoot = !app->hoverRockyBody && app->hoverRockyEdge == ROCKY_EDGE_NONE && !app->hoverRockyKnee && isNear(app->mouseGL, footWorld, FOOT_HANDLE_RADIUS);
 
                 // Shin connector-arc handle positions, for the hover label
                 // below and the drag-update math further down -- same
@@ -1098,6 +1113,10 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 const wchar_t* rockyHoverLabel = L"";
                 if (app->hoverRockyBody)
                     rockyHoverLabel = L"Body";
+                else if (app->hoverRockyEdge == ROCKY_EDGE_LEFT || app->hoverRockyEdge == ROCKY_EDGE_RIGHT)
+                    rockyHoverLabel = L"Body Width";
+                else if (app->hoverRockyEdge == ROCKY_EDGE_TOP || app->hoverRockyEdge == ROCKY_EDGE_BOTTOM)
+                    rockyHoverLabel = L"Body Height";
                 else if (app->hoverRockyKnee)
                     rockyHoverLabel = L"Knee";
                 else if (app->hoverRockyFoot)
@@ -1106,10 +1125,6 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     rockyHoverLabel = L"Shin Arc 1";
                 else if (isNear(app->mouseGL, rockyShin2World, ROCKY_SHIN_HANDLE_RADIUS))
                     rockyHoverLabel = L"Shin Arc 2";
-                else if (app->hoverRockyEdge == ROCKY_EDGE_LEFT || app->hoverRockyEdge == ROCKY_EDGE_RIGHT)
-                    rockyHoverLabel = L"Body Width";
-                else if (app->hoverRockyEdge == ROCKY_EDGE_TOP || app->hoverRockyEdge == ROCKY_EDGE_BOTTOM)
-                    rockyHoverLabel = L"Body Height";
                 SetWindowText(app->ui.hHoverLabel, rockyHoverLabel);
 
                 // View Segments hover -- same idea as Semni's own version
@@ -1439,30 +1454,42 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
 
                     const wchar_t* stiloHoverLabel = L"";
 
-                    if (isNear(stiloMouse, stiloSeamArc1HandleWorldHover, ARC_HANDLE_RADIUS))
+                    // Priority order: Head, Butt, Seam Arc 1, Seam Arc 2,
+                    // then leg 1 (Hip 1, Feet 1, Thigh 1 Arc 1, Thigh 1 Arc
+                    // 2), then leg 2 (same) -- mirrors the WM_LBUTTONDOWN
+                    // hit-test chain further up this file (which already
+                    // checks Hip before Feet before the thigh arcs, per
+                    // leg). Head/Butt lead the list even though they aren't
+                    // draggable (no draggingStiloHead/draggingStiloButt --
+                    // same as Semni's own head/butt), and their displayed
+                    // names are intentionally swapped vs. the flag name --
+                    // see Semni's identical hoverHead/hoverButt swap above
+                    // for why (avoids re-interpreting seamArc1Angle/
+                    // seamArc2Angle around a different physical circle).
+                    if (app->hoverStiloButt)
+                        stiloHoverLabel = L"Head";
+                    else if (app->hoverStiloHead)
+                        stiloHoverLabel = L"Butt";
+                    else if (isNear(stiloMouse, stiloSeamArc1HandleWorldHover, ARC_HANDLE_RADIUS))
                         stiloHoverLabel = L"Seam Arc 1";
                     else if (isNear(stiloMouse, stiloSeamArc2HandleWorldHover, ARC_HANDLE_RADIUS))
                         stiloHoverLabel = L"Seam Arc 2";
                     else if (app->hoverStiloHip1)
                         stiloHoverLabel = L"Hip 1";
+                    else if (app->hoverStiloFeet1)
+                        stiloHoverLabel = L"Feet 1";
                     else if (isNear(stiloMouse, stiloThigh1Arc1WorldHover, THIGH_HANDLE_RADIUS))
                         stiloHoverLabel = L"Thigh 1 Arc 1";
                     else if (isNear(stiloMouse, stiloThigh1Arc2WorldHover, THIGH_HANDLE_RADIUS))
                         stiloHoverLabel = L"Thigh 1 Arc 2";
-                    else if (app->hoverStiloFeet1)
-                        stiloHoverLabel = L"Feet 1";
                     else if (app->hoverStiloHip2)
                         stiloHoverLabel = L"Hip 2";
+                    else if (app->hoverStiloFeet2)
+                        stiloHoverLabel = L"Feet 2";
                     else if (isNear(stiloMouse, stiloThigh2Arc1WorldHover, THIGH_HANDLE_RADIUS))
                         stiloHoverLabel = L"Thigh 2 Arc 1";
                     else if (isNear(stiloMouse, stiloThigh2Arc2WorldHover, THIGH_HANDLE_RADIUS))
                         stiloHoverLabel = L"Thigh 2 Arc 2";
-                    else if (app->hoverStiloFeet2)
-                        stiloHoverLabel = L"Feet 2";
-                    else if (app->hoverStiloHead)
-                        stiloHoverLabel = L"Butt";
-                    else if (app->hoverStiloButt)
-                        stiloHoverLabel = L"Head";
 
                     SetWindowText(app->ui.hHoverLabel, stiloHoverLabel);
                 }
@@ -1949,30 +1976,18 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 PointF shin1WorldHover = nestedJointToWorld(shin1MidLocalHover, app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeAngle, app->robotScene.robot.innerCircle, app->robotScene.robot.hipAngle, center, angle);
                 PointF shin2WorldHover = nestedJointToWorld(shin2MidLocalHover, app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeAngle, app->robotScene.robot.innerCircle, app->robotScene.robot.hipAngle, center, angle);
 
-                // priority mirrors WM_LBUTTONDOWN's hit-test order
-                // (seamArc1, seamArc2, hip, knee, thigh1, thigh2, foot,
-                // shin1, shin2), with head/butt appended at the end since
-                // they aren't part of that click chain at all
+                // Priority order: Head, Butt, Seam Arc 1, Seam Arc 2, Hip,
+                // Knee, Foot, Thigh Arc 1, Thigh Arc 2, Shin Arc 1, Shin Arc
+                // 2 -- mirrors WM_LBUTTONDOWN's hit-test order for
+                // everything that's actually draggable (seamArc1, seamArc2,
+                // hip, knee, foot, thigh1, thigh2, shin1, shin2); Head/Butt
+                // are hover-only (there's no draggingHead/draggingButt --
+                // clicking them falls through to whatever's underneath), so
+                // they can't be "mirrored" in the click chain, but they
+                // still lead this list since head/butt should win over
+                // every other handle when the mouse is near more than one.
                 const wchar_t* hoverLabel = L"";
 
-                if (isNear(mouse, seamArc1HandleWorldHover, ARC_HANDLE_RADIUS))
-                    hoverLabel = L"Seam Arc 1";
-                else if (isNear(mouse, seamArc2HandleWorldHover, ARC_HANDLE_RADIUS))
-                    hoverLabel = L"Seam Arc 2";
-                else if (app->hoverHip)
-                    hoverLabel = L"Hip";
-                else if (app->hoverKnee)
-                    hoverLabel = L"Knee";
-                else if (isNear(mouse, thigh1WorldHover, THIGH_HANDLE_RADIUS))
-                    hoverLabel = L"Thigh Arc 1";
-                else if (isNear(mouse, thigh2WorldHover, THIGH_HANDLE_RADIUS))
-                    hoverLabel = L"Thigh Arc 2";
-                else if (app->hoverFoot)
-                    hoverLabel = L"Foot";
-                else if (isNear(mouse, shin1WorldHover, SHIN_HANDLE_RADIUS))
-                    hoverLabel = L"Shin Arc 1";
-                else if (isNear(mouse, shin2WorldHover, SHIN_HANDLE_RADIUS))
-                    hoverLabel = L"Shin Arc 2";
                 // label text intentionally swapped vs. the flag name --
                 // requested swap of "head"/"butt" as displayed NAMES only.
                 // Doing it here (display-only) instead of swapping the
@@ -1986,10 +2001,28 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 // re-interpret those tuned angles around a different
                 // circle entirely -- not just relabel them, which is what
                 // caused the seam handle drag to look broken/inverted.
+                if (app->hoverButt)
+                    hoverLabel = L"Head";
                 else if (app->hoverHead)
                     hoverLabel = L"Butt";
-                else if (app->hoverButt)
-                    hoverLabel = L"Head";
+                else if (isNear(mouse, seamArc1HandleWorldHover, ARC_HANDLE_RADIUS))
+                    hoverLabel = L"Seam Arc 1";
+                else if (isNear(mouse, seamArc2HandleWorldHover, ARC_HANDLE_RADIUS))
+                    hoverLabel = L"Seam Arc 2";
+                else if (app->hoverHip)
+                    hoverLabel = L"Hip";
+                else if (app->hoverKnee)
+                    hoverLabel = L"Knee";
+                else if (app->hoverFoot)
+                    hoverLabel = L"Foot";
+                else if (isNear(mouse, thigh1WorldHover, THIGH_HANDLE_RADIUS))
+                    hoverLabel = L"Thigh Arc 1";
+                else if (isNear(mouse, thigh2WorldHover, THIGH_HANDLE_RADIUS))
+                    hoverLabel = L"Thigh Arc 2";
+                else if (isNear(mouse, shin1WorldHover, SHIN_HANDLE_RADIUS))
+                    hoverLabel = L"Shin Arc 1";
+                else if (isNear(mouse, shin2WorldHover, SHIN_HANDLE_RADIUS))
+                    hoverLabel = L"Shin Arc 2";
 
                 SetWindowText(app->ui.hHoverLabel, hoverLabel);
             }

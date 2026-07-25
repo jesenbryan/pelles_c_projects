@@ -1606,34 +1606,94 @@ void canvasRenderFrame(float dimAmount)
             // pick the matching pair for whichever kind is actually active
             // so the "N/M" total (and the fillet-vs-body-circle numbering
             // split just below) means the right thing for all three.
+            //
+            // The DISPLAY number is no longer just "fillets 1..N, then body
+            // circles N+1..N+M" (the raw index order the underlying arrays
+            // use for color/hit-test, which stays untouched) -- it now
+            // follows the same Head/Butt/Seam/Hip/Knee/Feet/Thigh/Shin
+            // priority order established for hover labels and click
+            // priority (input.c), so a user reading "Segment 3/11" sees the
+            // same position in that established order regardless of which
+            // internal array (fillet vs body circle) actually backs it.
+            // filletDisplayNum[i]/bodyDisplayNum[i] map a raw array index to
+            // that display number; see each kind's compute* function
+            // (renderer.c) for the raw index order these were derived from.
             int numCircleSegments, numBodyCircles;
+            const int* filletDisplayNum;
+            const int* bodyDisplayNum;
             switch (app.robotScene.activeKind)
             {
                 case ROBOT_KIND_ROCKY:
+                {
+                    // raw fillet order: shin1, shin2 -- raw body order:
+                    // knee, foot. Desired: knee(1), foot(2), shin1(3),
+                    // shin2(4).
+                    static const int rockyFilletDisplayNum[NUM_ROCKY_CIRCLE_SEGMENTS] = { 3, 4 };
+                    static const int rockyBodyDisplayNum[NUM_ROCKY_BODY_CIRCLES] = { 1, 2 };
                     numCircleSegments = NUM_ROCKY_CIRCLE_SEGMENTS;
                     numBodyCircles = NUM_ROCKY_BODY_CIRCLES;
+                    filletDisplayNum = rockyFilletDisplayNum;
+                    bodyDisplayNum = rockyBodyDisplayNum;
                     break;
+                }
                 case ROBOT_KIND_STILO:
+                {
+                    // raw fillet order: seam1, seam2, thigh1Arc1,
+                    // thigh1Arc2, thigh2Arc1, thigh2Arc2 -- raw body order:
+                    // out[0] is the physical headX-based circle, out[1] the
+                    // physical buttX-based circle. Same display-name swap as
+                    // input.c's hoverStiloHead/hoverStiloButt (see that
+                    // comment): the physical headX circle (out[0]) is what
+                    // the UI calls "Butt", and the physical buttX circle
+                    // (out[1]) is what it calls "Head" -- so out[0] gets the
+                    // "Butt" display number and out[1] gets "Head"'s, not
+                    // the other way around. Desired: head=out[1](1),
+                    // butt=out[0](2), seam1(3), seam2(4), hip1(5), feet1(6),
+                    // thigh1Arc1(7), thigh1Arc2(8), hip2(9), feet2(10),
+                    // thigh2Arc1(11), thigh2Arc2(12).
+                    static const int stiloFilletDisplayNum[NUM_STILO_CIRCLE_SEGMENTS] = { 3, 4, 7, 8, 11, 12 };
+                    static const int stiloBodyDisplayNum[NUM_STILO_BODY_CIRCLES] = { 2, 1, 5, 6, 9, 10 };
                     numCircleSegments = NUM_STILO_CIRCLE_SEGMENTS;
                     numBodyCircles = NUM_STILO_BODY_CIRCLES;
+                    filletDisplayNum = stiloFilletDisplayNum;
+                    bodyDisplayNum = stiloBodyDisplayNum;
                     break;
+                }
                 case ROBOT_KIND_SEMNI:
                 default:
+                {
+                    // raw fillet order: seam1, seam2, thigh1, thigh2, shin1,
+                    // shin2 -- raw body order: out[0] is the physical
+                    // headX-based circle, out[1] the physical buttX-based
+                    // circle. Same display-name swap as input.c's
+                    // hoverHead/hoverButt (see that comment): the physical
+                    // headX circle (out[0]) is what the UI calls "Butt", and
+                    // the physical buttX circle (out[1]) is what it calls
+                    // "Head" -- so out[0] gets the "Butt" display number and
+                    // out[1] gets "Head"'s, not the other way around.
+                    // Desired: head=out[1](1), butt=out[0](2), seam1(3),
+                    // seam2(4), hip(5), knee(6), foot(7), thigh1(8),
+                    // thigh2(9), shin1(10), shin2(11).
+                    static const int semniFilletDisplayNum[NUM_ROBOT_CIRCLE_SEGMENTS] = { 3, 4, 8, 9, 10, 11 };
+                    static const int semniBodyDisplayNum[NUM_ROBOT_BODY_CIRCLES] = { 2, 1, 5, 6, 7 };
                     numCircleSegments = NUM_ROBOT_CIRCLE_SEGMENTS;
                     numBodyCircles = NUM_ROBOT_BODY_CIRCLES;
+                    filletDisplayNum = semniFilletDisplayNum;
+                    bodyDisplayNum = semniBodyDisplayNum;
                     break;
+                }
             }
             int totalRobotSegments = numCircleSegments + numBodyCircles;
 
             if (app.showCircleSegments && app.hoveredCircleSegment != -1)
             {
-                wsprintfA(hoverSegStr, "Segment %d/%d", app.hoveredCircleSegment + 1, totalRobotSegments);
+                wsprintfA(hoverSegStr, "Segment %d/%d", filletDisplayNum[app.hoveredCircleSegment], totalRobotSegments);
                 circleSegmentColor(app.hoveredCircleSegment, &segR, &segG, &segB);
                 showHoverSeg = TRUE;
             }
             else if (app.showCircleSegments && app.hoveredBodyCircle != -1)
             {
-                wsprintfA(hoverSegStr, "Segment %d/%d", numCircleSegments + app.hoveredBodyCircle + 1, totalRobotSegments);
+                wsprintfA(hoverSegStr, "Segment %d/%d", bodyDisplayNum[app.hoveredBodyCircle], totalRobotSegments);
                 bodyCircleColor(app.hoveredBodyCircle, &segR, &segG, &segB);
                 showHoverSeg = TRUE;
             }
