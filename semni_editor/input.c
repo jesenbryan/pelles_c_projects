@@ -362,6 +362,35 @@ static int hitTestRockyEdge(Rocky r, PointF localPoint)
     return ROCKY_EDGE_NONE;
 }
 
+// Distance from a world-space point to a world-space line segment -- same
+// math as canvas.c's own distPointToSegment (that one's static to its own
+// file, so not shared; kept as a small local duplicate rather than
+// threading it through geometry.h for one caller). Used by the View
+// Segments fillet hover hit-test below to pick against the ACTUAL trimmed
+// arc polyline (computeSemniArcPoints) instead of the full circle it was
+// cut from.
+static float distPointFToSegment(PointF p, PointF a, PointF b)
+{
+    float dx = b.x - a.x;
+    float dy = b.y - a.y;
+    float len2 = dx * dx + dy * dy;
+
+    if (len2 < 1e-9f)
+    {
+        float ddx = p.x - a.x, ddy = p.y - a.y;
+        return sqrtf(ddx * ddx + ddy * ddy);
+    }
+
+    float t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2;
+    if (t < 0.0f) t = 0.0f;
+    if (t > 1.0f) t = 1.0f;
+
+    float projX = a.x + t * dx;
+    float projY = a.y + t * dy;
+    float ddx = p.x - projX, ddy = p.y - projY;
+    return sqrtf(ddx * ddx + ddy * ddy);
+}
+
 // NEW: middle-mouse drag-pan state, mirroring canvas.c's ArcSpline
 // panning/panLastX/panLastY -- gives the Semni robot editor the same
 // pan gesture instead of only supporting zoom.
@@ -1083,6 +1112,71 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     rockyHoverLabel = L"Body Height";
                 SetWindowText(app->ui.hHoverLabel, rockyHoverLabel);
 
+                // View Segments hover -- same idea as Semni's own version
+                // further down (computeRockyArcPoints' trimmed fillet
+                // curve for the 2 shin arcs, computeRockyBodyCircles'
+                // real circles for knee/foot), just against Rocky's own
+                // 2-fillet/2-body-circle set (renderer.c/h's
+                // NUM_ROCKY_CIRCLE_SEGMENTS/NUM_ROCKY_BODY_CIRCLES). Placed
+                // here, inside this block and BEFORE the drag handling
+                // below, rather than after this whole if (activeKind ==
+                // ROCKY) block -- everything past this block's own closing
+                // break (a little further down) is unreachable whenever
+                // Rocky is active, since that break always fires first.
+                if (app->showCircleSegments)
+                {
+                    PointF rockyArcPoints[NUM_ROCKY_CIRCLE_SEGMENTS][ARC_SAMPLE_COUNT];
+                    int rockyArcCounts[NUM_ROCKY_CIRCLE_SEGMENTS];
+                    computeRockyArcPoints(app->robotScene.rocky, rockyArcPoints, rockyArcCounts);
+
+                    CircleSegment rockyBodySegs[NUM_ROCKY_BODY_CIRCLES];
+                    computeRockyBodyCircles(app->robotScene.rocky, rockyBodySegs);
+
+                    float rockyEffectiveZoom = graphicsGetZoom() * graphicsGetRobotScale();
+                    float rockyTolerance = 0.05f / rockyEffectiveZoom;
+
+                    int bestFillet = -1;
+                    int bestBody = -1;
+                    float bestDist = rockyTolerance;
+
+                    for (int i = 0; i < NUM_ROCKY_CIRCLE_SEGMENTS; i++)
+                    {
+                        for (int k = 0; k < rockyArcCounts[i] - 1; k++)
+                        {
+                            float d = distPointFToSegment(app->mouseGL, rockyArcPoints[i][k], rockyArcPoints[i][k + 1]);
+                            if (d < bestDist)
+                            {
+                                bestDist = d;
+                                bestFillet = i;
+                                bestBody = -1;
+                            }
+                        }
+                    }
+
+                    for (int i = 0; i < NUM_ROCKY_BODY_CIRCLES; i++)
+                    {
+                        float dx = app->mouseGL.x - rockyBodySegs[i].center.x;
+                        float dy = app->mouseGL.y - rockyBodySegs[i].center.y;
+                        float distToCenter = sqrtf(dx * dx + dy * dy);
+                        float distToEdge = fabsf(distToCenter - rockyBodySegs[i].radius);
+
+                        if (distToEdge < bestDist)
+                        {
+                            bestDist = distToEdge;
+                            bestBody = i;
+                            bestFillet = -1;
+                        }
+                    }
+
+                    app->hoveredCircleSegment = bestFillet;
+                    app->hoveredBodyCircle = bestBody;
+                }
+                else
+                {
+                    app->hoveredCircleSegment = -1;
+                    app->hoveredBodyCircle = -1;
+                }
+
                 if (app->draggingRockyBody)
                 {
                     app->robotScene.rocky.kneeCircle.x = localMouse.x + app->rockyDragKneeOffset.x;
@@ -1263,15 +1357,12 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             // hover/drag feedback -- same construction as the
             // ROBOT_KIND_SEMNI block below, operating on
             // app->robotScene.stilo and the Stilo-specific hoverStilo*/
-            // draggingStilo*/stilo* fields instead of Semni's own. Stilo
-            // has no View Segments overlay (see drawStilo's comment), so
-            // hoveredCircleSegment/hoveredBodyCircle are just blanked here,
-            // same as the old "not Semni" fallback used to do for it.
+            // draggingStilo*/stilo* fields instead of Semni's own. View
+            // Segments hover (hoveredCircleSegment/hoveredBodyCircle) is
+            // computed a little further down, after stiloMouse/
+            // stiloCenter/stiloAngle exist -- see that block's own comment.
             if (app->robotScene.activeKind == ROBOT_KIND_STILO)
             {
-                app->hoveredCircleSegment = -1;
-                app->hoveredBodyCircle = -1;
-
                 PointF stiloMouse = app->mouseGL;
 
                 PointF stiloCenter = getStiloCenter(app->robotScene.stilo);
@@ -1374,6 +1465,71 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                         stiloHoverLabel = L"Head";
 
                     SetWindowText(app->ui.hHoverLabel, stiloHoverLabel);
+                }
+
+                // View Segments hover -- same idea as Semni's own version
+                // further down (computeStiloArcPoints' trimmed fillet
+                // curve for the 6 fillets, computeStiloBodyCircles' real
+                // circles for the 6 body circles), just against Stilo's
+                // own set (renderer.c/h's NUM_STILO_CIRCLE_SEGMENTS/
+                // NUM_STILO_BODY_CIRCLES). Placed here, inside this block
+                // and BEFORE the early "not dragging" break just below --
+                // everything past this whole if (activeKind == STILO)
+                // block's own closing break (a little further down) is
+                // unreachable whenever Stilo is active, since one of these
+                // two breaks always fires first.
+                if (app->showCircleSegments)
+                {
+                    PointF stiloArcPoints[NUM_STILO_CIRCLE_SEGMENTS][ARC_SAMPLE_COUNT];
+                    int stiloArcCounts[NUM_STILO_CIRCLE_SEGMENTS];
+                    computeStiloArcPoints(app->robotScene.stilo, stiloArcPoints, stiloArcCounts);
+
+                    CircleSegment stiloBodySegs[NUM_STILO_BODY_CIRCLES];
+                    computeStiloBodyCircles(app->robotScene.stilo, stiloBodySegs);
+
+                    float stiloEffectiveZoom = graphicsGetZoom() * graphicsGetRobotScale();
+                    float stiloTolerance = 0.05f / stiloEffectiveZoom;
+
+                    int bestFillet = -1;
+                    int bestBody = -1;
+                    float bestDist = stiloTolerance;
+
+                    for (int i = 0; i < NUM_STILO_CIRCLE_SEGMENTS; i++)
+                    {
+                        for (int k = 0; k < stiloArcCounts[i] - 1; k++)
+                        {
+                            float d = distPointFToSegment(stiloMouse, stiloArcPoints[i][k], stiloArcPoints[i][k + 1]);
+                            if (d < bestDist)
+                            {
+                                bestDist = d;
+                                bestFillet = i;
+                                bestBody = -1;
+                            }
+                        }
+                    }
+
+                    for (int i = 0; i < NUM_STILO_BODY_CIRCLES; i++)
+                    {
+                        float dx = stiloMouse.x - stiloBodySegs[i].center.x;
+                        float dy = stiloMouse.y - stiloBodySegs[i].center.y;
+                        float distToCenter = sqrtf(dx * dx + dy * dy);
+                        float distToEdge = fabsf(distToCenter - stiloBodySegs[i].radius);
+
+                        if (distToEdge < bestDist)
+                        {
+                            bestDist = distToEdge;
+                            bestBody = i;
+                            bestFillet = -1;
+                        }
+                    }
+
+                    app->hoveredCircleSegment = bestFillet;
+                    app->hoveredBodyCircle = bestBody;
+                }
+                else
+                {
+                    app->hoveredCircleSegment = -1;
+                    app->hoveredBodyCircle = -1;
                 }
 
                 if (!app->draggingStiloSeamArc1 && !app->draggingStiloSeamArc2 &&
@@ -1608,14 +1764,21 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 break;
             }
 
-            // Per-joint hover/drag feedback beyond Rocky's one body handle
-            // and Stilo's full set above only exists for Semni here -- see
-            // WM_LBUTTONDOWN's matching guard.
+            // Per-joint hover/drag feedback (hoverHip/hoverKnee/etc, the
+            // bottom-left hover label) beyond Rocky's one body handle and
+            // Stilo's full set above only exists for Semni here -- see
+            // WM_LBUTTONDOWN's matching guard. View Segments hover DOES run
+            // for all three kinds now (see computeRocky*/computeStilo* in
+            // renderer.c/h, mirroring the original Semni-only versions),
+            // but NOT here -- Rocky's and Stilo's own hit-tests live INSIDE
+            // their own if (activeKind == ROBOT_KIND_ROCKY/STILO) blocks
+            // above (right after each one's hover-label SetWindowText call,
+            // before its drag handling), not here after them, since both of
+            // those blocks always `break` before control would ever reach
+            // this point -- placing it here the first time around silently
+            // made it dead code for both kinds.
             if (app->robotScene.activeKind != ROBOT_KIND_SEMNI)
             {
-                SetWindowText(app->ui.hHoverLabel, L"");
-                app->hoveredCircleSegment = -1;
-                app->hoveredBodyCircle = -1;
                 break;
             }
 
@@ -1640,27 +1803,39 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             app->hoverHead  = isNear(mouse, headWorld, HEAD_BUTT_HANDLE_RADIUS);
             app->hoverButt  = isNear(mouse, buttWorld, HEAD_BUTT_HANDLE_RADIUS);
 
-            // View Segments hover: which SINGLE circle -- out of both the
-            // 6 fillet circles (computeSemniCircleSegments) and the 5
-            // always-visible body circles (computeSemniBodyCircles) -- is
-            // nearest the mouse, within a small pick tolerance. Same idea
-            // as the ArcSpline canvas's findHoveredSegment, gated the same
-            // way canvas.c gates its own hover detection on
-            // canvas.showSegments. Picks against each circle's EDGE
-            // (|distToCenter - radius|), not its interior, since that's
-            // what's actually drawn -- a circle outline isn't a filled
-            // shape.
+            // View Segments hover: which SINGLE thing -- out of both the
+            // 6 fillet ARCS (computeSemniArcPoints' actual trimmed curve,
+            // NOT the full circle each one was cut from) and the 5
+            // always-visible body circles (computeSemniBodyCircles, real
+            // full circles) -- is nearest the mouse, within a small pick
+            // tolerance. Same idea as the ArcSpline canvas's
+            // findHoveredSegment, gated the same way canvas.c gates its own
+            // hover detection on canvas.showSegments.
+            //
+            // Fillets specifically pick against the TRIMMED arc polyline,
+            // not the full circle's edge (|distToCenter - radius|) the way
+            // this used to -- a fillet's full circle is often much bigger
+            // than the visible arc actually drawn (drawSemniCircleSegments'
+            // own "ghost circle" makes the untrimmed rest of it visible too
+            // while View Segments is on, but only as a faint dashed
+            // reference, not something meant to be hoverable in its own
+            // right). Same reasoning robotBoundingBoxLocal's
+            // ROBOT_BB_INCLUDE_ARC already uses this exact function for.
+            // Body circles are real, fully-drawn circles with no such
+            // ghost/trimmed distinction, so their own hit-test is
+            // unchanged.
             //
             // The two candidate sets are searched against ONE shared
-            // bestDist rather than independently, so exactly one circle
+            // bestDist rather than independently, so exactly one thing
             // (fillet OR body, never both) ends up highlighted even where
             // a fillet and a body circle happen to sit close together --
             // whichever loop finds a closer match resets the other kind's
             // result back to -1.
             if (app->showCircleSegments)
             {
-                CircleSegment fillets[NUM_ROBOT_CIRCLE_SEGMENTS];
-                computeSemniCircleSegments(app->robotScene.robot, fillets);
+                PointF filletArcPoints[NUM_ROBOT_CIRCLE_SEGMENTS][ARC_SAMPLE_COUNT];
+                int filletArcCounts[NUM_ROBOT_CIRCLE_SEGMENTS];
+                computeSemniArcPoints(app->robotScene.robot, filletArcPoints, filletArcCounts);
 
                 CircleSegment bodySegs[NUM_ROBOT_BODY_CIRCLES];
                 computeSemniBodyCircles(app->robotScene.robot, bodySegs);
@@ -1682,16 +1857,15 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
 
                 for (int i = 0; i < NUM_ROBOT_CIRCLE_SEGMENTS; i++)
                 {
-                    float dx = mouse.x - fillets[i].center.x;
-                    float dy = mouse.y - fillets[i].center.y;
-                    float distToCenter = sqrtf(dx * dx + dy * dy);
-                    float distToEdge = fabsf(distToCenter - fillets[i].radius);
-
-                    if (distToEdge < bestDist)
+                    for (int k = 0; k < filletArcCounts[i] - 1; k++)
                     {
-                        bestDist = distToEdge;
-                        bestFillet = i;
-                        bestBody = -1;
+                        float d = distPointFToSegment(mouse, filletArcPoints[i][k], filletArcPoints[i][k + 1]);
+                        if (d < bestDist)
+                        {
+                            bestDist = d;
+                            bestFillet = i;
+                            bestBody = -1;
+                        }
                     }
                 }
 
@@ -3598,12 +3772,13 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     // BS_AUTOCHECKBOX already flipped its own check state
                     // before this notification fires, so read it back
                     // rather than tracking a separate bool -- same pattern
-                    // as the ArcSpline canvas's hViewSegBtn (ui.c). Only
-                    // has a visible effect while Semni is the active robot
-                    // -- Rocky/Stilo don't have a View Segments overlay
-                    // yet (see drawRocky/drawStilo's own comments), so the
-                    // toggle is harmlessly inert for them right now rather
-                    // than disabled outright.
+                    // as the ArcSpline canvas's hViewSegBtn (ui.c). Works
+                    // identically for all three robot kinds now (Rocky/
+                    // Stilo each have their own compute/draw pair mirroring
+                    // Semni's, see renderer.c/h's computeRocky*/
+                    // computeStilo* and drawRocky/drawStilo's own View
+                    // Segments blocks) -- whichever kind is active reads
+                    // this same app->showCircleSegments flag.
                     BOOL nowChecked = (SendMessage(app->ui.hViewSegmentsButton, BM_GETCHECK, 0, 0) == BST_CHECKED);
                     app->showCircleSegments = nowChecked;
                     SetFocus(app->hwndMain);

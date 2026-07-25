@@ -99,22 +99,33 @@ typedef struct {
     int shiftHeld;
 
     // "View Segments" toggle (app->showCircleSegments) -- when set,
-    // drawSemni also overlays the full circle each fillet arc (seam/
-    // thigh/shin) was trimmed from. See drawSemniCircleSegments below.
+    // drawSemni/drawRocky/drawStilo each overlay the full circle each of
+    // their own fillet arcs was trimmed from. See drawSemniCircleSegments
+    // below and its Rocky/Stilo counterparts (drawRockyCircleSegments/
+    // drawStiloCircleSegments).
     int showSegments;
 
-    // Index (0-5, see NUM_ROBOT_CIRCLE_SEGMENTS below) of the circle
-    // segment currently under the mouse (app->hoveredCircleSegment), or -1
-    // if none -- highlights that one solid/bright instead of dashed, same
-    // idea as the ArcSpline canvas's hoveredSegment.
+    // Index of the circle segment currently under the mouse
+    // (app->hoveredCircleSegment), or -1 if none -- highlights that one
+    // solid/bright instead of dashed, same idea as the ArcSpline canvas's
+    // hoveredSegment. Range depends on which robot kind is active: 0-5 for
+    // Semni/Stilo (NUM_ROBOT_CIRCLE_SEGMENTS/NUM_STILO_CIRCLE_SEGMENTS,
+    // both 6) or 0-1 for Rocky (NUM_ROCKY_CIRCLE_SEGMENTS, 2) -- only one
+    // kind's compute/draw functions ever read this at a time (see
+    // renderRobot's activeKind switch), so there's no ambiguity despite
+    // the field itself being generic across all three.
     int hoveredCircleSegment;
 
-    // Index (0-4, see NUM_ROBOT_BODY_CIRCLES below) of the always-visible
-    // body circle (head/butt/hip/knee/foot) whose CIRCUMFERENCE the mouse
-    // is currently near (app->hoveredBodyCircle), or -1 if none. Separate
-    // from hoverHip/hoverKnee/etc above, which only fire near the
+    // Index of the always-visible body circle whose CIRCUMFERENCE the
+    // mouse is currently near (app->hoveredBodyCircle), or -1 if none.
+    // Separate from hoverHip/hoverKnee/etc above, which only fire near the
     // center-point handle for dragging -- this fires anywhere along the
-    // circle's edge, purely as hover feedback (see drawSemniBodyCircleHover).
+    // circle's edge, purely as hover feedback (see
+    // drawSemniBodyCircleHover/drawRockyBodyCircleHover/
+    // drawStiloBodyCircleHover). Range depends on active kind, same
+    // reasoning as hoveredCircleSegment above: 0-4 for Semni
+    // (NUM_ROBOT_BODY_CIRCLES), 0-1 for Rocky (NUM_ROCKY_BODY_CIRCLES), or
+    // 0-5 for Stilo (NUM_STILO_BODY_CIRCLES).
     int hoveredBodyCircle;
 
     // TRUE while the user is actively dragging the whole robot in
@@ -158,15 +169,15 @@ void renderRobotScene(AppState* app, float dimAmount);
 
 void drawSemni(Semni b, RenderState* rs, int includeHandles, float opacity);
 
-// Rocky/Stilo (see app.h) -- neither draws a View Segments overlay yet
-// regardless of rs->showSegments (that's a planned follow-up, see input.c's
-// WM_LBUTTONDOWN/WM_MOUSEMOVE/WM_MOUSEWHEEL comments). Rocky's rectangular
-// torso IS draggable/resizable (rs->hoverRockyBody/draggingRockyBody, same
-// hip-like handle interaction as Semni's own hip circle), and Stilo has two
-// independent two-joint legs (hip circle + feet circle, connected by a pair
-// of thigh arcs -- rs->hoverStiloHip1/draggingStiloHip1/etc. for leg 1,
-// the Hip2/Feet2/Thigh2 fields for leg 2, see app.h's Stilo comment).
-// includeHandles gates both.
+// Rocky/Stilo (see app.h). Rocky's rectangular torso IS draggable/
+// resizable (rs->hoverRockyBody/draggingRockyBody, same hip-like handle
+// interaction as Semni's own hip circle), and Stilo has two independent
+// two-joint legs (hip circle + feet circle, connected by a pair of thigh
+// arcs -- rs->hoverStiloHip1/draggingStiloHip1/etc. for leg 1, the
+// Hip2/Feet2/Thigh2 fields for leg 2, see app.h's Stilo comment).
+// includeHandles gates both. Both also now draw their own View Segments
+// overlay when rs->showSegments is set, same as Semni -- see
+// computeRockyCircleSegments/computeStiloCircleSegments and friends below.
 void drawRocky(Rocky b, RenderState* rs, int includeHandles, float opacity);
 void drawStilo(Stilo b, RenderState* rs, int includeHandles, float opacity);
 
@@ -281,5 +292,87 @@ void drawSemniBodyCircleHover(Semni b, int hoveredIndex, float opacity);
 // see NUM_ROBOT_BODY_CIRCLES's ordering above), same palette
 // drawSemniBodyCircleHover itself renders with. Exposed for the same reason
 // as circleSegmentColor above -- caller must only pass a valid
-// 0..NUM_ROBOT_BODY_CIRCLES-1 index.
+// 0..NUM_ROBOT_BODY_CIRCLES-1 index. NOTE: the palette itself has 6
+// entries (see bodyCircleColor's own comment, renderer.c) since it's
+// shared by Stilo's 6 body circles too, not just Semni's 5 -- any index
+// 0-5 is valid regardless of which kind is asking.
 void bodyCircleColor(int index, float* r, float* g, float* b);
+
+// ---- Rocky's own View Segments overlay ----
+//
+// Rocky has no hip/thigh stage at all (see app.h) -- just the one
+// knee->foot leg, identical construction to Semni's own shin1/shin2 --
+// so it only ever has 2 fillets and 2 body circles, a small subset of
+// Semni's full set rather than a parallel structure of its own size.
+
+// Rocky's 2 shin fillet circles: shin1, shin2 -- indices into
+// computeRockyCircleSegments' output and into app->hoveredCircleSegment.
+#define NUM_ROCKY_CIRCLE_SEGMENTS 2
+
+// Computes Rocky's 2 shin fillet circles' world-space center + radius for
+// its CURRENT pose. Same sharing rationale as computeSemniCircleSegments.
+void computeRockyCircleSegments(Rocky b, CircleSegment out[NUM_ROCKY_CIRCLE_SEGMENTS]);
+
+// Computes Rocky's 2 shin fillet ARCS' actual TRIMMED curve (not the full
+// circle computeRockyCircleSegments above returns), same idea as
+// computeSemniArcPoints.
+void computeRockyArcPoints(Rocky b, PointF out[NUM_ROCKY_CIRCLE_SEGMENTS][ARC_SAMPLE_COUNT], int outCounts[NUM_ROCKY_CIRCLE_SEGMENTS]);
+
+// Overlays the full circle behind each of Rocky's 2 shin fillet arcs, same
+// idea as drawSemniCircleSegments.
+void drawRockyCircleSegments(Rocky b, int hoveredIndex, float opacity);
+
+// Rocky's 2 always-visible body circles: knee, foot -- indices into
+// computeRockyBodyCircles' output and into app->hoveredBodyCircle. Rocky's
+// rectangular torso has no circle at all, so it's not included here.
+#define NUM_ROCKY_BODY_CIRCLES 2
+
+// Computes Rocky's 2 body circles' world-space center + radius for its
+// CURRENT pose. Same sharing rationale as computeSemniBodyCircles.
+void computeRockyBodyCircles(Rocky b, CircleSegment out[NUM_ROCKY_BODY_CIRCLES]);
+
+// Bright/solid hover ring on whichever of Rocky's 2 body circles is
+// currently hovered, same idea as drawSemniBodyCircleHover.
+void drawRockyBodyCircleHover(Rocky b, int hoveredIndex, float opacity);
+
+// ---- Stilo's own View Segments overlay ----
+//
+// Stilo shares Semni's torso (head/butt + 2 seam arcs) but replaces the
+// single hip->knee->foot leg with two independent hip->feet legs, each
+// with its own thigh fillet pair and no knee/shin stage -- see app.h's
+// Stilo comment. 6 fillets total (2 seam + 2 thigh1 + 2 thigh2) and 6
+// body circles (head, butt, hip1, feet1, hip2, feet2) -- same COUNT as
+// Semni's 6 fillets, but one more body circle (Stilo has two hips/feet
+// pairs where Semni has one hip/knee/foot chain), and different field
+// names/joint topology throughout.
+
+// Stilo's 6 fillet circles, in a fixed seam1/seam2/thigh1Arc1/thigh1Arc2/
+// thigh2Arc1/thigh2Arc2 order -- indices into computeStiloCircleSegments'
+// output and into app->hoveredCircleSegment.
+#define NUM_STILO_CIRCLE_SEGMENTS 6
+
+// Computes Stilo's 6 fillet circles' world-space center + radius for its
+// CURRENT pose. Same sharing rationale as computeSemniCircleSegments.
+void computeStiloCircleSegments(Stilo b, CircleSegment out[NUM_STILO_CIRCLE_SEGMENTS]);
+
+// Computes Stilo's 6 fillet ARCS' actual TRIMMED curve (not the full circle
+// computeStiloCircleSegments above returns), same idea as
+// computeSemniArcPoints.
+void computeStiloArcPoints(Stilo b, PointF out[NUM_STILO_CIRCLE_SEGMENTS][ARC_SAMPLE_COUNT], int outCounts[NUM_STILO_CIRCLE_SEGMENTS]);
+
+// Overlays the full circle behind each of Stilo's 6 fillet arcs, same idea
+// as drawSemniCircleSegments.
+void drawStiloCircleSegments(Stilo b, int hoveredIndex, float opacity);
+
+// Stilo's 6 always-visible body circles, in a fixed order: head, butt,
+// hip1, feet1, hip2, feet2 -- indices into computeStiloBodyCircles' output
+// and into app->hoveredBodyCircle.
+#define NUM_STILO_BODY_CIRCLES 6
+
+// Computes Stilo's 6 body circles' world-space center + radius for its
+// CURRENT pose. Same sharing rationale as computeSemniBodyCircles.
+void computeStiloBodyCircles(Stilo b, CircleSegment out[NUM_STILO_BODY_CIRCLES]);
+
+// Bright/solid hover ring on whichever of Stilo's 6 body circles is
+// currently hovered, same idea as drawSemniBodyCircleHover.
+void drawStiloBodyCircleHover(Stilo b, int hoveredIndex, float opacity);

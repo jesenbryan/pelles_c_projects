@@ -982,13 +982,21 @@ void computeSemniBodyCircles(Semni b, CircleSegment out[NUM_ROBOT_BODY_CIRCLES])
 // as "one of the View Segments fillets" even if both happen to be
 // on-screen at once. Non-static for the same reason as circleSegmentColor
 // above -- canvas.c's hover-tooltip HUD needs it too.
+//
+// 6 entries, not NUM_ROBOT_BODY_CIRCLES (5) -- this palette is shared
+// across every kind now (Semni uses 5, Rocky 2, Stilo 6), so its own size
+// is deliberately decoupled from any one kind's specific body-circle
+// count and sized for the largest (Stilo's 6) instead. Modulo-ing by the
+// smaller NUM_ROBOT_BODY_CIRCLES here would have silently wrapped Stilo's
+// 6th body circle back onto index 0's color, reading as a duplicate
+// rather than a distinct one.
 void bodyCircleColor(int index, float* r, float* g, float* b)
 {
-    static const float palette[NUM_ROBOT_BODY_CIRCLES][3] = {
+    static const float palette[6][3] = {
         {0.95f, 0.75f, 0.15f}, {0.15f, 0.85f, 0.95f}, {0.85f, 0.25f, 0.65f},
-        {0.55f, 0.85f, 0.20f}, {0.95f, 0.45f, 0.15f}
+        {0.55f, 0.85f, 0.20f}, {0.95f, 0.45f, 0.15f}, {0.55f, 0.35f, 0.85f}
     };
-    int i = index % NUM_ROBOT_BODY_CIRCLES;
+    int i = index % 6;
     *r = palette[i][0];
     *g = palette[i][1];
     *b = palette[i][2];
@@ -1163,10 +1171,144 @@ static void drawRockyLeg(Rocky b, RenderState* rs, float opacity)
             jointToWorld(shin2FootTangentLocal, b.kneeCircle, b.kneeAngle, center, angle));
 }
 
+// Computes Rocky's 2 shin fillet circles' world-space center + radius --
+// identical construction to computeSemniCircleSegments' own shin1/shin2
+// entries (indices 4/5 there), just reading Rocky's own kneeCircle/
+// footCircle/kneeAngle/shinArc1Angle/shinArc2Angle fields and
+// getRockyCenter instead of Semni's hip-nested versions (Rocky has no
+// hip/thigh stage at all, so there's only ever this one joint pair to
+// cover -- see app.h's Rocky comment). Shared by drawRockyCircleSegments
+// (rendering) and input.c's hover hit-test, same reasoning
+// computeSemniCircleSegments gives.
+void computeRockyCircleSegments(Rocky b, CircleSegment out[NUM_ROCKY_CIRCLE_SEGMENTS])
+{
+    PointF center = getRockyCenter(b);
+    float angle = b.angle;
+
+    Fillet shin1Fillet = filletFromAttachAngle(b.kneeCircle, b.kneeRadius, b.footCircle, b.footRadius, b.shinArc1Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC_R);
+    Fillet shin2Fillet = filletFromAttachAngleConcave(b.kneeCircle, b.kneeRadius, b.footCircle, b.footRadius, b.shinArc2Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC2_CONCAVE_R);
+
+    out[0].center = jointToWorld(shin1Fillet.center, b.kneeCircle, b.kneeAngle, center, angle);
+    out[0].radius = shin1Fillet.radius;
+
+    out[1].center = jointToWorld(shin2Fillet.center, b.kneeCircle, b.kneeAngle, center, angle);
+    out[1].radius = shin2Fillet.radius;
+}
+
+// Computes Rocky's 2 shin fillet ARCS' actual TRIMMED curve (not the full
+// circle computeRockyCircleSegments above returns), as a world-space
+// poly-line -- same p0/p1/p2 derivation drawRockyLeg's own shin1/shin2
+// drawArc calls use. See computeSemniArcPoints' own comment for why this
+// is duplicated as a pure query rather than having drawRockyLeg call it.
+void computeRockyArcPoints(Rocky b, PointF out[NUM_ROCKY_CIRCLE_SEGMENTS][ARC_SAMPLE_COUNT], int outCounts[NUM_ROCKY_CIRCLE_SEGMENTS])
+{
+    PointF center = getRockyCenter(b);
+    float angle = b.angle;
+
+    PointF axisMidLocal = { (b.kneeCircle.x + b.footCircle.x) * 0.5f, (b.kneeCircle.y + b.footCircle.y) * 0.5f };
+
+    Fillet shin1Fillet = filletFromAttachAngle(b.kneeCircle, b.kneeRadius, b.footCircle, b.footRadius, b.shinArc1Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC_R);
+    PointF shin1P0 = jointToWorld(circleEdge(b.kneeCircle, b.kneeRadius, b.shinArc1Angle), b.kneeCircle, b.kneeAngle, center, angle);
+    PointF shin1P1 = jointToWorld(circleTowardPoint(shin1Fillet.center, shin1Fillet.radius, axisMidLocal), b.kneeCircle, b.kneeAngle, center, angle);
+    PointF shin1P2 = jointToWorld(internalTangentPoint(shin1Fillet.center, shin1Fillet.radius, b.footCircle, b.footRadius), b.kneeCircle, b.kneeAngle, center, angle);
+    outCounts[0] = computeArcPoints(shin1P0, shin1P1, shin1P2, out[0]);
+
+    Fillet shin2Fillet = filletFromAttachAngleConcave(b.kneeCircle, b.kneeRadius, b.footCircle, b.footRadius, b.shinArc2Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC2_CONCAVE_R);
+    PointF shin2P0 = jointToWorld(circleEdge(b.kneeCircle, b.kneeRadius, b.shinArc2Angle), b.kneeCircle, b.kneeAngle, center, angle);
+    PointF shin2P1 = jointToWorld(circleTowardPoint(shin2Fillet.center, shin2Fillet.radius, axisMidLocal), b.kneeCircle, b.kneeAngle, center, angle);
+    PointF shin2P2 = jointToWorld(circleTowardPoint(shin2Fillet.center, shin2Fillet.radius, b.footCircle), b.kneeCircle, b.kneeAngle, center, angle);
+    outCounts[1] = computeArcPoints(shin2P0, shin2P1, shin2P2, out[1]);
+}
+
+// Rocky's 2 always-visible body circles: knee, foot -- indices into
+// computeRockyBodyCircles' output and into app->hoveredBodyCircle. Rocky's
+// rectangular torso has no circle at all (see app.h), so it's not
+// included here the same reason Semni's own body-circle list doesn't
+// include anything past its 5 -- there's simply nothing else that's a
+// real circle on Rocky.
+void computeRockyBodyCircles(Rocky b, CircleSegment out[NUM_ROCKY_BODY_CIRCLES])
+{
+    PointF center = getRockyCenter(b);
+    float angle = b.angle;
+
+    out[0].center = rotatePoint(b.kneeCircle, center, angle);
+    out[0].radius = b.kneeRadius;
+
+    out[1].center = jointToWorld(b.footCircle, b.kneeCircle, b.kneeAngle, center, angle);
+    out[1].radius = b.footRadius;
+}
+
+// Overlays the full circle behind each of Rocky's 2 shin fillet arcs --
+// same "ghost circle" idea as drawSemniCircleSegments, reusing the exact
+// same circleSegmentColor palette (it's generic, cycles on any index) so
+// the two kinds' View Segments overlays read consistently.
+void drawRockyCircleSegments(Rocky b, int hoveredIndex, float opacity)
+{
+    CircleSegment segs[NUM_ROCKY_CIRCLE_SEGMENTS];
+    computeRockyCircleSegments(b, segs);
+
+    for (int i = 0; i < NUM_ROCKY_CIRCLE_SEGMENTS; i++)
+    {
+        float r, g, bl;
+        circleSegmentColor(i, &r, &g, &bl);
+
+        if (i == hoveredIndex)
+        {
+            glDisable(GL_LINE_STIPPLE);
+            glLineWidth(2.5f);
+            glColor4f(r, g, bl, 1.0f * opacity);
+        }
+        else
+        {
+            glEnable(GL_LINE_STIPPLE);
+            glLineStipple(1, 0x00FF);
+            glLineWidth(1.0f);
+            glColor4f(r, g, bl, 0.6f * opacity);
+        }
+
+        drawCircle(segs[i].center, segs[i].radius);
+    }
+
+    glLineWidth(1.0f);
+    glDisable(GL_LINE_STIPPLE);
+}
+
+// Bright/solid hover ring on whichever of Rocky's 2 body circles (knee,
+// foot) is currently hovered -- same idea as drawSemniBodyCircleHover,
+// reusing the shared bodyCircleColor palette.
+void drawRockyBodyCircleHover(Rocky b, int hoveredIndex, float opacity)
+{
+    if (hoveredIndex < 0 || hoveredIndex >= NUM_ROCKY_BODY_CIRCLES)
+        return;
+
+    CircleSegment segs[NUM_ROCKY_BODY_CIRCLES];
+    computeRockyBodyCircles(b, segs);
+
+    float r, g, bl;
+    bodyCircleColor(hoveredIndex, &r, &g, &bl);
+
+    glDisable(GL_LINE_STIPPLE);
+    glLineWidth(2.5f);
+    glColor4f(r, g, bl, 1.0f * opacity);
+    drawCircle(segs[hoveredIndex].center, segs[hoveredIndex].radius);
+    glLineWidth(1.0f);
+}
+
 void drawRocky(Rocky b, RenderState* rs, int includeHandles, float opacity)
 {
     drawRockyBodyRect(b, rs, opacity);
     drawRockyLeg(b, rs, opacity);
+
+    // View Segments overlay -- same gating as drawSemni's own
+    // segmentsVisible (rs->showSegments plus actually being in the robot
+    // editor right now), now that Rocky has its own compute/draw pair
+    // mirroring Semni's.
+    BOOL rockySegmentsVisible = rs->showSegments && (editorModeState.currentMode == EDITOR_MODE_SEMNI);
+    if (rockySegmentsVisible)
+    {
+        drawRockyCircleSegments(b, rs->hoveredCircleSegment, opacity);
+        drawRockyBodyCircleHover(b, rs->hoveredBodyCircle, opacity);
+    }
 
     // Body resize/move handle -- same visible-dot treatment drawSemniHandles
     // gives the hip circle (drawHandle, HIP_HANDLE_RADIUS), at the
@@ -1476,11 +1618,201 @@ static void drawStiloHandles(Stilo b, RenderState* rs, float opacity)
     drawHandle(buttHandle, rs->hoverStiloButt, HEAD_BUTT_HANDLE_RADIUS, opacity);
 }
 
+// Computes Stilo's 6 fillet circles' world-space center + radius, in a
+// fixed seam1/seam2/thigh1Arc1/thigh1Arc2/thigh2Arc1/thigh2Arc2 order --
+// identical construction to computeSemniCircleSegments' own seam/thigh
+// entries, just reading Stilo's own two-independent-legs fields (hip1/
+// feet1/hip1Angle for leg 1, hip2/feet2/hip2Angle for leg 2 -- see app.h's
+// Stilo comment) instead of Semni's single hip->knee->shin chain. Shared
+// by drawStiloCircleSegments (rendering) and input.c's hover hit-test.
+void computeStiloCircleSegments(Stilo b, CircleSegment out[NUM_STILO_CIRCLE_SEGMENTS])
+{
+    PointF center = getStiloCenter(b);
+    float angle = b.angle;
+
+    PointF headLocal = { b.headX, b.y };
+    PointF buttLocal = { b.buttX, b.y };
+
+    Fillet seamArc1Fillet = filletFromAttachAngle(headLocal, b.headRadius, buttLocal, b.buttRadius, b.seamArc1Angle, MIN_ARC_R, MAX_ARC_R);
+    Fillet seamArc2Fillet = filletFromAttachAngle(headLocal, b.headRadius, buttLocal, b.buttRadius, b.seamArc2Angle, MIN_ARC_R, MAX_ARC_R);
+
+    out[0].center = rotatePoint(seamArc1Fillet.center, center, angle);
+    out[0].radius = seamArc1Fillet.radius;
+
+    out[1].center = rotatePoint(seamArc2Fillet.center, center, angle);
+    out[1].radius = seamArc2Fillet.radius;
+
+    Fillet thigh1Arc1Fillet = filletFromAttachAngle(b.hip1Circle, b.hip1Radius, b.feet1Circle, b.feet1Radius, b.thigh1Arc1Angle, MIN_THIGH_ARC_R, MAX_SEMNI_THIGH_ARC_R);
+    Fillet thigh1Arc2Fillet = filletFromAttachAngleConcave(b.hip1Circle, b.hip1Radius, b.feet1Circle, b.feet1Radius, b.thigh1Arc2Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC2_CONCAVE_R);
+
+    out[2].center = jointToWorld(thigh1Arc1Fillet.center, b.hip1Circle, b.hip1Angle, center, angle);
+    out[2].radius = thigh1Arc1Fillet.radius;
+
+    out[3].center = jointToWorld(thigh1Arc2Fillet.center, b.hip1Circle, b.hip1Angle, center, angle);
+    out[3].radius = thigh1Arc2Fillet.radius;
+
+    Fillet thigh2Arc1Fillet = filletFromAttachAngle(b.hip2Circle, b.hip2Radius, b.feet2Circle, b.feet2Radius, b.thigh2Arc1Angle, MIN_THIGH_ARC_R, MAX_SEMNI_THIGH_ARC_R);
+    Fillet thigh2Arc2Fillet = filletFromAttachAngleConcave(b.hip2Circle, b.hip2Radius, b.feet2Circle, b.feet2Radius, b.thigh2Arc2Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC2_CONCAVE_R);
+
+    out[4].center = jointToWorld(thigh2Arc1Fillet.center, b.hip2Circle, b.hip2Angle, center, angle);
+    out[4].radius = thigh2Arc1Fillet.radius;
+
+    out[5].center = jointToWorld(thigh2Arc2Fillet.center, b.hip2Circle, b.hip2Angle, center, angle);
+    out[5].radius = thigh2Arc2Fillet.radius;
+}
+
+// Computes Stilo's 6 fillet ARCS' actual TRIMMED curve (not the full circle
+// computeStiloCircleSegments above returns), as world-space poly-lines --
+// same p0/p1/p2 derivation drawStiloBody/drawStiloThigh1/drawStiloThigh2's
+// own drawArc calls use, same seam1/seam2/thigh1Arc1/thigh1Arc2/
+// thigh2Arc1/thigh2Arc2 order as computeStiloCircleSegments above.
+void computeStiloArcPoints(Stilo b, PointF out[NUM_STILO_CIRCLE_SEGMENTS][ARC_SAMPLE_COUNT], int outCounts[NUM_STILO_CIRCLE_SEGMENTS])
+{
+    PointF center = getStiloCenter(b);
+    float angle = b.angle;
+
+    PointF headLocal = { b.headX, b.y };
+    PointF buttLocal = { b.buttX, b.y };
+    PointF bodyMidLocal = { (headLocal.x + buttLocal.x) * 0.5f, (headLocal.y + buttLocal.y) * 0.5f };
+
+    Fillet seamArc1Fillet = filletFromAttachAngle(headLocal, b.headRadius, buttLocal, b.buttRadius, b.seamArc1Angle, MIN_ARC_R, MAX_ARC_R);
+    PointF seamArc1P0 = rotatePoint(circleEdge(headLocal, b.headRadius, b.seamArc1Angle), center, angle);
+    PointF seamArc1P1 = rotatePoint(circleTowardPoint(seamArc1Fillet.center, seamArc1Fillet.radius, bodyMidLocal), center, angle);
+    PointF seamArc1P2 = rotatePoint(internalTangentPoint(seamArc1Fillet.center, seamArc1Fillet.radius, buttLocal, b.buttRadius), center, angle);
+    outCounts[0] = computeArcPoints(seamArc1P0, seamArc1P1, seamArc1P2, out[0]);
+
+    Fillet seamArc2Fillet = filletFromAttachAngle(headLocal, b.headRadius, buttLocal, b.buttRadius, b.seamArc2Angle, MIN_ARC_R, MAX_ARC_R);
+    PointF seamArc2P0 = rotatePoint(circleEdge(headLocal, b.headRadius, b.seamArc2Angle), center, angle);
+    PointF seamArc2P1 = rotatePoint(circleTowardPoint(seamArc2Fillet.center, seamArc2Fillet.radius, bodyMidLocal), center, angle);
+    PointF seamArc2P2 = rotatePoint(internalTangentPoint(seamArc2Fillet.center, seamArc2Fillet.radius, buttLocal, b.buttRadius), center, angle);
+    outCounts[1] = computeArcPoints(seamArc2P0, seamArc2P1, seamArc2P2, out[1]);
+
+    PointF axis1MidLocal = { (b.hip1Circle.x + b.feet1Circle.x) * 0.5f, (b.hip1Circle.y + b.feet1Circle.y) * 0.5f };
+
+    Fillet thigh1Arc1Fillet = filletFromAttachAngle(b.hip1Circle, b.hip1Radius, b.feet1Circle, b.feet1Radius, b.thigh1Arc1Angle, MIN_THIGH_ARC_R, MAX_SEMNI_THIGH_ARC_R);
+    PointF thigh1Arc1P0 = jointToWorld(circleEdge(b.hip1Circle, b.hip1Radius, b.thigh1Arc1Angle), b.hip1Circle, b.hip1Angle, center, angle);
+    PointF thigh1Arc1P1 = jointToWorld(circleTowardPoint(thigh1Arc1Fillet.center, thigh1Arc1Fillet.radius, axis1MidLocal), b.hip1Circle, b.hip1Angle, center, angle);
+    PointF thigh1Arc1P2 = jointToWorld(internalTangentPoint(thigh1Arc1Fillet.center, thigh1Arc1Fillet.radius, b.feet1Circle, b.feet1Radius), b.hip1Circle, b.hip1Angle, center, angle);
+    outCounts[2] = computeArcPoints(thigh1Arc1P0, thigh1Arc1P1, thigh1Arc1P2, out[2]);
+
+    Fillet thigh1Arc2Fillet = filletFromAttachAngleConcave(b.hip1Circle, b.hip1Radius, b.feet1Circle, b.feet1Radius, b.thigh1Arc2Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC2_CONCAVE_R);
+    PointF thigh1Arc2P0 = jointToWorld(circleEdge(b.hip1Circle, b.hip1Radius, b.thigh1Arc2Angle), b.hip1Circle, b.hip1Angle, center, angle);
+    PointF thigh1Arc2P1 = jointToWorld(circleTowardPoint(thigh1Arc2Fillet.center, thigh1Arc2Fillet.radius, axis1MidLocal), b.hip1Circle, b.hip1Angle, center, angle);
+    PointF thigh1Arc2P2 = jointToWorld(circleTowardPoint(thigh1Arc2Fillet.center, thigh1Arc2Fillet.radius, b.feet1Circle), b.hip1Circle, b.hip1Angle, center, angle);
+    outCounts[3] = computeArcPoints(thigh1Arc2P0, thigh1Arc2P1, thigh1Arc2P2, out[3]);
+
+    PointF axis2MidLocal = { (b.hip2Circle.x + b.feet2Circle.x) * 0.5f, (b.hip2Circle.y + b.feet2Circle.y) * 0.5f };
+
+    Fillet thigh2Arc1Fillet = filletFromAttachAngle(b.hip2Circle, b.hip2Radius, b.feet2Circle, b.feet2Radius, b.thigh2Arc1Angle, MIN_THIGH_ARC_R, MAX_SEMNI_THIGH_ARC_R);
+    PointF thigh2Arc1P0 = jointToWorld(circleEdge(b.hip2Circle, b.hip2Radius, b.thigh2Arc1Angle), b.hip2Circle, b.hip2Angle, center, angle);
+    PointF thigh2Arc1P1 = jointToWorld(circleTowardPoint(thigh2Arc1Fillet.center, thigh2Arc1Fillet.radius, axis2MidLocal), b.hip2Circle, b.hip2Angle, center, angle);
+    PointF thigh2Arc1P2 = jointToWorld(internalTangentPoint(thigh2Arc1Fillet.center, thigh2Arc1Fillet.radius, b.feet2Circle, b.feet2Radius), b.hip2Circle, b.hip2Angle, center, angle);
+    outCounts[4] = computeArcPoints(thigh2Arc1P0, thigh2Arc1P1, thigh2Arc1P2, out[4]);
+
+    Fillet thigh2Arc2Fillet = filletFromAttachAngleConcave(b.hip2Circle, b.hip2Radius, b.feet2Circle, b.feet2Radius, b.thigh2Arc2Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC2_CONCAVE_R);
+    PointF thigh2Arc2P0 = jointToWorld(circleEdge(b.hip2Circle, b.hip2Radius, b.thigh2Arc2Angle), b.hip2Circle, b.hip2Angle, center, angle);
+    PointF thigh2Arc2P1 = jointToWorld(circleTowardPoint(thigh2Arc2Fillet.center, thigh2Arc2Fillet.radius, axis2MidLocal), b.hip2Circle, b.hip2Angle, center, angle);
+    PointF thigh2Arc2P2 = jointToWorld(circleTowardPoint(thigh2Arc2Fillet.center, thigh2Arc2Fillet.radius, b.feet2Circle), b.hip2Circle, b.hip2Angle, center, angle);
+    outCounts[5] = computeArcPoints(thigh2Arc2P0, thigh2Arc2P1, thigh2Arc2P2, out[5]);
+}
+
+// Stilo's 6 always-visible body circles, in a fixed order: head, butt,
+// hip1, feet1, hip2, feet2 -- indices into computeStiloBodyCircles' output
+// and into app->hoveredBodyCircle.
+void computeStiloBodyCircles(Stilo b, CircleSegment out[NUM_STILO_BODY_CIRCLES])
+{
+    PointF center = getStiloCenter(b);
+    float angle = b.angle;
+
+    out[0].center = rotatePoint((PointF){b.headX, b.y}, center, angle);
+    out[0].radius = b.headRadius;
+
+    out[1].center = rotatePoint((PointF){b.buttX, b.y}, center, angle);
+    out[1].radius = b.buttRadius;
+
+    out[2].center = rotatePoint(b.hip1Circle, center, angle);
+    out[2].radius = b.hip1Radius;
+
+    out[3].center = jointToWorld(b.feet1Circle, b.hip1Circle, b.hip1Angle, center, angle);
+    out[3].radius = b.feet1Radius;
+
+    out[4].center = rotatePoint(b.hip2Circle, center, angle);
+    out[4].radius = b.hip2Radius;
+
+    out[5].center = jointToWorld(b.feet2Circle, b.hip2Circle, b.hip2Angle, center, angle);
+    out[5].radius = b.feet2Radius;
+}
+
+// Overlays the full circle behind each of Stilo's 6 fillet arcs -- same
+// "ghost circle" idea as drawSemniCircleSegments, reusing the exact same
+// circleSegmentColor palette.
+void drawStiloCircleSegments(Stilo b, int hoveredIndex, float opacity)
+{
+    CircleSegment segs[NUM_STILO_CIRCLE_SEGMENTS];
+    computeStiloCircleSegments(b, segs);
+
+    for (int i = 0; i < NUM_STILO_CIRCLE_SEGMENTS; i++)
+    {
+        float r, g, bl;
+        circleSegmentColor(i, &r, &g, &bl);
+
+        if (i == hoveredIndex)
+        {
+            glDisable(GL_LINE_STIPPLE);
+            glLineWidth(2.5f);
+            glColor4f(r, g, bl, 1.0f * opacity);
+        }
+        else
+        {
+            glEnable(GL_LINE_STIPPLE);
+            glLineStipple(1, 0x00FF);
+            glLineWidth(1.0f);
+            glColor4f(r, g, bl, 0.6f * opacity);
+        }
+
+        drawCircle(segs[i].center, segs[i].radius);
+    }
+
+    glLineWidth(1.0f);
+    glDisable(GL_LINE_STIPPLE);
+}
+
+// Bright/solid hover ring on whichever of Stilo's 6 body circles is
+// currently hovered -- same idea as drawSemniBodyCircleHover, reusing the
+// shared bodyCircleColor palette (now 6 entries deep, see its own comment).
+void drawStiloBodyCircleHover(Stilo b, int hoveredIndex, float opacity)
+{
+    if (hoveredIndex < 0 || hoveredIndex >= NUM_STILO_BODY_CIRCLES)
+        return;
+
+    CircleSegment segs[NUM_STILO_BODY_CIRCLES];
+    computeStiloBodyCircles(b, segs);
+
+    float r, g, bl;
+    bodyCircleColor(hoveredIndex, &r, &g, &bl);
+
+    glDisable(GL_LINE_STIPPLE);
+    glLineWidth(2.5f);
+    glColor4f(r, g, bl, 1.0f * opacity);
+    drawCircle(segs[hoveredIndex].center, segs[hoveredIndex].radius);
+    glLineWidth(1.0f);
+}
+
 void drawStilo(Stilo b, RenderState* rs, int includeHandles, float opacity)
 {
     drawStiloBody(b, rs, opacity);
     drawStiloThigh1(b, rs, opacity);
     drawStiloThigh2(b, rs, opacity);
+
+    // View Segments overlay -- same gating as drawSemni's own
+    // segmentsVisible, now that Stilo has its own compute/draw pair
+    // mirroring Semni's.
+    BOOL stiloSegmentsVisible = rs->showSegments && (editorModeState.currentMode == EDITOR_MODE_SEMNI);
+    if (stiloSegmentsVisible)
+    {
+        drawStiloCircleSegments(b, rs->hoveredCircleSegment, opacity);
+        drawStiloBodyCircleHover(b, rs->hoveredBodyCircle, opacity);
+    }
 
     // same includeHandles + editor-mode gating as drawSemni's own
     // handlesVisible/drawRocky's own handlesVisible -- editor UI only,

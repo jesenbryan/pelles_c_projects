@@ -1600,7 +1600,30 @@ void canvasRenderFrame(float dimAmount)
 
         if (semniModeActive)
         {
-            int totalRobotSegments = NUM_ROBOT_CIRCLE_SEGMENTS + NUM_ROBOT_BODY_CIRCLES;
+            // Rocky/Stilo have their own View Segments overlays now too
+            // (renderer.c/h's computeRocky*/computeStilo*), each with a
+            // different fillet/body-circle count than Semni's own 6/5 --
+            // pick the matching pair for whichever kind is actually active
+            // so the "N/M" total (and the fillet-vs-body-circle numbering
+            // split just below) means the right thing for all three.
+            int numCircleSegments, numBodyCircles;
+            switch (app.robotScene.activeKind)
+            {
+                case ROBOT_KIND_ROCKY:
+                    numCircleSegments = NUM_ROCKY_CIRCLE_SEGMENTS;
+                    numBodyCircles = NUM_ROCKY_BODY_CIRCLES;
+                    break;
+                case ROBOT_KIND_STILO:
+                    numCircleSegments = NUM_STILO_CIRCLE_SEGMENTS;
+                    numBodyCircles = NUM_STILO_BODY_CIRCLES;
+                    break;
+                case ROBOT_KIND_SEMNI:
+                default:
+                    numCircleSegments = NUM_ROBOT_CIRCLE_SEGMENTS;
+                    numBodyCircles = NUM_ROBOT_BODY_CIRCLES;
+                    break;
+            }
+            int totalRobotSegments = numCircleSegments + numBodyCircles;
 
             if (app.showCircleSegments && app.hoveredCircleSegment != -1)
             {
@@ -1610,7 +1633,7 @@ void canvasRenderFrame(float dimAmount)
             }
             else if (app.showCircleSegments && app.hoveredBodyCircle != -1)
             {
-                wsprintfA(hoverSegStr, "Segment %d/%d", NUM_ROBOT_CIRCLE_SEGMENTS + app.hoveredBodyCircle + 1, totalRobotSegments);
+                wsprintfA(hoverSegStr, "Segment %d/%d", numCircleSegments + app.hoveredBodyCircle + 1, totalRobotSegments);
                 bodyCircleColor(app.hoveredBodyCircle, &segR, &segG, &segB);
                 showHoverSeg = TRUE;
             }
