@@ -292,6 +292,26 @@ static void updateRobotSizeLabel(AppState* app)
     SetWindowText(app->ui.hRobotSizeLabel, buf);
 }
 
+// Formats a non-negative float as "%.2f" into "out" (must hold at least 16
+// wchar_ts) -- same hand-split-for-wsprintf pattern as updateRobotSizeLabel's
+// mm rounding and WM_HSCROLL's own Scale label ("wsprintf has no floating-
+// point conversion at all"). Used by WM_MOUSEMOVE's draggingRockyMassCenter
+// branch to keep hBodyWeightEdit/hLegWeightEdit's text in sync with the
+// dot's drag position. Only ever called with bodyWeight/legWeight, which
+// are always >= 0 (see app.h's rockyMassCenterDragTotal comment) -- doesn't
+// handle negative values.
+static void formatNonNegativeFloat2dp(float value, wchar_t* out)
+{
+    int whole = (int)value;
+    int hundredths = (int)((value - (float)whole) * 100.0f + 0.5f);
+    if (hundredths >= 100)
+    {
+        hundredths -= 100;
+        whole += 1;
+    }
+    wsprintf(out, L"%d.%02d", whole, hundredths);
+}
+
 // Keeps the knee handle honest whenever the rectangle's own size changes
 // (scroll on the body handle, or dragging an edge -- see WM_MOUSEWHEEL/
 // WM_MOUSEMOVE's ROBOT_KIND_ROCKY branches): shrinking the body can
@@ -520,6 +540,7 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             app->draggingRockyEdge = ROCKY_EDGE_NONE;
             app->draggingRockyKnee = 0;
             app->draggingRockyFoot = 0;
+            app->draggingRockyMassCenter = 0;
             app->draggingRockyShin1 = 0;
             app->draggingRockyShin2 = 0;
             app->draggingStiloSeamArc1 = 0;
@@ -555,6 +576,13 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 PointF rockyCenter = getRockyCenter(app->robotScene.rocky);
                 PointF kneeWorld = rotatePoint(app->robotScene.rocky.kneeCircle, rockyCenter, app->robotScene.rocky.angle);
                 PointF footWorld = jointToWorld(app->robotScene.rocky.footCircle, app->robotScene.rocky.kneeCircle, app->robotScene.rocky.kneeAngle, rockyCenter, app->robotScene.rocky.angle);
+
+                // Body/Leg Weight mass-center dot's CURRENT position (see
+                // renderer.c's computeRockyMassCenterWorld, which is what
+                // actually draws it) -- needed here for its own hit-test
+                // below, ahead of every other handle's (see that check's
+                // own comment for why it has to go first).
+                PointF rockyMassCenterWorld = computeRockyMassCenterWorld(app->robotScene.rocky);
 
                 // Shin connector-arc handle positions -- same
                 // circleAtAxisMid construction as renderer.c's drawRocky
@@ -598,7 +626,35 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 // chain's own comment below for the full priority ordering.
                 int rockyEdgeHitDown = hitTestRockyEdge(app->robotScene.rocky, rockyBodyLocalMouseDown);
 
-                if (isNear(app->mouseGL, rockyCenter, HIP_HANDLE_RADIUS))
+                // Mass-center dot -- checked FIRST, ahead of the body
+                // handle: the dot's own reachable range runs along the
+                // rect-centroid<->leg-centroid segment (see renderer.c's
+                // computeRockyMassCenterEndpointsWorld), and the rect-
+                // centroid END of that segment is exactly rockyCenter
+                // itself (the body handle's own position -- see
+                // getRockyCenter's comment) -- so whenever legWeight is at
+                // or near 0, this dot and the body handle sit right on top
+                // of each other. Giving the dot priority in that overlap
+                // means the two are only ever ambiguous in that one narrow
+                // edge case, and resolves it deterministically rather than
+                // leaving it to whichever check happened to run first.
+                if (isNear(app->mouseGL, rockyMassCenterWorld, MASS_CENTER_HANDLE_RADIUS))
+                {
+                    app->draggingRockyMassCenter = 1;
+
+                    // total held fixed for the whole drag -- see app.h's
+                    // own comment on rockyMassCenterDragTotal for why
+                    // (Rob.txt's export writes bodyWeight out as a literal
+                    // mass, not just a ratio). Floors at 1.0 in the
+                    // (unusual) case both weights are already ~0, so the
+                    // drag has a well-defined nonzero total to redistribute
+                    // -- same "avoid dividing into a degenerate zero" spirit
+                    // as computeRockyMassCenterWorld's own totalWeight
+                    // guard.
+                    float total = app->robotScene.rocky.bodyWeight + app->robotScene.rocky.legWeight;
+                    app->rockyMassCenterDragTotal = (total > 1e-6f) ? total : 1.0f;
+                }
+                else if (isNear(app->mouseGL, rockyCenter, HIP_HANDLE_RADIUS))
                 {
                     app->draggingRockyBody = 1;
 
@@ -1049,6 +1105,7 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             app->draggingRockyEdge = ROCKY_EDGE_NONE;
             app->draggingRockyKnee = 0;
             app->draggingRockyFoot = 0;
+            app->draggingRockyMassCenter = 0;
             app->draggingRockyShin1 = 0;
             app->draggingRockyShin2 = 0;
             app->draggingStiloSeamArc1 = 0;
@@ -1111,15 +1168,23 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 PointF kneeWorld = rotatePoint(app->robotScene.rocky.kneeCircle, rockyCenter, app->robotScene.rocky.angle);
                 PointF footWorld = jointToWorld(app->robotScene.rocky.footCircle, app->robotScene.rocky.kneeCircle, app->robotScene.rocky.kneeAngle, rockyCenter, app->robotScene.rocky.angle);
 
-                // Priority order: Body, the 4 rectangle-edge segments
-                // (Width/Height resize), Knee, Foot, Shin Arc 1, Shin Arc 2
-                // -- edges now win over Knee/Foot instead of only being
-                // checked as a last resort, mirroring WM_LBUTTONDOWN's own
-                // rockyEdgeHitDown ordering.
-                app->hoverRockyBody = isNear(app->mouseGL, rockyCenter, HIP_HANDLE_RADIUS);
-                app->hoverRockyEdge = app->hoverRockyBody ? ROCKY_EDGE_NONE : hitTestRockyEdge(app->robotScene.rocky, localMouse);
-                app->hoverRockyKnee = !app->hoverRockyBody && app->hoverRockyEdge == ROCKY_EDGE_NONE && isNear(app->mouseGL, kneeWorld, KNEE_HANDLE_RADIUS);
-                app->hoverRockyFoot = !app->hoverRockyBody && app->hoverRockyEdge == ROCKY_EDGE_NONE && !app->hoverRockyKnee && isNear(app->mouseGL, footWorld, FOOT_HANDLE_RADIUS);
+                // Body/Leg Weight mass-center dot's CURRENT position -- see
+                // WM_LBUTTONDOWN's own rockyMassCenterWorld for why this
+                // needs to win the priority chain below (its reachable
+                // range's rect-centroid end sits exactly on rockyCenter,
+                // the body handle's own position).
+                PointF rockyMassCenterWorld = computeRockyMassCenterWorld(app->robotScene.rocky);
+
+                // Priority order: Mass Center, Body, the 4 rectangle-edge
+                // segments (Width/Height resize), Knee, Foot, Shin Arc 1,
+                // Shin Arc 2 -- edges win over Knee/Foot instead of only
+                // being checked as a last resort, mirroring WM_LBUTTONDOWN's
+                // own rockyEdgeHitDown ordering.
+                app->hoverRockyMassCenter = isNear(app->mouseGL, rockyMassCenterWorld, MASS_CENTER_HANDLE_RADIUS);
+                app->hoverRockyBody = !app->hoverRockyMassCenter && isNear(app->mouseGL, rockyCenter, HIP_HANDLE_RADIUS);
+                app->hoverRockyEdge = (app->hoverRockyMassCenter || app->hoverRockyBody) ? ROCKY_EDGE_NONE : hitTestRockyEdge(app->robotScene.rocky, localMouse);
+                app->hoverRockyKnee = !app->hoverRockyMassCenter && !app->hoverRockyBody && app->hoverRockyEdge == ROCKY_EDGE_NONE && isNear(app->mouseGL, kneeWorld, KNEE_HANDLE_RADIUS);
+                app->hoverRockyFoot = !app->hoverRockyMassCenter && !app->hoverRockyBody && app->hoverRockyEdge == ROCKY_EDGE_NONE && !app->hoverRockyKnee && isNear(app->mouseGL, footWorld, FOOT_HANDLE_RADIUS);
 
                 // Shin connector-arc handle positions, for the hover label
                 // below and the drag-update math further down -- same
@@ -1146,7 +1211,9 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 PointF rockyShin2World = jointToWorld(rockyShin2MidLocal, app->robotScene.rocky.kneeCircle, app->robotScene.rocky.kneeAngle, rockyCenter, app->robotScene.rocky.angle);
 
                 const wchar_t* rockyHoverLabel = L"";
-                if (app->hoverRockyBody)
+                if (app->hoverRockyMassCenter)
+                    rockyHoverLabel = L"Weight Balance";
+                else if (app->hoverRockyBody)
                     rockyHoverLabel = L"Body";
                 else if (app->hoverRockyEdge == ROCKY_EDGE_LEFT || app->hoverRockyEdge == ROCKY_EDGE_RIGHT)
                     rockyHoverLabel = L"Body Width";
@@ -1165,9 +1232,11 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 // View Segments hover -- same idea as Semni's own version
                 // further down (computeRockyArcPoints' trimmed fillet
                 // curve for the 2 shin arcs, computeRockyBodyCircles'
-                // real circles for knee/foot), just against Rocky's own
-                // 2-fillet/2-body-circle set (renderer.c/h's
-                // NUM_ROCKY_CIRCLE_SEGMENTS/NUM_ROCKY_BODY_CIRCLES). Placed
+                // real circles for knee/foot, computeRockyRectSegments'
+                // straight edges for the rectangular body), against
+                // Rocky's own 2-fillet/2-body-circle/4-rect-edge set
+                // (renderer.c/h's NUM_ROCKY_CIRCLE_SEGMENTS/
+                // NUM_ROCKY_BODY_CIRCLES/NUM_ROCKY_RECT_SEGMENTS). Placed
                 // here, inside this block and BEFORE the drag handling
                 // below, rather than after this whole if (activeKind ==
                 // ROCKY) block -- everything past this block's own closing
@@ -1182,11 +1251,15 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     CircleSegment rockyBodySegs[NUM_ROCKY_BODY_CIRCLES];
                     computeRockyBodyCircles(app->robotScene.rocky, rockyBodySegs);
 
+                    RockyEdgeSegment rockyRectSegs[NUM_ROCKY_RECT_SEGMENTS];
+                    computeRockyRectSegments(app->robotScene.rocky, rockyRectSegs);
+
                     float rockyEffectiveZoom = graphicsGetZoom() * graphicsGetRobotScale();
                     float rockyTolerance = 0.05f / rockyEffectiveZoom;
 
                     int bestFillet = -1;
                     int bestBody = -1;
+                    int bestRect = -1;
                     float bestDist = rockyTolerance;
 
                     for (int i = 0; i < NUM_ROCKY_CIRCLE_SEGMENTS; i++)
@@ -1199,6 +1272,7 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                                 bestDist = d;
                                 bestFillet = i;
                                 bestBody = -1;
+                                bestRect = -1;
                             }
                         }
                     }
@@ -1215,16 +1289,31 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                             bestDist = distToEdge;
                             bestBody = i;
                             bestFillet = -1;
+                            bestRect = -1;
+                        }
+                    }
+
+                    for (int i = 0; i < NUM_ROCKY_RECT_SEGMENTS; i++)
+                    {
+                        float d = distPointFToSegment(app->mouseGL, rockyRectSegs[i].start, rockyRectSegs[i].end);
+                        if (d < bestDist)
+                        {
+                            bestDist = d;
+                            bestRect = i;
+                            bestFillet = -1;
+                            bestBody = -1;
                         }
                     }
 
                     app->hoveredCircleSegment = bestFillet;
                     app->hoveredBodyCircle = bestBody;
+                    app->hoveredRectSegment = bestRect;
                 }
                 else
                 {
                     app->hoveredCircleSegment = -1;
                     app->hoveredBodyCircle = -1;
+                    app->hoveredRectSegment = -1;
                 }
 
                 if (app->draggingRockyBody)
@@ -1290,6 +1379,57 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     // fillet solve did too -- re-validate their existing
                     // angles against it, same as Semni's own adjustShinArcs
                     adjustRockyShinArcs(app);
+                }
+                else if (app->draggingRockyMassCenter)
+                {
+                    // Doesn't move a geometric field at all (see app.h's
+                    // own comment on hoverRockyMassCenter/
+                    // draggingRockyMassCenter) -- re-derives bodyWeight/
+                    // legWeight instead, by projecting the mouse onto the
+                    // rect-centroid<->leg-centroid segment (the only
+                    // positions reachable by a non-negative weight ratio)
+                    // and reading off how far along it the projection
+                    // landed.
+                    PointF rectCentroidWorld, legCentroidWorld;
+                    computeRockyMassCenterEndpointsWorld(app->robotScene.rocky, &rectCentroidWorld, &legCentroidWorld);
+
+                    float segX = legCentroidWorld.x - rectCentroidWorld.x;
+                    float segY = legCentroidWorld.y - rectCentroidWorld.y;
+                    float segLenSq = segX * segX + segY * segY;
+
+                    // t=0 -> rect centroid (bodyWeight-only), t=1 -> leg
+                    // centroid (legWeight-only) -- clamped to [0,1] since
+                    // neither weight can go negative to extrapolate past
+                    // either end. segLenSq near 0 means the two centroids
+                    // themselves are (nearly) coincident -- nothing
+                    // meaningful to project onto, so the ratio is just left
+                    // wherever it already was (skip the update entirely
+                    // rather than divide by ~0).
+                    if (segLenSq > 1e-9f)
+                    {
+                        float t = ((app->mouseGL.x - rectCentroidWorld.x) * segX + (app->mouseGL.y - rectCentroidWorld.y) * segY) / segLenSq;
+                        if (t < 0.0f) t = 0.0f;
+                        if (t > 1.0f) t = 1.0f;
+
+                        // total held fixed at whatever it was when the drag
+                        // started (app->rockyMassCenterDragTotal, captured
+                        // in WM_LBUTTONDOWN) -- only the split between the
+                        // two changes.
+                        float total = app->rockyMassCenterDragTotal;
+                        app->robotScene.rocky.bodyWeight = (1.0f - t) * total;
+                        app->robotScene.rocky.legWeight = t * total;
+
+                        // Keep hBodyWeightEdit/hLegWeightEdit showing the
+                        // same numbers the drag just derived -- SetWindowText
+                        // does NOT raise EN_CHANGE (unlike the user actually
+                        // typing), so this can't recursively re-trigger its
+                        // own EN_CHANGE handler and fight with the drag.
+                        wchar_t weightBuf[32];
+                        formatNonNegativeFloat2dp(app->robotScene.rocky.bodyWeight, weightBuf);
+                        SetWindowText(app->ui.hBodyWeightEdit, weightBuf);
+                        formatNonNegativeFloat2dp(app->robotScene.rocky.legWeight, weightBuf);
+                        SetWindowText(app->ui.hLegWeightEdit, weightBuf);
+                    }
                 }
                 else if (app->draggingRockyShin1)
                 {
@@ -1587,11 +1727,16 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
 
                     app->hoveredCircleSegment = bestFillet;
                     app->hoveredBodyCircle = bestBody;
+                    // Rocky-only (see app.h's own comment) -- reset here too
+                    // so a stale Rocky value can't linger onto Stilo's own
+                    // View Segments overlay after a kind switch.
+                    app->hoveredRectSegment = -1;
                 }
                 else
                 {
                     app->hoveredCircleSegment = -1;
                     app->hoveredBodyCircle = -1;
+                    app->hoveredRectSegment = -1;
                 }
 
                 if (!app->draggingStiloSeamArc1 && !app->draggingStiloSeamArc2 &&
@@ -1948,11 +2093,16 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
 
                 app->hoveredCircleSegment = bestFillet;
                 app->hoveredBodyCircle = bestBody;
+                // Rocky-only (see app.h's own comment) -- reset here too so
+                // a stale Rocky value can't linger onto Semni's own View
+                // Segments overlay after a kind switch.
+                app->hoveredRectSegment = -1;
             }
             else
             {
                 app->hoveredCircleSegment = -1;
                 app->hoveredBodyCircle = -1;
+                app->hoveredRectSegment = -1;
             }
 
             // bottom-left hover label: also needs the bulge/seam handle
@@ -3275,6 +3425,7 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
              // mouse ever moves.
              app->hoveredCircleSegment = -1;
              app->hoveredBodyCircle = -1;
+             app->hoveredRectSegment = -1;
 
              ensureSemniUIFonts();
              ensureSemniPanelClassRegistered();
@@ -3689,9 +3840,12 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                         app->hoverRockyKnee = 0;
                         app->draggingRockyFoot = 0;
                         app->hoverRockyFoot = 0;
+                        app->draggingRockyMassCenter = 0;
+                        app->hoverRockyMassCenter = 0;
                         app->activeHandle = 0;
                         app->hoveredCircleSegment = -1;
                         app->hoveredBodyCircle = -1;
+                        app->hoveredRectSegment = -1;
                         SetWindowText(app->ui.hHoverLabel, L"");
 
                         // Switching kind swaps in a differently-sized

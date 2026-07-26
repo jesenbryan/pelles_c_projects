@@ -412,6 +412,29 @@ typedef struct {
     int hoverRockyFoot;
     int draggingRockyFoot;
 
+    // Rocky's mass-center dot -- a THIRD kind of handle, unlike every
+    // other one above: dragging it doesn't move a geometric field
+    // (kneeCircle, footCircle, etc) at all, it moves bodyWeight/legWeight
+    // (see this struct's own comment on those two fields, and input.c's
+    // hBodyWeightEdit/hLegWeightEdit) by re-deriving them from wherever the
+    // dot lands along the rect-centroid<->leg-centroid segment (the only
+    // positions reachable by a non-negative weight ratio -- see renderer.c's
+    // computeRockyMassCenterEndpointsWorld/computeRockyMassCenterWorld and
+    // input.c's WM_MOUSEMOVE draggingRockyMassCenter branch). Hover-
+    // highlights the same way hoverRockyKnee/hoverRockyFoot do.
+    int hoverRockyMassCenter;
+    int draggingRockyMassCenter;
+
+    // captured once, when a mass-center drag starts: bodyWeight+legWeight
+    // at that moment, held fixed for the whole drag so only the RATIO
+    // between them changes as the dot moves -- not the total. Matters
+    // because save.c's saveRockyAsRobArm writes bodyWeight itself out as a
+    // literal mass value (Rob.txt's own third number on its first line),
+    // not just a blend weight -- silently renormalizing the total every
+    // frame (e.g. always resetting it to 1.0) would quietly overwrite
+    // whatever absolute mass the user had actually typed in.
+    float rockyMassCenterDragTotal;
+
     // Rocky's 2 shin connector-arc handles (the fillets between kneeCircle
     // and footCircle, shinArc1Angle/shinArc2Angle) -- mirrors Semni's own
     // draggingShin1/draggingShin2 treatment: drag-only highlight, no
@@ -582,6 +605,17 @@ typedef struct {
     // applicable. Same View Segments gating as hoveredCircleSegment above
     // -- only updated while showCircleSegments is set (see input.c).
     int hoveredBodyCircle;
+
+    // Index (0-3, see NUM_ROCKY_RECT_SEGMENTS in renderer.h) of Rocky's
+    // rectangular body edge (left/top/right/bottom) currently under the
+    // mouse, or -1 if none/not applicable/not Rocky. A THIRD category
+    // alongside hoveredCircleSegment/hoveredBodyCircle above, needed
+    // because Rocky's body is a straight-edged rectangle, not a circle --
+    // neither of those two fits it. Same "always exists, only meaningful
+    // for one robot kind" convention as hMirrorButton2/hViewSegmentsButton
+    // (harmlessly -1 for Semni/Stilo). Same View Segments gating as the
+    // other two -- only updated while showCircleSegments is set.
+    int hoveredRectSegment;
 
     // TRUE while the user is actively dragging the whole robot into a
     // starting position in Simulation mode (see canvas.c's

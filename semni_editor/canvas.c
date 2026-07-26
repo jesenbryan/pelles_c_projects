@@ -1603,22 +1603,31 @@ void canvasRenderFrame(float dimAmount)
             // filletDisplayNum[i]/bodyDisplayNum[i] map a raw array index to
             // that display number; see each kind's compute* function
             // (renderer.c) for the raw index order these were derived from.
-            int numCircleSegments, numBodyCircles;
+            int numCircleSegments, numBodyCircles, numRectSegments;
             const int* filletDisplayNum;
             const int* bodyDisplayNum;
+            const int* rectDisplayNum;
             switch (app.robotScene.activeKind)
             {
                 case ROBOT_KIND_ROCKY:
                 {
-                    // raw fillet order: shin1, shin2 -- raw body order:
-                    // knee, foot. Desired: knee(1), foot(2), shin1(3),
-                    // shin2(4).
-                    static const int rockyFilletDisplayNum[NUM_ROCKY_CIRCLE_SEGMENTS] = { 3, 4 };
-                    static const int rockyBodyDisplayNum[NUM_ROCKY_BODY_CIRCLES] = { 1, 2 };
+                    // raw rect-edge order: bottom, right, top, left (see
+                    // renderer.c's computeRockyRectSegments) -- raw fillet
+                    // order: shin1, shin2 -- raw body order: knee, foot.
+                    // Desired (requested directly): the 4 rectangle edges
+                    // first (1-4, in their own raw order -- the user didn't
+                    // ask for a specific edge-to-number mapping among the 4,
+                    // just that all 4 come first), then knee(5), foot(6),
+                    // shin1(7), shin2(8).
+                    static const int rockyRectDisplayNum[NUM_ROCKY_RECT_SEGMENTS] = { 1, 2, 3, 4 };
+                    static const int rockyFilletDisplayNum[NUM_ROCKY_CIRCLE_SEGMENTS] = { 7, 8 };
+                    static const int rockyBodyDisplayNum[NUM_ROCKY_BODY_CIRCLES] = { 5, 6 };
                     numCircleSegments = NUM_ROCKY_CIRCLE_SEGMENTS;
                     numBodyCircles = NUM_ROCKY_BODY_CIRCLES;
+                    numRectSegments = NUM_ROCKY_RECT_SEGMENTS;
                     filletDisplayNum = rockyFilletDisplayNum;
                     bodyDisplayNum = rockyBodyDisplayNum;
+                    rectDisplayNum = rockyRectDisplayNum;
                     break;
                 }
                 case ROBOT_KIND_STILO:
@@ -1640,8 +1649,14 @@ void canvasRenderFrame(float dimAmount)
                     static const int stiloBodyDisplayNum[NUM_STILO_BODY_CIRCLES] = { 2, 1, 5, 6, 9, 10 };
                     numCircleSegments = NUM_STILO_CIRCLE_SEGMENTS;
                     numBodyCircles = NUM_STILO_BODY_CIRCLES;
+                    // Stilo has no rectangular body (see app.h's own
+                    // comment on hoveredRectSegment) -- 0/NULL, never
+                    // dereferenced since app.hoveredRectSegment is reset to
+                    // -1 whenever Rocky isn't the active kind (input.c).
+                    numRectSegments = 0;
                     filletDisplayNum = stiloFilletDisplayNum;
                     bodyDisplayNum = stiloBodyDisplayNum;
+                    rectDisplayNum = NULL;
                     break;
                 }
                 case ROBOT_KIND_SEMNI:
@@ -1663,12 +1678,16 @@ void canvasRenderFrame(float dimAmount)
                     static const int semniBodyDisplayNum[NUM_ROBOT_BODY_CIRCLES] = { 2, 1, 5, 6, 7 };
                     numCircleSegments = NUM_ROBOT_CIRCLE_SEGMENTS;
                     numBodyCircles = NUM_ROBOT_BODY_CIRCLES;
+                    // Semni has no rectangular body either -- same 0/NULL,
+                    // never-dereferenced reasoning as Stilo's own case above.
+                    numRectSegments = 0;
                     filletDisplayNum = semniFilletDisplayNum;
                     bodyDisplayNum = semniBodyDisplayNum;
+                    rectDisplayNum = NULL;
                     break;
                 }
             }
-            int totalRobotSegments = numCircleSegments + numBodyCircles;
+            int totalRobotSegments = numCircleSegments + numBodyCircles + numRectSegments;
 
             if (app.showCircleSegments && app.hoveredCircleSegment != -1)
             {
@@ -1680,6 +1699,18 @@ void canvasRenderFrame(float dimAmount)
             {
                 wsprintfA(hoverSegStr, "Segment %d/%d", bodyDisplayNum[app.hoveredBodyCircle], totalRobotSegments);
                 bodyCircleColor(app.hoveredBodyCircle, &segR, &segG, &segB);
+                showHoverSeg = TRUE;
+            }
+            else if (app.showCircleSegments && app.hoveredRectSegment != -1)
+            {
+                // Rocky only (see app.h's own hoveredRectSegment comment) --
+                // rectDisplayNum is only ever non-NULL for
+                // ROBOT_KIND_ROCKY, and app.hoveredRectSegment is only ever
+                // set to something other than -1 while Rocky is active
+                // (input.c), so this branch can't fire with a NULL
+                // rectDisplayNum.
+                wsprintfA(hoverSegStr, "Segment %d/%d", rectDisplayNum[app.hoveredRectSegment], totalRobotSegments);
+                rectSegmentColor(app.hoveredRectSegment, &segR, &segG, &segB);
                 showHoverSeg = TRUE;
             }
         }

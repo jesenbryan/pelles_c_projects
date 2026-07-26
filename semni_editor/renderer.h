@@ -38,6 +38,12 @@ typedef struct {
     int hoverRockyFoot;
     int draggingRockyFoot;
 
+    // Rocky's draggable mass-center dot -- mirrors app->
+    // hoverRockyMassCenter/draggingRockyMassCenter (see app.h's own
+    // comment on those two).
+    int hoverRockyMassCenter;
+    int draggingRockyMassCenter;
+
     // Rocky's 2 shin connector-arc handles -- mirrors app->
     // draggingRockyShin1/draggingRockyShin2, same drag-only-highlight role
     // as Semni's own draggingShin1/draggingShin2 above (no separate hover-
@@ -127,6 +133,14 @@ typedef struct {
     // (NUM_ROBOT_BODY_CIRCLES), 0-1 for Rocky (NUM_ROCKY_BODY_CIRCLES), or
     // 0-5 for Stilo (NUM_STILO_BODY_CIRCLES).
     int hoveredBodyCircle;
+
+    // Index of Rocky's rectangular body edge currently under the mouse
+    // (app->hoveredRectSegment), or -1 if none -- mirrors hoveredCircleSegment/
+    // hoveredBodyCircle above, but for Rocky's straight-edged body (see
+    // app.h's own comment on hoveredRectSegment for why it's a separate
+    // field). Only ever meaningful while Rocky is active -- harmlessly -1
+    // for Semni/Stilo.
+    int hoveredRectSegment;
 
     // TRUE while the user is actively dragging the whole robot in
     // Simulation mode (app->draggingRobotSim, set by canvas.c's
@@ -330,6 +344,66 @@ void drawRockyCircleSegments(Rocky b, int hoveredIndex, float opacity);
 // Computes Rocky's 2 body circles' world-space center + radius for its
 // CURRENT pose. Same sharing rationale as computeSemniBodyCircles.
 void computeRockyBodyCircles(Rocky b, CircleSegment out[NUM_ROCKY_BODY_CIRCLES]);
+
+// Rocky's rectangular body has no circle of its own (see above) but View
+// Segments should still be able to point at it -- as 4 straight edges
+// instead. A simple start/end pair (no "radius"/"center" the CircleSegment
+// struct above assumes) -- deliberately its own small struct rather than
+// reusing save.c's RobArmSegment (that one's tied to the export's own
+// straight-edge-as-a-degenerate-circle convention, a different concern from
+// this live on-screen hover/ghost-overlay feature).
+typedef struct { PointF start, end; } RockyEdgeSegment;
+
+// Rocky's 4 rectangle edges -- indices into computeRockyRectSegments'
+// output and into app->hoveredRectSegment. Order: bottom, right, top, left
+// -- same c0->c1->c2->c3->c0 traversal drawRockyBodyRect (renderer.c)
+// already draws the rectangle in, NOT Rob.txt's own left/top/right/bottom
+// export-frame order (save.c) -- a different concern, same "deliberately
+// different frame" reasoning as computeRockyMassCenterEndpointsWorld's own
+// comment just below.
+#define NUM_ROCKY_RECT_SEGMENTS 4
+
+// Computes Rocky's 4 rectangle edges' world-space endpoints for its CURRENT
+// pose (rotated by angle, same as drawRockyBodyRect's own c0..c3). Shared
+// by drawRockyRectSegments (rendering) and input.c's hover hit-test, same
+// reasoning as computeRockyCircleSegments/computeRockyBodyCircles above.
+void computeRockyRectSegments(Rocky b, RockyEdgeSegment out[NUM_ROCKY_RECT_SEGMENTS]);
+
+// Overlays a distinctly-colored, individually-hoverable line over each of
+// Rocky's 4 rectangle edges, same ghost-highlight idea as
+// drawRockyCircleSegments (dashed/dim normally, solid/bright/thicker on
+// hoveredIndex) -- NOT drawRockyBodyCircleHover's "only draw when hovered"
+// treatment, even though the rectangle (unlike the shin fillets) is already
+// fully visible on its own: View Segments still needs all 4 edges
+// individually colored/numbered at once so their "Segment N/M" identity is
+// discoverable by hovering around, not just guessable.
+void drawRockyRectSegments(Rocky b, int hoveredIndex, float opacity);
+
+// One distinguishable color per rectangle edge -- a THIRD palette,
+// deliberately different from both circleSegmentColor's and
+// bodyCircleColor's, same "never reads as one of the other categories even
+// when all are on-screen at once" reasoning as bodyCircleColor's own
+// comment (renderer.c). Non-static for the same reason as those two --
+// canvas.c's hover-tooltip HUD needs it.
+void rectSegmentColor(int index, float* r, float* g, float* b);
+
+// The two fixed endpoints of the segment Rocky's draggable mass-center dot
+// can ever sit on: the rectangle's own centroid (outRectCentroidWorld --
+// reached when legWeight is 0) and the leg's approximate silhouette
+// centroid (outLegCentroidWorld -- reached when bodyWeight is 0), both in
+// WORLD space (rotated by the robot's current angle/kneeAngle, matching
+// what's actually on screen right now). Pure geometry -- doesn't touch
+// bodyWeight/legWeight at all. Deliberately NOT static: input.c's
+// WM_MOUSEMOVE draggingRockyMassCenter branch needs these same two points
+// to project the mouse onto that segment and re-derive bodyWeight/legWeight
+// from where it lands (see app.h's own comment on those two fields).
+void computeRockyMassCenterEndpointsWorld(Rocky b, PointF* outRectCentroidWorld, PointF* outLegCentroidWorld);
+
+// Blends computeRockyMassCenterEndpointsWorld's two endpoints by Rocky's
+// CURRENT bodyWeight/legWeight -- the dot's actual on-screen position right
+// now. Deliberately NOT static: input.c's WM_LBUTTONDOWN/WM_MOUSEMOVE need
+// this same position for the dot's own hover/drag-start hit-test.
+PointF computeRockyMassCenterWorld(Rocky b);
 
 // Bright/solid hover ring on whichever of Rocky's 2 body circles is
 // currently hovered, same idea as drawSemniBodyCircleHover.

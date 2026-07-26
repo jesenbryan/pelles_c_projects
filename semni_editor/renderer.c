@@ -1284,6 +1284,84 @@ void drawRockyBodyCircleHover(Rocky b, int hoveredIndex, float opacity)
     glLineWidth(1.0f);
 }
 
+// Rocky's 4 rectangle edges' world-space endpoints for its CURRENT pose --
+// same c0..c3 corner construction drawRockyBodyRect uses to actually draw
+// the rectangle (just returned as 4 separate start/end pairs here instead
+// of one GL_LINE_LOOP), so View Segments' hit-test/ghost-overlay always
+// lines up with what's really on screen. Order: bottom (c0->c1), right
+// (c1->c2), top (c2->c3), left (c3->c0) -- see renderer.h's own comment on
+// NUM_ROCKY_RECT_SEGMENTS for why this differs from Rob.txt's own edge
+// order.
+void computeRockyRectSegments(Rocky b, RockyEdgeSegment out[NUM_ROCKY_RECT_SEGMENTS])
+{
+    PointF center = getRockyCenter(b);
+    float angle = b.angle;
+
+    PointF c0 = rotatePoint((PointF){ b.bodyX - b.bodyHalfWidth, b.bodyY - b.bodyHalfHeight }, center, angle);
+    PointF c1 = rotatePoint((PointF){ b.bodyX + b.bodyHalfWidth, b.bodyY - b.bodyHalfHeight }, center, angle);
+    PointF c2 = rotatePoint((PointF){ b.bodyX + b.bodyHalfWidth, b.bodyY + b.bodyHalfHeight }, center, angle);
+    PointF c3 = rotatePoint((PointF){ b.bodyX - b.bodyHalfWidth, b.bodyY + b.bodyHalfHeight }, center, angle);
+
+    out[0].start = c0; out[0].end = c1;   // bottom
+    out[1].start = c1; out[1].end = c2;   // right
+    out[2].start = c2; out[2].end = c3;   // top
+    out[3].start = c3; out[3].end = c0;   // left
+}
+
+// One distinguishable color per rectangle edge -- see renderer.h's own
+// comment on why this is a third, separate palette from
+// circleSegmentColor's/bodyCircleColor's.
+void rectSegmentColor(int index, float* r, float* g, float* b)
+{
+    static const float palette[NUM_ROCKY_RECT_SEGMENTS][3] = {
+        {0.75f, 0.45f, 0.10f}, {0.35f, 0.65f, 0.95f}, {0.65f, 0.15f, 0.45f}, {0.45f, 0.75f, 0.55f}
+    };
+    int i = index % NUM_ROCKY_RECT_SEGMENTS;
+    *r = palette[i][0];
+    *g = palette[i][1];
+    *b = palette[i][2];
+}
+
+// Overlays a distinctly-colored line over each of Rocky's 4 rectangle
+// edges -- same dashed/dim-normally, solid/bright/thicker-on-hover
+// treatment as drawRockyCircleSegments, just straight lines (glVertex2f
+// pairs) instead of drawCircle calls. See renderer.h's own comment on why
+// this ALWAYS draws all 4 (drawRockyCircleSegments' treatment), not just
+// the hovered one (drawRockyBodyCircleHover's treatment).
+void drawRockyRectSegments(Rocky b, int hoveredIndex, float opacity)
+{
+    RockyEdgeSegment segs[NUM_ROCKY_RECT_SEGMENTS];
+    computeRockyRectSegments(b, segs);
+
+    for (int i = 0; i < NUM_ROCKY_RECT_SEGMENTS; i++)
+    {
+        float r, g, bl;
+        rectSegmentColor(i, &r, &g, &bl);
+
+        if (i == hoveredIndex)
+        {
+            glDisable(GL_LINE_STIPPLE);
+            glLineWidth(2.5f);
+            glColor4f(r, g, bl, 1.0f * opacity);
+        }
+        else
+        {
+            glEnable(GL_LINE_STIPPLE);
+            glLineStipple(1, 0x00FF);
+            glLineWidth(1.0f);
+            glColor4f(r, g, bl, 0.6f * opacity);
+        }
+
+        glBegin(GL_LINES);
+        glVertex2f(segs[i].start.x, segs[i].start.y);
+        glVertex2f(segs[i].end.x, segs[i].end.y);
+        glEnd();
+    }
+
+    glLineWidth(1.0f);
+    glDisable(GL_LINE_STIPPLE);
+}
+
 // per-arc polygon subdivision count for the marker's leg-centroid
 // approximation below -- deliberately coarser than save.c's own
 // ROB_ARM_ARC_SAMPLES (48), since this runs every frame for an
@@ -1293,23 +1371,33 @@ void drawRockyBodyCircleHover(Rocky b, int hoveredIndex, float opacity)
 #define ROCKY_MASS_CENTER_ARC_SAMPLES 16
 
 // World-space (rotated by the robot's current angle/kneeAngle -- matching
-// what's actually drawn on screen right now) equivalent of
-// saveRockyAsRobArm's own combined body+leg mass center (save.c) -- same
-// bodyWeight/legWeight blend of a rectangle centroid and an approximate
-// leg-silhouette centroid, just fed WORLD points (via rotatePoint/
-// jointToWorld, the same transform drawRockyLeg itself uses to place the
-// leg on screen) instead of save.c's export-frame LOCAL ones. DELIBERATE
-// divergence from save.c, not a bug: save.c's own top-of-section comment
-// says Rob.txt/Arm.txt use Rocky's RAW local fields, "pre-whole-body-angle,
-// pre-kneeAngle... not the current on-screen rotated pose" (that's a
-// canonical-shape definition for the external consumer to pose itself) --
-// this marker instead exists to sit visibly ON the actual on-screen leg,
-// wherever it's currently bent, so it deliberately DOES apply both angles.
-// Reuses save.c's own arc-sampling/polygon-centroid helpers (robArmSampleArc*/
-// robArmPolygonCentroid, see save.h) so this stays the exact same
-// approximation as what actually gets written to Rob.txt, just rotated
-// into place -- not a separate, potentially-diverging formula.
-static PointF computeRockyMassCenterWorld(Rocky b)
+// what's actually drawn on screen right now) versions of the two points
+// saveRockyAsRobArm's own combined body+leg mass center (save.c) blends
+// between: the rectangle's own centroid and an approximate leg-silhouette
+// centroid. Fed WORLD points (via rotatePoint/jointToWorld, the same
+// transform drawRockyLeg itself uses to place the leg on screen) instead of
+// save.c's export-frame LOCAL ones. DELIBERATE divergence from save.c, not
+// a bug: save.c's own top-of-section comment says Rob.txt/Arm.txt use
+// Rocky's RAW local fields, "pre-whole-body-angle, pre-kneeAngle... not the
+// current on-screen rotated pose" (that's a canonical-shape definition for
+// the external consumer to pose itself) -- this instead exists to place the
+// draggable mass-center dot visibly ON the actual on-screen leg, wherever
+// it's currently bent, so it deliberately DOES apply both angles.
+//
+// Split out from a single "blend by bodyWeight/legWeight and return one
+// point" function (its own combining still lives in
+// computeRockyMassCenterWorld right below) so input.c's WM_MOUSEMOVE
+// draggingRockyMassCenter branch can get at the two RAW endpoints too --
+// dragging the dot doesn't move either endpoint, it re-derives
+// bodyWeight/legWeight from where the drag lands relative to them, so the
+// endpoints have to be available on their own, not just already-blended.
+//
+// Reuses save.c's own arc-sampling/polygon-centroid helpers
+// (robArmSampleArc*/robArmPolygonCentroid, see save.h) for the leg
+// centroid, so this stays the exact same approximation as what actually
+// gets written to Rob.txt, just rotated into place -- not a separate,
+// potentially-diverging formula.
+void computeRockyMassCenterEndpointsWorld(Rocky b, PointF* outRectCentroidWorld, PointF* outLegCentroidWorld)
 {
     PointF center = getRockyCenter(b);
     float angle = b.angle;
@@ -1317,7 +1405,7 @@ static PointF computeRockyMassCenterWorld(Rocky b)
     // The rectangle's own centroid is (bodyX, bodyY) itself -- exactly the
     // rotation pivot (see getRockyCenter) -- so it never moves under
     // rotation and needs no rotatePoint call of its own.
-    PointF rectCentroidWorld = center;
+    *outRectCentroidWorld = center;
 
     PointF kneeWorld = rotatePoint(b.kneeCircle, center, angle);
     PointF footWorld = jointToWorld(b.footCircle, b.kneeCircle, b.kneeAngle, center, angle);
@@ -1347,7 +1435,17 @@ static PointF computeRockyMassCenterWorld(Rocky b)
     polyN += robArmSampleArcThroughMid(shin2FilletWorld, shin2FootTangentWorld, shin2MidWorld, shin2KneeTangentWorld, ROCKY_MASS_CENTER_ARC_SAMPLES, poly + polyN);
     polyN += robArmSampleArcAwayFrom(kneeWorld, shin2KneeTangentWorld, shin1KneeTangentWorld, footWorld, ROCKY_MASS_CENTER_ARC_SAMPLES, poly + polyN);
 
-    PointF legCentroidWorld = robArmPolygonCentroid(poly, polyN);
+    *outLegCentroidWorld = robArmPolygonCentroid(poly, polyN);
+}
+
+// Blends computeRockyMassCenterEndpointsWorld's two endpoints by Rocky's
+// CURRENT bodyWeight/legWeight -- the dot's actual on-screen position right
+// now, used both to draw it (drawRocky below) and to hit-test it
+// (input.c's WM_LBUTTONDOWN/WM_MOUSEMOVE).
+PointF computeRockyMassCenterWorld(Rocky b)
+{
+    PointF rectCentroidWorld, legCentroidWorld;
+    computeRockyMassCenterEndpointsWorld(b, &rectCentroidWorld, &legCentroidWorld);
 
     // same "falls back to the rectangle's own centroid if both weights
     // happen to be 0" guard save.c's own massCenter computation uses.
@@ -1362,25 +1460,39 @@ static PointF computeRockyMassCenterWorld(Rocky b)
 }
 
 // Small on-canvas indicator for the Body Wt / Leg Wt panel (input.c's
-// hBodyWeightEdit/hLegWeightEdit) -- a ring + crosshair at wherever
+// hBodyWeightEdit/hLegWeightEdit) -- a plain filled dot at wherever
 // computeRockyMassCenterWorld says the combined mass center currently
 // sits, so the effect of those two numbers is visible directly on the
-// robot instead of only showing up later in an exported Rob.txt. Drawn in
-// orange, deliberately distinct from drawHandle's red/yellow (this dot
-// isn't draggable) and from the body/leg's own blue outline.
-static void drawRockyMassCenterMarker(PointF p, float opacity)
+// robot instead of only showing up later in an exported Rob.txt. Also
+// directly DRAGGABLE (input.c's hoverRockyMassCenter/
+// draggingRockyMassCenter) as an alternative to typing numbers into the
+// two edit boxes -- green normally, matching drawHandle's own red/yellow
+// hover-highlight CONVENTION (not its literal colors, which are already
+// used by every other handle on this robot) so this one reads as its own
+// distinct, recognizable control at a glance.
+static void drawRockyMassCenterMarker(PointF p, int active, float radius, float opacity)
 {
-    const float radius = 6.0f;
+    const int segments = 32;
 
-    glColor4f(1.0f, 0.55f, 0.0f, 0.9f * opacity);
+    if (active)
+        glColor4f(1.0f, 0.85f, 0.35f, HANDLE_ALPHA * opacity);
+    else
+        glColor4f(0.15f, 0.85f, 0.25f, HANDLE_ALPHA * opacity);
 
-    drawCircle(p, radius);
+    glBegin(GL_TRIANGLE_FAN);
 
-    glBegin(GL_LINES);
-    glVertex2f(p.x - radius, p.y);
-    glVertex2f(p.x + radius, p.y);
-    glVertex2f(p.x, p.y - radius);
-    glVertex2f(p.x, p.y + radius);
+    glVertex2f(p.x, p.y);
+
+    for (int i = 0; i <= segments; i++)
+    {
+        float t = 2.0f * 3.1415926f * i / segments;
+
+        glVertex2f(
+            p.x + cosf(t) * radius,
+            p.y + sinf(t) * radius
+        );
+    }
+
     glEnd();
 }
 
@@ -1389,12 +1501,6 @@ void drawRocky(Rocky b, RenderState* rs, int includeHandles, float opacity)
     drawRockyBodyRect(b, rs, opacity);
     drawRockyLeg(b, rs, opacity);
 
-    // Body/Leg Weight mass-center marker -- always drawn alongside the
-    // body/leg above (not gated behind includeHandles/View Segments), same
-    // "always-visible core geometry" treatment as those two, since it's
-    // cheap and directly answers what the two weight fields actually do.
-    drawRockyMassCenterMarker(computeRockyMassCenterWorld(b), opacity);
-
     // View Segments overlay -- same gating as drawSemni's own
     // segmentsVisible (rs->showSegments plus actually being in the robot
     // editor right now), now that Rocky has its own compute/draw pair
@@ -1402,6 +1508,7 @@ void drawRocky(Rocky b, RenderState* rs, int includeHandles, float opacity)
     BOOL rockySegmentsVisible = rs->showSegments && (editorModeState.currentMode == EDITOR_MODE_SEMNI);
     if (rockySegmentsVisible)
     {
+        drawRockyRectSegments(b, rs->hoveredRectSegment, opacity);
         drawRockyCircleSegments(b, rs->hoveredCircleSegment, opacity);
         drawRockyBodyCircleHover(b, rs->hoveredBodyCircle, opacity);
     }
@@ -1417,6 +1524,15 @@ void drawRocky(Rocky b, RenderState* rs, int includeHandles, float opacity)
     {
         PointF center = getRockyCenter(b);
         drawHandle(center, rs->draggingRockyBody || rs->hoverRockyBody, HIP_HANDLE_RADIUS, opacity);
+
+        // Body/Leg Weight mass-center dot -- draggable alternative to
+        // typing into hBodyWeightEdit/hLegWeightEdit (see input.c's
+        // hoverRockyMassCenter/draggingRockyMassCenter). Gated the same as
+        // every OTHER handle here now that it's a real drag target, not
+        // just an informational overlay -- so it's hidden in an exported
+        // BMP/the dimmed background copy, same as the body/knee/foot dots
+        // above and below.
+        drawRockyMassCenterMarker(computeRockyMassCenterWorld(b), rs->draggingRockyMassCenter || rs->hoverRockyMassCenter, MASS_CENTER_HANDLE_RADIUS, opacity);
 
         // Knee handle -- where the leg attaches to the rectangle (see
         // drawRockyLeg's own kneeWorld), same visible-dot treatment as
@@ -1946,6 +2062,8 @@ static void renderRobot(AppState* app, int includeHandles, float opacity)
     rs.draggingRockyKnee = app->draggingRockyKnee;
     rs.hoverRockyFoot = app->hoverRockyFoot;
     rs.draggingRockyFoot = app->draggingRockyFoot;
+    rs.hoverRockyMassCenter = app->hoverRockyMassCenter;
+    rs.draggingRockyMassCenter = app->draggingRockyMassCenter;
     rs.draggingRockyShin1 = app->draggingRockyShin1;
     rs.draggingRockyShin2 = app->draggingRockyShin2;
 
@@ -1978,6 +2096,7 @@ static void renderRobot(AppState* app, int includeHandles, float opacity)
     rs.showSegments = app->showCircleSegments;
     rs.hoveredCircleSegment = app->hoveredCircleSegment;
     rs.hoveredBodyCircle = app->hoveredBodyCircle;
+    rs.hoveredRectSegment = app->hoveredRectSegment;
     rs.draggingWhole = app->draggingRobotSim;
     rs.hoveringWhole = app->hoveringRobotSim;
 

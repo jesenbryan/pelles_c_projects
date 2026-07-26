@@ -33,6 +33,17 @@
 #define KNEE_HANDLE_RADIUS  0.016f
 #define FOOT_HANDLE_RADIUS 0.012f
 
+// Rocky's draggable Body/Leg Weight mass-center dot (renderer.c's
+// drawRockyMassCenterMarker, input.c's hoverRockyMassCenter/
+// draggingRockyMassCenter) -- sized between KNEE and FOOT, same small-and-
+// precise feel. The earlier version of this marker hardcoded a raw radius
+// of 6.0f directly in renderer.c, in *pixel*-scale thinking -- but every
+// other handle radius in this file is in the same small normalized GL-
+// space Rocky's own geometry lives in (MIN_SHIN_ARC_R is 0.05, e.g.), so
+// 6.0f was roughly 300x too big for this coordinate space and likely part
+// of why the marker was unusably hard to spot on screen.
+#define MASS_CENTER_HANDLE_RADIUS 0.014f
+
 // handle for the top/bottom seam fillet arcs -- sits at each arc's
 // outward peak point; dragging it changes that arc's fillet radius
 #define ARC_HANDLE_RADIUS 0.018f
