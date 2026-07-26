@@ -1,4 +1,17 @@
+idk:					
+better algorithm to find starting point, or is it even necessary?					
+starting point chosen randomly if closed curve					
+https://www.mathsisfun.com/geometry/construct-circle3pts.html					
+Menger Curvature					
+													
+					
+TODO:					
+closed loop and branch handling					
+					
+when i pan, zoom in-out, and scale the robot, dashed line should stay static just like the robot, the size and position in canvas shouldnt change
+visualization for mass point
+temp fix for export					
 
-
-
-
+					
+laborbericht					
+bezier curve					
