@@ -305,7 +305,7 @@ typedef struct {
     // switch, and once at WM_CREATE.
     HWND hRobotSizeLabel;
 
-    // top-right robot "size" slider (0.25 - 1.0, see ROBOT_SCALE_MIN/MAX
+    // top-right robot "size" slider (0.5 - 2.0, see ROBOT_SCALE_MIN/MAX
     // in config.h) + its static label, a row below the buttons above.
     // Drives graphicsSetRobotScale on WM_HSCROLL (see input.c).
     HWND hScaleLabel;

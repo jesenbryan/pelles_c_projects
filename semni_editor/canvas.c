@@ -323,7 +323,7 @@ static void robotPointToEnvWorld(float rx, float ry, float* ex, float* ey)
     // slider, graphicsGetRobotScale) -- has to match or the converted
     // point won't actually correspond to where the robot is drawn.
     float robotZoom = simCameraGetZoom() * graphicsGetRobotScale();
-    float robotHalfY = 1.5f / robotZoom;
+    float robotHalfY = ROBOT_VIEW_HALF_EXTENT / robotZoom;
     float robotHalfX = robotHalfY * aspect;
     float robotPanX, robotPanY;
     simCameraGetWorldPan(robotHalfX, robotHalfY, &robotPanX, &robotPanY);
@@ -356,7 +356,7 @@ static float robotLengthToEnvWorld(float rlen)
     float aspect = (float)glWindowWidth / (float)glWindowHeight;
 
     float robotZoom = simCameraGetZoom() * graphicsGetRobotScale();
-    float robotHalfY = 1.5f / robotZoom;
+    float robotHalfY = ROBOT_VIEW_HALF_EXTENT / robotZoom;
 
     float envZoom = 1.0f / simCameraGetZoom();
     float envHalfY = (aspect >= 1.0f) ? envZoom : (envZoom / aspect);
@@ -770,8 +770,9 @@ static BOOL findNearestStrokeEndpoint(float wx, float wy, float* outX, float* ou
 // OUT" convention (it's used directly as the ortho half-extent multiplier
 // -- see the non-simulation branch), while sim_camera's zoom follows the
 // opposite "bigger = zoomed IN" convention (same as graphics.c's g_zoom,
-// so the robot's own applyProjection can share it via a plain 1.5/zoom --
-// see sim_camera.h). Inverting it here (1.0f / simCameraGetZoom(), 1.0
+// so the robot's own applyProjection can share it via a plain
+// ROBOT_VIEW_HALF_EXTENT/zoom -- see sim_camera.h). Inverting it here
+// (1.0f / simCameraGetZoom(), 1.0
 // being canvas's own base half-extent at zoom=1) is what lets a single
 // simCameraZoom() call still zoom the environment and the robot in the
 // same direction together, despite the two subsystems' projections having

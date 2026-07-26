@@ -3035,8 +3035,8 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 // Live value in the label instead of a static "Scale" --
                 // matches the ArcSpline panel's "Thickness: N px" label
                 // (ui.c). wsprintf has no float conversion, so the
-                // pos (25-100) is split into whole/hundredths by hand
-                // (e.g. pos=75 -> "0.75", pos=100 -> "1.00").
+                // pos (50-200) is split into whole/hundredths by hand
+                // (e.g. pos=75 -> "0.75", pos=200 -> "2.00").
                 wchar_t scaleBuf[32];
                 wsprintf(scaleBuf, L"Scale: %d.%02d", pos / 100, pos % 100);
                 SetWindowText(app->ui.hScaleLabel, scaleBuf);
@@ -3658,16 +3658,18 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
              SendMessage(app->ui.hRobotSizeLabel, WM_SETFONT, (WPARAM)g_semniUIFont, TRUE);
              updateRobotSizeLabel(app);
 
-             // Robot size slider: 0.25 - 1.0 (see ROBOT_SCALE_MIN/MAX in
-             // config.h), mapped to an integer trackbar range of 25-100
+             // Robot size slider: 0.5 - 2.0 (see ROBOT_SCALE_MIN/MAX in
+             // config.h), mapped to an integer trackbar range of 50-200
              // (WM_HSCROLL below divides the position back down by 100).
-             // Starts at 100 (scale 1.0), matching graphics.c's
+             // Starts at 50 (scale 0.5), matching graphics.c's
              // g_robotScale default. Label shows the live value (see
              // WM_HSCROLL below), matching the ArcSpline panel's
-             // "Thickness: N px" label (ui.c).
+             // "Thickness: N px" label (ui.c) -- initial text set to match
+             // this same 0.5 starting value so it doesn't briefly show a
+             // stale "1.00" before the user's first slider move.
              app->ui.hScaleLabel = CreateWindow(
                 L"STATIC",
-                L"Scale: 1.00",
+                L"Scale: 0.50",
                 WS_VISIBLE | WS_CHILD | SS_LEFT,
                 0, 0, 10, 10,
                 hwnd,
@@ -3688,8 +3690,8 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 NULL
             );
 
-             SendMessage(app->ui.hScaleSlider, TBM_SETRANGE, TRUE, MAKELONG(25, 100));
-             SendMessage(app->ui.hScaleSlider, TBM_SETPOS, TRUE, 100);
+             SendMessage(app->ui.hScaleSlider, TBM_SETRANGE, TRUE, MAKELONG(50, 200));
+             SendMessage(app->ui.hScaleSlider, TBM_SETPOS, TRUE, 50);
 
              // View Segments toggle: every curve on Semni (seam/thigh/shin
              // arcs) is a trimmed segment of some circle -- this reveals

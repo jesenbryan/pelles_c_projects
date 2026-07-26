@@ -10,7 +10,8 @@ static HDC hdc;
 static HGLRC hrc;
 
 // current view zoom. zoom > 1 magnifies. Layered on top of the base
-// 1.5-unit half-extent ortho projection used everywhere else. Kept here
+// ROBOT_VIEW_HALF_EXTENT-unit half-extent ortho projection (config.h) used
+// everywhere else. Kept here
 // (not in AppState) since it's purely a projection concern -- screenToGL
 // and the projection setup need to agree on the same value, so they live
 // side by side instead of being threaded through from the caller.
@@ -29,8 +30,11 @@ static float g_zoom = 1.0f;
 // Current "Robot Size" slider value (see ROBOT_SCALE_MIN/MAX in config.h,
 // input.c's WM_HSCROLL) -- folded directly into effectiveZoom below so
 // resizing the robot and zooming the camera share the exact same
-// projection math.
-static float g_robotScale = 1.0f;
+// projection math. Defaults to ROBOT_SCALE_MIN (0.5, config.h) -- the
+// slider's own low end -- not ROBOT_SCALE_MAX any more (see config.h's own
+// comment on why); must stay in sync with input.c's WM_CREATE, which sets
+// hScaleSlider's own initial TBM_SETPOS to match this same starting value.
+static float g_robotScale = 0.5f;
 
 static float effectiveZoom(void)
 {
@@ -117,7 +121,7 @@ static void applyProjection(void)
 
     float aspect = (float)g_lastW / (float)g_lastH;
     float zoom = (appMode == APP_MODE_SIMULATION) ? (simCameraGetZoom() * g_robotScale) : effectiveZoom();
-    float halfY = 1.5f / zoom;
+    float halfY = ROBOT_VIEW_HALF_EXTENT / zoom;
     float halfX = halfY * aspect;
 
     glOrtho(-halfX, halfX, -halfY, halfY, -1, 1);
@@ -194,14 +198,14 @@ void screenToGL(HWND hwnd, int mx, int my, float *x, float *y)
     if (appMode == APP_MODE_SIMULATION)
     {
         zoom = simCameraGetZoom() * g_robotScale; // keep in sync with applyProjection above
-        halfY = 1.5f / zoom;
+        halfY = ROBOT_VIEW_HALF_EXTENT / zoom;
         halfX = halfY * aspect;
         simCameraGetWorldPan(halfX, halfY, &panX, &panY);
     }
     else
     {
         zoom = effectiveZoom();
-        halfY = 1.5f / zoom;
+        halfY = ROBOT_VIEW_HALF_EXTENT / zoom;
         halfX = halfY * aspect;
         panX = g_panX + g_scaleAnchorX[g_activeRobotKind];
         panY = g_panY + g_scaleAnchorY[g_activeRobotKind];
@@ -227,7 +231,7 @@ void graphicsPan(int dxPixels, int dyPixels)
     if (g_lastW == 0 || g_lastH == 0) return;
 
     float aspect = (float)g_lastW / (float)g_lastH;
-    float halfY = 1.5f / effectiveZoom();
+    float halfY = ROBOT_VIEW_HALF_EXTENT / effectiveZoom();
     float halfX = halfY * aspect;
 
     float worldPerPixelX = (2.0f * halfX) / (float)g_lastW;
@@ -253,7 +257,7 @@ void graphicsGetPan(float* panX, float* panY)
         // drawn with this frame.
         float aspect = (float)g_lastW / (float)g_lastH;
         float zoom = simCameraGetZoom() * g_robotScale;
-        float halfY = 1.5f / zoom;
+        float halfY = ROBOT_VIEW_HALF_EXTENT / zoom;
         float halfX = halfY * aspect;
         simCameraGetWorldPan(halfX, halfY, panX, panY);
         return;

@@ -178,8 +178,8 @@ void drawHandle(PointF p, int selected, float radius, float opacity)
 // baked) projection/modelview and algebraically cancelling out the
 // Robot-Size-driven anchor term (g_scaleAnchorX/Y) from the vertex position.
 // That correctly zeroed out the anchor's own contribution, but missed that
-// applyProjection's halfX/halfY themselves are `aspect * 1.5 / (zoom *
-// robotScale)` -- i.e. the whole shared projection scales linearly with
+// applyProjection's halfX/halfY themselves are `aspect *
+// ROBOT_VIEW_HALF_EXTENT / (zoom * robotScale)` -- i.e. the whole shared projection scales linearly with
 // robotScale, not just the translate -- so ANY vertex placed through that
 // projection still ends up multiplied by robotScale somewhere, and the
 // line visibly moved/resized as the slider moved (e.g. its Y offset from
@@ -206,7 +206,7 @@ void drawDashedHorizontalLine(float y, float opacity)
     float aspect = (glWindowHeight != 0) ? ((float)glWindowWidth / (float)glWindowHeight) : 1.0f;
     float zoom = graphicsGetZoom();
 
-    float halfY = 1.5f / zoom;
+    float halfY = ROBOT_VIEW_HALF_EXTENT / zoom;
     float halfX = halfY * aspect;
 
     glMatrixMode(GL_PROJECTION);

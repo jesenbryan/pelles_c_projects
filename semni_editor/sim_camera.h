@@ -18,7 +18,8 @@
 //
 // Same zoom convention as graphics.c's g_zoom (bigger = zoomed IN) --
 // simplest to reuse since the robot's own projection already follows that
-// convention (applyProjection's halfY = 1.5 / zoom), and its own drag hit-
+// convention (applyProjection's halfY = ROBOT_VIEW_HALF_EXTENT / zoom,
+// config.h), and its own drag hit-
 // testing (canvas.c's WM_LBUTTONDOWN/WM_MOUSEMOVE, via screenToGL) needs to
 // agree with the projection actually used to draw it either way. The
 // robot's ACTUAL effective zoom during Simulation is
