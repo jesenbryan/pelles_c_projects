@@ -525,7 +525,7 @@ static float robArmWrap360(float deg)
 // drawRockyLeg already computes for shin1/shin2 (shin1NearLocal/
 // shin2NearLocal) via circleTowardPoint(fillet, axisMidLocal). Used for
 // the two shin fillet arcs, where that bulge point is already at hand.
-static int robArmSampleArcThroughMid(PointF center, PointF start, PointF mid, PointF end, int steps, PointF* out)
+int robArmSampleArcThroughMid(PointF center, PointF start, PointF mid, PointF end, int steps, PointF* out)
 {
     float r = sqrtf((start.x - center.x) * (start.x - center.x) + (start.y - center.y) * (start.y - center.y));
     float a0 = robArmAngleAroundDeg(center, start);
@@ -558,7 +558,7 @@ static int robArmSampleArcThroughMid(PointF center, PointF start, PointF mid, Po
 // knee/foot pair) -- the visible/outer side of a two-circle-plus-fillets
 // leg silhouette like Rocky's is always the one facing away from the other
 // circle, never the one tucked in toward it.
-static int robArmSampleArcAwayFrom(PointF center, PointF start, PointF end, PointF otherCenter, int steps, PointF* out)
+int robArmSampleArcAwayFrom(PointF center, PointF start, PointF end, PointF otherCenter, int steps, PointF* out)
 {
     float r = sqrtf((start.x - center.x) * (start.x - center.x) + (start.y - center.y) * (start.y - center.y));
     float a0 = robArmAngleAroundDeg(center, start);
@@ -596,7 +596,7 @@ static int robArmSampleArcAwayFrom(PointF center, PointF start, PointF end, Poin
 // to compute a true one from. Consecutive arcs sharing an endpoint just
 // contribute a duplicate point, which the shoelace sum treats as a
 // zero-area sliver -- harmless, so callers don't need to de-duplicate.
-static PointF robArmPolygonCentroid(PointF* pts, int n)
+PointF robArmPolygonCentroid(PointF* pts, int n)
 {
     float area = 0.0f, cx = 0.0f, cy = 0.0f;
 

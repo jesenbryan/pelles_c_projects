@@ -7,6 +7,7 @@
 #include "graphics.h"
 #include "editor_mode.h"
 #include "ui_state.h"   // for glWindowWidth/glWindowHeight -- drawDashedHorizontalLine's aspect ratio
+#include "save.h"       // for robArmSampleArcThroughMid/robArmSampleArcAwayFrom/robArmPolygonCentroid -- reused by computeRockyMassCenterWorld below
 #include <stdio.h>
 #include <string.h>     // for strlen -- drawRobotSizeBox's mm label
 
@@ -1283,10 +1284,116 @@ void drawRockyBodyCircleHover(Rocky b, int hoveredIndex, float opacity)
     glLineWidth(1.0f);
 }
 
+// per-arc polygon subdivision count for the marker's leg-centroid
+// approximation below -- deliberately coarser than save.c's own
+// ROB_ARM_ARC_SAMPLES (48), since this runs every frame for an
+// informational dot rather than once at Save time for an exported file;
+// 16 is already visually indistinguishable at any zoom level this editor
+// uses.
+#define ROCKY_MASS_CENTER_ARC_SAMPLES 16
+
+// World-space (rotated by the robot's current angle/kneeAngle -- matching
+// what's actually drawn on screen right now) equivalent of
+// saveRockyAsRobArm's own combined body+leg mass center (save.c) -- same
+// bodyWeight/legWeight blend of a rectangle centroid and an approximate
+// leg-silhouette centroid, just fed WORLD points (via rotatePoint/
+// jointToWorld, the same transform drawRockyLeg itself uses to place the
+// leg on screen) instead of save.c's export-frame LOCAL ones. DELIBERATE
+// divergence from save.c, not a bug: save.c's own top-of-section comment
+// says Rob.txt/Arm.txt use Rocky's RAW local fields, "pre-whole-body-angle,
+// pre-kneeAngle... not the current on-screen rotated pose" (that's a
+// canonical-shape definition for the external consumer to pose itself) --
+// this marker instead exists to sit visibly ON the actual on-screen leg,
+// wherever it's currently bent, so it deliberately DOES apply both angles.
+// Reuses save.c's own arc-sampling/polygon-centroid helpers (robArmSampleArc*/
+// robArmPolygonCentroid, see save.h) so this stays the exact same
+// approximation as what actually gets written to Rob.txt, just rotated
+// into place -- not a separate, potentially-diverging formula.
+static PointF computeRockyMassCenterWorld(Rocky b)
+{
+    PointF center = getRockyCenter(b);
+    float angle = b.angle;
+
+    // The rectangle's own centroid is (bodyX, bodyY) itself -- exactly the
+    // rotation pivot (see getRockyCenter) -- so it never moves under
+    // rotation and needs no rotatePoint call of its own.
+    PointF rectCentroidWorld = center;
+
+    PointF kneeWorld = rotatePoint(b.kneeCircle, center, angle);
+    PointF footWorld = jointToWorld(b.footCircle, b.kneeCircle, b.kneeAngle, center, angle);
+
+    PointF axisMidLocal = { (b.kneeCircle.x + b.footCircle.x) * 0.5f, (b.kneeCircle.y + b.footCircle.y) * 0.5f };
+
+    Fillet shin1Fillet = filletFromAttachAngle(b.kneeCircle, b.kneeRadius, b.footCircle, b.footRadius, b.shinArc1Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC_R);
+    PointF shin1FilletWorld = jointToWorld(shin1Fillet.center, b.kneeCircle, b.kneeAngle, center, angle);
+    PointF shin1KneeTangentWorld = jointToWorld(circleEdge(b.kneeCircle, b.kneeRadius, b.shinArc1Angle), b.kneeCircle, b.kneeAngle, center, angle);
+    PointF shin1FootTangentWorld = jointToWorld(internalTangentPoint(shin1Fillet.center, shin1Fillet.radius, b.footCircle, b.footRadius), b.kneeCircle, b.kneeAngle, center, angle);
+    PointF shin1MidWorld = jointToWorld(circleTowardPoint(shin1Fillet.center, shin1Fillet.radius, axisMidLocal), b.kneeCircle, b.kneeAngle, center, angle);
+
+    Fillet shin2Fillet = filletFromAttachAngleConcave(b.kneeCircle, b.kneeRadius, b.footCircle, b.footRadius, b.shinArc2Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC2_CONCAVE_R);
+    PointF shin2FilletWorld = jointToWorld(shin2Fillet.center, b.kneeCircle, b.kneeAngle, center, angle);
+    PointF shin2KneeTangentWorld = jointToWorld(circleEdge(b.kneeCircle, b.kneeRadius, b.shinArc2Angle), b.kneeCircle, b.kneeAngle, center, angle);
+    PointF shin2FootTangentWorld = jointToWorld(circleTowardPoint(shin2Fillet.center, shin2Fillet.radius, b.footCircle), b.kneeCircle, b.kneeAngle, center, angle);
+    PointF shin2MidWorld = jointToWorld(circleTowardPoint(shin2Fillet.center, shin2Fillet.radius, axisMidLocal), b.kneeCircle, b.kneeAngle, center, angle);
+
+    // same 4-arc traversal save.c's saveRockyAsRobArm builds (2 shin
+    // fillets + the knee/foot circles' own outward-facing arcs), just with
+    // every point substituted for its WORLD-space counterpart computed
+    // above.
+    PointF poly[4 * (ROCKY_MASS_CENTER_ARC_SAMPLES + 1)];
+    int polyN = 0;
+    polyN += robArmSampleArcThroughMid(shin1FilletWorld, shin1KneeTangentWorld, shin1MidWorld, shin1FootTangentWorld, ROCKY_MASS_CENTER_ARC_SAMPLES, poly + polyN);
+    polyN += robArmSampleArcAwayFrom(footWorld, shin1FootTangentWorld, shin2FootTangentWorld, kneeWorld, ROCKY_MASS_CENTER_ARC_SAMPLES, poly + polyN);
+    polyN += robArmSampleArcThroughMid(shin2FilletWorld, shin2FootTangentWorld, shin2MidWorld, shin2KneeTangentWorld, ROCKY_MASS_CENTER_ARC_SAMPLES, poly + polyN);
+    polyN += robArmSampleArcAwayFrom(kneeWorld, shin2KneeTangentWorld, shin1KneeTangentWorld, footWorld, ROCKY_MASS_CENTER_ARC_SAMPLES, poly + polyN);
+
+    PointF legCentroidWorld = robArmPolygonCentroid(poly, polyN);
+
+    // same "falls back to the rectangle's own centroid if both weights
+    // happen to be 0" guard save.c's own massCenter computation uses.
+    float totalWeight = b.bodyWeight + b.legWeight;
+    if (totalWeight <= 1e-6f)
+        return rectCentroidWorld;
+
+    PointF massCenter;
+    massCenter.x = (b.bodyWeight * rectCentroidWorld.x + b.legWeight * legCentroidWorld.x) / totalWeight;
+    massCenter.y = (b.bodyWeight * rectCentroidWorld.y + b.legWeight * legCentroidWorld.y) / totalWeight;
+    return massCenter;
+}
+
+// Small on-canvas indicator for the Body Wt / Leg Wt panel (input.c's
+// hBodyWeightEdit/hLegWeightEdit) -- a ring + crosshair at wherever
+// computeRockyMassCenterWorld says the combined mass center currently
+// sits, so the effect of those two numbers is visible directly on the
+// robot instead of only showing up later in an exported Rob.txt. Drawn in
+// orange, deliberately distinct from drawHandle's red/yellow (this dot
+// isn't draggable) and from the body/leg's own blue outline.
+static void drawRockyMassCenterMarker(PointF p, float opacity)
+{
+    const float radius = 6.0f;
+
+    glColor4f(1.0f, 0.55f, 0.0f, 0.9f * opacity);
+
+    drawCircle(p, radius);
+
+    glBegin(GL_LINES);
+    glVertex2f(p.x - radius, p.y);
+    glVertex2f(p.x + radius, p.y);
+    glVertex2f(p.x, p.y - radius);
+    glVertex2f(p.x, p.y + radius);
+    glEnd();
+}
+
 void drawRocky(Rocky b, RenderState* rs, int includeHandles, float opacity)
 {
     drawRockyBodyRect(b, rs, opacity);
     drawRockyLeg(b, rs, opacity);
+
+    // Body/Leg Weight mass-center marker -- always drawn alongside the
+    // body/leg above (not gated behind includeHandles/View Segments), same
+    // "always-visible core geometry" treatment as those two, since it's
+    // cheap and directly answers what the two weight fields actually do.
+    drawRockyMassCenterMarker(computeRockyMassCenterWorld(b), opacity);
 
     // View Segments overlay -- same gating as drawSemni's own
     // segmentsVisible (rs->showSegments plus actually being in the robot

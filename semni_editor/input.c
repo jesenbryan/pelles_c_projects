@@ -446,6 +446,41 @@ static void ensureSemniPanelClassRegistered(void)
     g_semniPanelClassRegistered = TRUE;
 }
 
+// Subclass for hBodyWeightEdit/hLegWeightEdit ONLY -- a plain WS_CHILD EDIT
+// control (this isn't a dialog, so there's no IDOK default-button/Enter
+// handling to piggyback on) otherwise just beeps on Enter and leaves focus
+// sitting in the box, silently swallowing every keyboard shortcut this
+// editor relies on (arrow-key nudges, Shift+drag hints, etc -- see this
+// file's own WM_KEYDOWN case) until the user manually clicks back onto the
+// canvas. Catching VK_RETURN here and returning focus to the main window
+// (dwRefData, set to app->hwndMain at SetWindowSubclass time below) makes
+// Enter behave the way it does after every OTHER control on this panel
+// (see e.g. ID_MIRROR_LEG_BUTTON's own SetFocus(app->hwndMain) right after
+// its InvalidateRect) instead of being the one control that doesn't give
+// focus back.
+static LRESULT CALLBACK weightEditSubclassProc(HWND hEdit, UINT msg, WPARAM wParam, LPARAM lParam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData)
+{
+    if (msg == WM_KEYDOWN && wParam == VK_RETURN)
+    {
+        SetFocus((HWND)dwRefData);
+        return 0;   // swallow it -- DefSubclassProc's default handling for an
+                    // unclaimed Enter in a single-line edit is just a beep
+    }
+
+    if (msg == WM_NCDESTROY)
+    {
+        // Matches every other subclass's own cleanup convention -- remove
+        // self right before the control is actually destroyed so a stale
+        // subclass callback can never fire against a dead HWND (this app
+        // only ever destroys these two controls by destroying the whole
+        // main window, but this is the correct pattern regardless of when
+        // that happens to occur).
+        RemoveWindowSubclass(hEdit, weightEditSubclassProc, uIdSubclass);
+    }
+
+    return DefSubclassProc(hEdit, msg, wParam, lParam);
+}
+
 LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState* app)
 {
     switch (msg)
@@ -3107,7 +3142,14 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             // edit box pair (label width picked just wide enough for
             // "Body Wt"/"Leg Wt" at this font, edit box takes the rest of
             // the column), same two-column row as Home/Standing etc. above.
-            int weightLabelW = 50;
+            // 50px was too narrow for "Body Wt" at g_semniUIFont's -15
+            // Segoe UI -- SS_LEFT statics clip silently rather than
+            // shrinking the text or ellipsizing, so it was rendering as a
+            // truncated "Body" with " Wt" simply cut off (reported by the
+            // user actually looking at this panel once it started driving
+            // the on-canvas mass-center marker). 66 leaves a comfortable
+            // margin over "Body Wt"'s measured width at this font/size.
+            int weightLabelW = 66;
             int weightEditW = colW - weightLabelW - colGap;
 
             SetWindowPos(app->ui.hBodyWeightLabel, NULL,
@@ -3377,13 +3419,19 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
              SendMessage(app->ui.hMirrorButton2, WM_SETFONT, (WPARAM)g_semniUIFont, TRUE);
 
              // Body/Leg Weight: plain text entry boxes feeding Rocky's own
-             // bodyWeight/legWeight fields (see app.h's Rocky comment) --
-             // read via GetWindowText from the File > Save handler
-             // (canvas.c) rather than an EN_CHANGE handler, since the only
-             // thing that ever reads them is the save-to-Rob.txt/Arm.txt path (save.c's
-             // saveRockyAsRobArm). Harmlessly inert for Semni/Stilo, same
-             // "always created, only meaningful for one robot kind"
-             // convention as hMirrorButton2/hViewSegmentsButton.
+             // bodyWeight/legWeight fields (see app.h's Rocky comment).
+             // Still re-read via GetWindowText from the File > Save handler
+             // (canvas.c) right before saveRockyAsRobArm (save.c) writes
+             // Rob.txt/Arm.txt, so Save always reflects whatever's
+             // currently typed even if focus never left the box -- but ALSO
+             // now wired to an EN_CHANGE handler below (WM_COMMAND's
+             // ID_BODY_WEIGHT_EDIT/ID_LEG_WEIGHT_EDIT cases) that updates
+             // app->robotScene.rocky.bodyWeight/legWeight live as the user
+             // types, so renderer.c's on-canvas mass-center marker
+             // (drawRockyMassCenterMarker) tracks the two numbers in real
+             // time instead of only jumping on Save. Harmlessly inert for
+             // Semni/Stilo, same "always created, only meaningful for one
+             // robot kind" convention as hMirrorButton2/hViewSegmentsButton.
              app->ui.hBodyWeightLabel = CreateWindow(
                 L"STATIC",
                 L"Body Wt",
@@ -3408,6 +3456,9 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 NULL
             );
              SendMessage(app->ui.hBodyWeightEdit, WM_SETFONT, (WPARAM)g_semniUIFont, TRUE);
+             // see weightEditSubclassProc's own comment -- Enter returns
+             // focus to the main window instead of beeping/staying put.
+             SetWindowSubclass(app->ui.hBodyWeightEdit, weightEditSubclassProc, 0, (DWORD_PTR)hwnd);
 
              app->ui.hLegWeightLabel = CreateWindow(
                 L"STATIC",
@@ -3433,6 +3484,9 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 NULL
             );
              SendMessage(app->ui.hLegWeightEdit, WM_SETFONT, (WPARAM)g_semniUIFont, TRUE);
+             // see weightEditSubclassProc's own comment -- Enter returns
+             // focus to the main window instead of beeping/staying put.
+             SetWindowSubclass(app->ui.hLegWeightEdit, weightEditSubclassProc, 0, (DWORD_PTR)hwnd);
 
              // Live real-world size readout (see config.h's
              // MM_PER_WORLD_UNIT and this file's updateRobotSizeLabel) --
@@ -3667,6 +3721,38 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     }
                     InvalidateRect(hwnd, NULL, FALSE);
                     SetFocus(app->hwndMain);  // return focus for keyboard input
+                    break;
+
+                // Body/Leg Weight edit boxes -- live EN_CHANGE mirror of
+                // app->robotScene.rocky.bodyWeight/legWeight (see this
+                // file's own comment above hBodyWeightEdit/hLegWeightEdit's
+                // creation) so renderer.c's mass-center marker
+                // (drawRockyMassCenterMarker) updates as the user types
+                // instead of only on Save. Reads/writes Rocky's fields
+                // unconditionally regardless of activeKind, same
+                // "harmlessly inert outside Rocky" convention as
+                // ID_MIRROR_LEG2_BUTTON just below -- there's simply
+                // nothing else it could mean while these boxes are hidden
+                // (see editor_mode.c's semniActive gating on
+                // hBodyWeightEdit/hLegWeightEdit).
+                case ID_BODY_WEIGHT_EDIT:
+                    if (HIWORD(wParam) == EN_CHANGE)
+                    {
+                        wchar_t weightBuf[64];
+                        GetWindowText(app->ui.hBodyWeightEdit, weightBuf, 64);
+                        app->robotScene.rocky.bodyWeight = (float)wcstod(weightBuf, NULL);
+                        InvalidateRect(hwnd, NULL, FALSE);
+                    }
+                    break;
+
+                case ID_LEG_WEIGHT_EDIT:
+                    if (HIWORD(wParam) == EN_CHANGE)
+                    {
+                        wchar_t weightBuf[64];
+                        GetWindowText(app->ui.hLegWeightEdit, weightBuf, 64);
+                        app->robotScene.rocky.legWeight = (float)wcstod(weightBuf, NULL);
+                        InvalidateRect(hwnd, NULL, FALSE);
+                    }
                     break;
 
                 case ID_MIRROR_LEG2_BUTTON:

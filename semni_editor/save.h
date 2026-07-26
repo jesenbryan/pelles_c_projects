@@ -46,3 +46,14 @@ int loadStiloPoseFromFile(const char* filename, Stilo* out);
 // (see input.c's hBodyWeightEdit/hLegWeightEdit). Returns 0 if either
 // file can't be opened for writing, 1 on success.
 int saveRockyAsRobArm(AppState* app);
+
+// Pure geometric helpers behind saveRockyAsRobArm's approximate leg
+// centroid (see save.c's own comment above each) -- exposed (not static)
+// so renderer.c's live on-canvas mass-center marker
+// (computeRockyMassCenterWorld) can reuse the exact same math against
+// WORLD-space (rotated) points instead of duplicating it. Purely
+// geometric -- neither cares whether the points passed in are Rob.txt's
+// export-frame LOCAL ones or the renderer's own rotated WORLD ones.
+int robArmSampleArcThroughMid(PointF center, PointF start, PointF mid, PointF end, int steps, PointF* out);
+int robArmSampleArcAwayFrom(PointF center, PointF start, PointF end, PointF otherCenter, int steps, PointF* out);
+PointF robArmPolygonCentroid(PointF* pts, int n);
