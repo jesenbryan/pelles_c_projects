@@ -15,6 +15,19 @@ typedef struct {
     int draggingShin1;
     int draggingShin2;
 
+    // hover-only companions to draggingSeamArc1/draggingSeamArc2/
+    // draggingThigh1/draggingThigh2/draggingShin1/draggingShin2 above --
+    // mirrors app->hoverSeamArc1/hoverSeamArc2/hoverThigh1/hoverThigh2/
+    // hoverShin1/hoverShin2, so drawSemniHandles/drawThighHandles/
+    // drawShinHandles can turn these handles yellow on a plain hover, not
+    // just while actively dragging.
+    int hoverSeamArc1;
+    int hoverSeamArc2;
+    int hoverThigh1;
+    int hoverThigh2;
+    int hoverShin1;
+    int hoverShin2;
+
     // Rocky's rectangular torso handle -- see app.h's hoverRockyBody/
     // draggingRockyBody, mirrored here the same way the Semni-specific
     // fields above are, so drawRocky can highlight it the same way
@@ -45,11 +58,16 @@ typedef struct {
     int draggingRockyMassCenter;
 
     // Rocky's 2 shin connector-arc handles -- mirrors app->
-    // draggingRockyShin1/draggingRockyShin2, same drag-only-highlight role
-    // as Semni's own draggingShin1/draggingShin2 above (no separate hover-
-    // only state needed here, same reasoning as those).
+    // draggingRockyShin1/draggingRockyShin2, same role as Semni's own
+    // draggingShin1/draggingShin2 above.
     int draggingRockyShin1;
     int draggingRockyShin2;
+
+    // hover-only companions -- mirrors app->hoverRockyShin1/
+    // hoverRockyShin2, same "yellow on hover too" treatment as
+    // hoverSeamArc1/hoverThigh1/etc. above.
+    int hoverRockyShin1;
+    int hoverRockyShin2;
 
     // hover-only state for the joint circle handles (hip/knee/foot/
     // head/butt), so they can highlight from a hover, not just a drag
@@ -78,6 +96,16 @@ typedef struct {
     int hoverStiloHead;
     int hoverStiloButt;
 
+    // hover-only companions to draggingStiloSeamArc1/draggingStiloSeamArc2/
+    // draggingStiloThigh1Arc1/draggingStiloThigh1Arc2 above -- mirrors
+    // app->hoverStiloSeamArc1/hoverStiloSeamArc2/hoverStiloThigh1Arc1/
+    // hoverStiloThigh1Arc2, same "yellow on hover too" treatment as Semni's
+    // own arc-handle hover fields above.
+    int hoverStiloSeamArc1;
+    int hoverStiloSeamArc2;
+    int hoverStiloThigh1Arc1;
+    int hoverStiloThigh1Arc2;
+
     // Stilo's SECOND leg -- mirrors app.h's draggingStiloHip2/Feet2/
     // Thigh2Arc1/Thigh2Arc2 and hoverStiloHip2/hoverStiloFeet2 fields the
     // same way the fields above mirror its first leg's, so
@@ -91,6 +119,13 @@ typedef struct {
 
     int hoverStiloHip2;
     int hoverStiloFeet2;
+
+    // hover-only companions to draggingStiloThigh2Arc1/
+    // draggingStiloThigh2Arc2 above -- mirrors app->hoverStiloThigh2Arc1/
+    // hoverStiloThigh2Arc2. No leg-2 seam-arc equivalent -- both legs share
+    // the one torso's hoverStiloSeamArc1/hoverStiloSeamArc2 above.
+    int hoverStiloThigh2Arc1;
+    int hoverStiloThigh2Arc2;
 
     // Shift held during the most recent mouse move -- combined with
     // hoverHip/hoverKnee to preview the shift+scroll joint rotation's
@@ -355,12 +390,16 @@ void computeRockyBodyCircles(Rocky b, CircleSegment out[NUM_ROCKY_BODY_CIRCLES])
 typedef struct { PointF start, end; } RockyEdgeSegment;
 
 // Rocky's 4 rectangle edges -- indices into computeRockyRectSegments'
-// output and into app->hoveredRectSegment. Order: bottom, right, top, left
-// -- same c0->c1->c2->c3->c0 traversal drawRockyBodyRect (renderer.c)
-// already draws the rectangle in, NOT Rob.txt's own left/top/right/bottom
-// export-frame order (save.c) -- a different concern, same "deliberately
-// different frame" reasoning as computeRockyMassCenterEndpointsWorld's own
-// comment just below.
+// output and into app->hoveredRectSegment. Order: top (Body Height 1),
+// right (Body Width 1), bottom (Body Height 2), left (Body Width 2) --
+// requested directly, NOT the c0->c1->c2->c3->c0 traversal
+// drawRockyBodyRect (renderer.c) draws the rectangle in (that one still
+// draws bottom/right/top/left, since it colors each edge independently
+// and has no shared numbering to keep in sync -- see its own per-edge
+// setColor calls), and NOT Rob.txt's own left/top/right/bottom
+// export-frame order (save.c) either -- a different concern, same
+// "deliberately different frame" reasoning as
+// computeRockyMassCenterEndpointsWorld's own comment just below.
 #define NUM_ROCKY_RECT_SEGMENTS 4
 
 // Computes Rocky's 4 rectangle edges' world-space endpoints for its CURRENT

@@ -1612,7 +1612,7 @@ void canvasRenderFrame(float dimAmount)
             {
                 case ROBOT_KIND_ROCKY:
                 {
-                    // raw rect-edge order: bottom, right, top, left (see
+                    // raw rect-edge order: top, right, bottom, left (see
                     // renderer.c's computeRockyRectSegments) -- raw fillet
                     // order: shin1, shin2 -- raw body order: knee, foot.
                     // Desired (requested directly): the 4 rectangle edges

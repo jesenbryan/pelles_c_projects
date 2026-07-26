@@ -30,11 +30,12 @@ static float g_zoom = 1.0f;
 // Current "Robot Size" slider value (see ROBOT_SCALE_MIN/MAX in config.h,
 // input.c's WM_HSCROLL) -- folded directly into effectiveZoom below so
 // resizing the robot and zooming the camera share the exact same
-// projection math. Defaults to ROBOT_SCALE_MIN (0.5, config.h) -- the
-// slider's own low end -- not ROBOT_SCALE_MAX any more (see config.h's own
-// comment on why); must stay in sync with input.c's WM_CREATE, which sets
-// hScaleSlider's own initial TBM_SETPOS to match this same starting value.
-static float g_robotScale = 0.5f;
+// projection math. Defaults to 1.0 (config.h's ROBOT_SCALE_MIN/MAX
+// comment) -- briefly defaulted to ROBOT_SCALE_MIN (0.5) earlier in this
+// project's history, reverted back per direct request; must stay in sync
+// with input.c's WM_CREATE, which sets hScaleSlider's own initial
+// TBM_SETPOS to match this same starting value.
+static float g_robotScale = 1.0f;
 
 static float effectiveZoom(void)
 {

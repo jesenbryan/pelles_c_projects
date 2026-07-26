@@ -304,14 +304,15 @@
 // trackbar created in input.c's WM_CREATE). A separate, permanent
 // multiplier layered on top of the view zoom above (graphicsZoom/
 // MIN_ZOOM/MAX_ZOOM), so setting a robot size doesn't get disturbed by
-// mouse-wheel navigation zoom and vice versa. Range widened to 0.5-2.0
-// (was 0.25-1.0, shrink-only, capped at the design size) -- now covers
-// both shrinking (down to half) AND magnifying past the design size (up to
-// double), requested directly. graphics.c's g_robotScale now DEFAULTS to
-// this range's own minimum (0.5, i.e. the robot starts at half its design
-// size) rather than the old default of the range's MAX (1.0, full design
-// size) -- also requested directly ("1 becomes 0.5"), so the slider now
-// starts at its low end instead of its high end.
+// mouse-wheel navigation zoom and vice versa. Range is 0.5-2.0 (was
+// 0.25-1.0, shrink-only, capped at the design size) -- covers both
+// shrinking (down to half) AND magnifying past the design size (up to
+// double). graphics.c's g_robotScale DEFAULTS to 1.0 (this range's
+// midpoint-ish, explicitly requested) -- briefly defaulted to this range's
+// own minimum (0.5) earlier in this same project's history, reverted back
+// to 1.0 per direct request ("i want the default scaling to be 1"), now
+// paired with the MM_PER_WORLD_UNIT recalibration below so scale==1.0
+// hits specific, exact per-robot mm targets.
 //
 // Implemented purely as a projection-level multiplier (graphics.c's
 // g_robotScale, folded into effectiveZoom()) -- it never touches any
@@ -322,10 +323,7 @@
 // this slider's current value -- so the "Size: W x H mm" readout (and the
 // matching in-scene bounding box label) tracks the slider instead of
 // staying pinned to the fixed designed size. That's a presentation-layer
-// choice, not a change to this constant's own meaning. A direct
-// consequence of the new 0.5 default: whatever the mm readout showed at
-// the old 1.0 default (e.g. 60mm) now reads exactly half that (30mm) at
-// startup, since MM_PER_WORLD_UNIT itself is untouched.
+// choice, not a change to this constant's own meaning.
 #define ROBOT_SCALE_MIN 0.5f
 #define ROBOT_SCALE_MAX 2.0f
 
@@ -337,33 +335,50 @@
 // and canvas.c's robotPointToEnvWorld/robotLengthToEnvWorld, all of which
 // derive their own halfY the same way: ROBOT_VIEW_HALF_EXTENT / zoom.
 //
-// This is the number MM_PER_WORLD_UNIT below is actually calibrated
-// against: half-extent 9.0 -> full height 18 world units -> 675mm
-// (18 * MM_PER_WORLD_UNIT), and at a 16:9 aspect ratio, full width 32
-// units -> 1200mm -- exactly the 32:18 grid / 1200x675mm screen
-// MM_PER_WORLD_UNIT's own comment below describes. Was left at 1.5
+// This is the geometry MM_PER_WORLD_UNIT below is laid out against: at
+// effectiveZoom()==1, half-extent 9.0 -> full height 18 world units, full
+// width 32 units at 16:9 (32:18 reduces to 16:9) -- was left at 1.5
 // (leftover from an earlier "zoom in further by default" tweak that never
 // got reconciled with MM_PER_WORLD_UNIT) until this fix -- a ~6x mismatch
 // that made the mm readout wildly understate how much of the actual screen
 // the robot occupied at any given zoom/Robot-Size-slider setting (e.g. a
 // robot labeled 118mm wide at Robot Size 2.0 was actually rendering at
 // ~59% of the screen's width, not the ~10% "118 of 1200mm" would suggest).
+//
+// NOTE: MM_PER_WORLD_UNIT was later recalibrated (37.5 -> 75.0, see its own
+// comment below) to hit specific per-robot mm targets directly, which as a
+// side effect doubled what this same 32x18 grid now represents in real mm
+// (2400 x 1350 instead of the 1200 x 675 originally derived here) -- left
+// AS-IS on purpose (untouched) since the per-robot mm targets were the more
+// concrete, explicit requirement; this constant still only controls how
+// much of the SCREEN the robot occupies (a viewport/camera concern), which
+// is independent of the mm LABEL'S conversion factor below.
 #define ROBOT_VIEW_HALF_EXTENT 9.0f
 
-// Real-world size conversion: a full 16:9 screen (at ROBOT_VIEW_HALF_EXTENT's
-// own effectiveZoom()==1 baseline, see its comment above) represents a
-// 1200mm x 675mm physical area, laid out on a 32 x 18 unit grid (32:18
-// reduces to 16:9, same ratio) -- 1200/32 == 675/18 == 37.5, so that's a
-// single uniform scale, independent of X vs Y. This does NOT change any
-// existing world-unit coordinate (robot/environment geometry, hit-test
-// radii, etc. are all untouched) -- it's purely a read-only conversion
-// factor. Used by input.c's live robot size readout (hRobotSizeLabel) and
-// renderer.c's drawRobotSizeBox (both also scaled by the current
-// ROBOT_SCALE_MIN/MAX slider value -- see its own comment above) -- NOT
-// used by save.c's saveRockyAsRobArm Rob.txt/Arm.txt export any more (see
-// ROCKY_EXPORT_SCALE below, a separate, unrelated conversion for that
-// specific external consumer).
-#define MM_PER_WORLD_UNIT 37.5f
+// Real-world size conversion factor (world units -> mm), used by input.c's
+// live robot size readout (hRobotSizeLabel) and renderer.c's
+// drawRobotSizeBox (both also scaled by the current ROBOT_SCALE_MIN/MAX
+// slider value -- see its own comment above) -- NOT used by save.c's
+// saveRockyAsRobArm Rob.txt/Arm.txt export any more (see ROCKY_EXPORT_SCALE
+// below, a separate, unrelated conversion for that specific external
+// consumer).
+//
+// Recalibrated from 37.5 to 75.0 (exactly double) so that at Robot Size
+// slider == 1.0 (ROBOT_SCALE_MIN/MAX's default, see below), the "Size: W x
+// H mm" readout hits exact, explicitly requested targets: 118 x 50 mm for
+// Semni/Stilo, 88 x 23 mm for Rocky. Derived from each kind's real
+// robotBoundingBoxLocal (input.c) design bounding box -- Semni/Stilo's
+// full head+butt+seam-arc silhouette (1.569500 x 0.665749 world units,
+// pose-independent since it only reads body/torso fields) and Rocky's
+// ACTUAL runtime default rectangle, which is loaded from
+// Poses/rocky_home.txt (BODY_HALF_WIDTH=0.156112, BODY_HALF_HEIGHT=
+// 0.584827) rather than app_init.c's stale hardcoded 0.3/0.4 -- Rocky's
+// display width/height are also swapped per updateRobotSizeLabel's own
+// existing convention (raw 0.312224 x 1.169654 -> displayed 1.169654 x
+// 0.312224). Verified in Python against the exact rounding formula
+// updateRobotSizeLabel uses ((int)(units * MM_PER_WORLD_UNIT * robotScale
+// + 0.5f)): 75.0 lands on EXACTLY 118x50 and 88x23, no rounding slop.
+#define MM_PER_WORLD_UNIT 75.0f
 
 // Real-world-size bounding box overlay (renderer.c's drawRobotSizeBox) --
 // appears around the robot while the "Robot Size" slider (input.c's

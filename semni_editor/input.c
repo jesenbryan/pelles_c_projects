@@ -1210,22 +1210,35 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 PointF rockyShin1World = jointToWorld(rockyShin1MidLocal, app->robotScene.rocky.kneeCircle, app->robotScene.rocky.kneeAngle, rockyCenter, app->robotScene.rocky.angle);
                 PointF rockyShin2World = jointToWorld(rockyShin2MidLocal, app->robotScene.rocky.kneeCircle, app->robotScene.rocky.kneeAngle, rockyCenter, app->robotScene.rocky.angle);
 
+                // Requested directly: hovering a shin arc handle (not just
+                // dragging it) should also turn it yellow -- same treatment
+                // Semni's own hoverSeamArc1/hoverThigh1/etc. give their own
+                // arc handles.
+                BOOL hoverRockyShin1Now = isNear(app->mouseGL, rockyShin1World, ROCKY_SHIN_HANDLE_RADIUS);
+                BOOL hoverRockyShin2Now = isNear(app->mouseGL, rockyShin2World, ROCKY_SHIN_HANDLE_RADIUS);
+                app->hoverRockyShin1 = hoverRockyShin1Now;
+                app->hoverRockyShin2 = hoverRockyShin2Now;
+
                 const wchar_t* rockyHoverLabel = L"";
                 if (app->hoverRockyMassCenter)
                     rockyHoverLabel = L"Weight Balance";
                 else if (app->hoverRockyBody)
                     rockyHoverLabel = L"Body";
-                else if (app->hoverRockyEdge == ROCKY_EDGE_LEFT || app->hoverRockyEdge == ROCKY_EDGE_RIGHT)
-                    rockyHoverLabel = L"Body Width";
-                else if (app->hoverRockyEdge == ROCKY_EDGE_TOP || app->hoverRockyEdge == ROCKY_EDGE_BOTTOM)
-                    rockyHoverLabel = L"Body Height";
+                else if (app->hoverRockyEdge == ROCKY_EDGE_LEFT)
+                    rockyHoverLabel = L"Body Width 2";
+                else if (app->hoverRockyEdge == ROCKY_EDGE_RIGHT)
+                    rockyHoverLabel = L"Body Width 1";
+                else if (app->hoverRockyEdge == ROCKY_EDGE_TOP)
+                    rockyHoverLabel = L"Body Height 1";
+                else if (app->hoverRockyEdge == ROCKY_EDGE_BOTTOM)
+                    rockyHoverLabel = L"Body Height 2";
                 else if (app->hoverRockyKnee)
                     rockyHoverLabel = L"Knee";
                 else if (app->hoverRockyFoot)
                     rockyHoverLabel = L"Foot";
-                else if (isNear(app->mouseGL, rockyShin1World, ROCKY_SHIN_HANDLE_RADIUS))
+                else if (hoverRockyShin1Now)
                     rockyHoverLabel = L"Shin Arc 1";
-                else if (isNear(app->mouseGL, rockyShin2World, ROCKY_SHIN_HANDLE_RADIUS))
+                else if (hoverRockyShin2Now)
                     rockyHoverLabel = L"Shin Arc 2";
                 SetWindowText(app->ui.hHoverLabel, rockyHoverLabel);
 
@@ -1627,6 +1640,25 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     PointF stiloThigh2Arc1WorldHover = jointToWorld(stiloThigh2Arc1MidLocalHover, app->robotScene.stilo.hip2Circle, app->robotScene.stilo.hip2Angle, stiloCenter, stiloAngle);
                     PointF stiloThigh2Arc2WorldHover = jointToWorld(stiloThigh2Arc2MidLocalHover, app->robotScene.stilo.hip2Circle, app->robotScene.stilo.hip2Angle, stiloCenter, stiloAngle);
 
+                    // Requested directly: hovering one of these arc handles
+                    // (not just dragging it) should also turn it yellow --
+                    // same treatment as Semni's own hoverSeamArc1/hoverThigh1/
+                    // etc. above, reusing the exact positions the label
+                    // chain below already needs.
+                    BOOL hoverStiloSeamArc1Now = isNear(stiloMouse, stiloSeamArc1HandleWorldHover, ARC_HANDLE_RADIUS);
+                    BOOL hoverStiloSeamArc2Now = isNear(stiloMouse, stiloSeamArc2HandleWorldHover, ARC_HANDLE_RADIUS);
+                    BOOL hoverStiloThigh1Arc1Now = isNear(stiloMouse, stiloThigh1Arc1WorldHover, THIGH_HANDLE_RADIUS);
+                    BOOL hoverStiloThigh1Arc2Now = isNear(stiloMouse, stiloThigh1Arc2WorldHover, THIGH_HANDLE_RADIUS);
+                    BOOL hoverStiloThigh2Arc1Now = isNear(stiloMouse, stiloThigh2Arc1WorldHover, THIGH_HANDLE_RADIUS);
+                    BOOL hoverStiloThigh2Arc2Now = isNear(stiloMouse, stiloThigh2Arc2WorldHover, THIGH_HANDLE_RADIUS);
+
+                    app->hoverStiloSeamArc1 = hoverStiloSeamArc1Now;
+                    app->hoverStiloSeamArc2 = hoverStiloSeamArc2Now;
+                    app->hoverStiloThigh1Arc1 = hoverStiloThigh1Arc1Now;
+                    app->hoverStiloThigh1Arc2 = hoverStiloThigh1Arc2Now;
+                    app->hoverStiloThigh2Arc1 = hoverStiloThigh2Arc1Now;
+                    app->hoverStiloThigh2Arc2 = hoverStiloThigh2Arc2Now;
+
                     const wchar_t* stiloHoverLabel = L"";
 
                     // Priority order: Head, Butt, Seam Arc 1, Seam Arc 2,
@@ -1645,25 +1677,25 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                         stiloHoverLabel = L"Head";
                     else if (app->hoverStiloHead)
                         stiloHoverLabel = L"Butt";
-                    else if (isNear(stiloMouse, stiloSeamArc1HandleWorldHover, ARC_HANDLE_RADIUS))
+                    else if (hoverStiloSeamArc1Now)
                         stiloHoverLabel = L"Seam Arc 1";
-                    else if (isNear(stiloMouse, stiloSeamArc2HandleWorldHover, ARC_HANDLE_RADIUS))
+                    else if (hoverStiloSeamArc2Now)
                         stiloHoverLabel = L"Seam Arc 2";
                     else if (app->hoverStiloHip1)
                         stiloHoverLabel = L"Hip 1";
                     else if (app->hoverStiloFeet1)
                         stiloHoverLabel = L"Feet 1";
-                    else if (isNear(stiloMouse, stiloThigh1Arc1WorldHover, THIGH_HANDLE_RADIUS))
+                    else if (hoverStiloThigh1Arc1Now)
                         stiloHoverLabel = L"Thigh 1 Arc 1";
-                    else if (isNear(stiloMouse, stiloThigh1Arc2WorldHover, THIGH_HANDLE_RADIUS))
+                    else if (hoverStiloThigh1Arc2Now)
                         stiloHoverLabel = L"Thigh 1 Arc 2";
                     else if (app->hoverStiloHip2)
                         stiloHoverLabel = L"Hip 2";
                     else if (app->hoverStiloFeet2)
                         stiloHoverLabel = L"Feet 2";
-                    else if (isNear(stiloMouse, stiloThigh2Arc1WorldHover, THIGH_HANDLE_RADIUS))
+                    else if (hoverStiloThigh2Arc1Now)
                         stiloHoverLabel = L"Thigh 2 Arc 1";
-                    else if (isNear(stiloMouse, stiloThigh2Arc2WorldHover, THIGH_HANDLE_RADIUS))
+                    else if (hoverStiloThigh2Arc2Now)
                         stiloHoverLabel = L"Thigh 2 Arc 2";
 
                     SetWindowText(app->ui.hHoverLabel, stiloHoverLabel);
@@ -2161,6 +2193,25 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 PointF shin1WorldHover = nestedJointToWorld(shin1MidLocalHover, app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeAngle, app->robotScene.robot.innerCircle, app->robotScene.robot.hipAngle, center, angle);
                 PointF shin2WorldHover = nestedJointToWorld(shin2MidLocalHover, app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeAngle, app->robotScene.robot.innerCircle, app->robotScene.robot.hipAngle, center, angle);
 
+                // Requested directly: hovering one of these arc handles (not
+                // just dragging it) should also turn it yellow -- computed
+                // here, continuously, same as hoverHip/hoverKnee/etc. above,
+                // reusing the exact handle positions the label chain below
+                // already needs.
+                BOOL hoverSeamArc1Now = isNear(mouse, seamArc1HandleWorldHover, ARC_HANDLE_RADIUS);
+                BOOL hoverSeamArc2Now = isNear(mouse, seamArc2HandleWorldHover, ARC_HANDLE_RADIUS);
+                BOOL hoverThigh1Now = isNear(mouse, thigh1WorldHover, THIGH_HANDLE_RADIUS);
+                BOOL hoverThigh2Now = isNear(mouse, thigh2WorldHover, THIGH_HANDLE_RADIUS);
+                BOOL hoverShin1Now = isNear(mouse, shin1WorldHover, SHIN_HANDLE_RADIUS);
+                BOOL hoverShin2Now = isNear(mouse, shin2WorldHover, SHIN_HANDLE_RADIUS);
+
+                app->hoverSeamArc1 = hoverSeamArc1Now;
+                app->hoverSeamArc2 = hoverSeamArc2Now;
+                app->hoverThigh1 = hoverThigh1Now;
+                app->hoverThigh2 = hoverThigh2Now;
+                app->hoverShin1 = hoverShin1Now;
+                app->hoverShin2 = hoverShin2Now;
+
                 // Priority order: Head, Butt, Seam Arc 1, Seam Arc 2, Hip,
                 // Knee, Foot, Thigh Arc 1, Thigh Arc 2, Shin Arc 1, Shin Arc
                 // 2 -- mirrors WM_LBUTTONDOWN's hit-test order for
@@ -2190,9 +2241,9 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     hoverLabel = L"Head";
                 else if (app->hoverHead)
                     hoverLabel = L"Butt";
-                else if (isNear(mouse, seamArc1HandleWorldHover, ARC_HANDLE_RADIUS))
+                else if (hoverSeamArc1Now)
                     hoverLabel = L"Seam Arc 1";
-                else if (isNear(mouse, seamArc2HandleWorldHover, ARC_HANDLE_RADIUS))
+                else if (hoverSeamArc2Now)
                     hoverLabel = L"Seam Arc 2";
                 else if (app->hoverHip)
                     hoverLabel = L"Hip";
@@ -2200,13 +2251,13 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     hoverLabel = L"Knee";
                 else if (app->hoverFoot)
                     hoverLabel = L"Foot";
-                else if (isNear(mouse, thigh1WorldHover, THIGH_HANDLE_RADIUS))
+                else if (hoverThigh1Now)
                     hoverLabel = L"Thigh Arc 1";
-                else if (isNear(mouse, thigh2WorldHover, THIGH_HANDLE_RADIUS))
+                else if (hoverThigh2Now)
                     hoverLabel = L"Thigh Arc 2";
-                else if (isNear(mouse, shin1WorldHover, SHIN_HANDLE_RADIUS))
+                else if (hoverShin1Now)
                     hoverLabel = L"Shin Arc 1";
-                else if (isNear(mouse, shin2WorldHover, SHIN_HANDLE_RADIUS))
+                else if (hoverShin2Now)
                     hoverLabel = L"Shin Arc 2";
 
                 SetWindowText(app->ui.hHoverLabel, hoverLabel);
@@ -3661,15 +3712,15 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
              // Robot size slider: 0.5 - 2.0 (see ROBOT_SCALE_MIN/MAX in
              // config.h), mapped to an integer trackbar range of 50-200
              // (WM_HSCROLL below divides the position back down by 100).
-             // Starts at 50 (scale 0.5), matching graphics.c's
+             // Starts at 100 (scale 1.0), matching graphics.c's
              // g_robotScale default. Label shows the live value (see
              // WM_HSCROLL below), matching the ArcSpline panel's
              // "Thickness: N px" label (ui.c) -- initial text set to match
-             // this same 0.5 starting value so it doesn't briefly show a
-             // stale "1.00" before the user's first slider move.
+             // this same 1.0 starting value so it doesn't briefly show a
+             // stale value before the user's first slider move.
              app->ui.hScaleLabel = CreateWindow(
                 L"STATIC",
-                L"Scale: 0.50",
+                L"Scale: 1.00",
                 WS_VISIBLE | WS_CHILD | SS_LEFT,
                 0, 0, 10, 10,
                 hwnd,
@@ -3691,7 +3742,7 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             );
 
              SendMessage(app->ui.hScaleSlider, TBM_SETRANGE, TRUE, MAKELONG(50, 200));
-             SendMessage(app->ui.hScaleSlider, TBM_SETPOS, TRUE, 50);
+             SendMessage(app->ui.hScaleSlider, TBM_SETPOS, TRUE, 100);
 
              // View Segments toggle: every curve on Semni (seam/thigh/shin
              // arcs) is a trimmed segment of some circle -- this reveals

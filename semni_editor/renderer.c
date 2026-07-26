@@ -616,8 +616,8 @@ static void drawThighHandles(Semni b, RenderState* rs, float opacity)
     PointF thigh2World = jointToWorld(thigh2MidLocal, b.innerCircle, b.hipAngle, center, angle);
 
     drawHandle(kneeWorld, rs->draggingKnee || rs->hoverKnee, KNEE_HANDLE_RADIUS, opacity);
-    drawHandle(thigh1World, rs->draggingThigh1, THIGH_HANDLE_RADIUS, opacity);
-    drawHandle(thigh2World, rs->draggingThigh2, THIGH_HANDLE_RADIUS, opacity);
+    drawHandle(thigh1World, rs->draggingThigh1 || rs->hoverThigh1, THIGH_HANDLE_RADIUS, opacity);
+    drawHandle(thigh2World, rs->draggingThigh2 || rs->hoverThigh2, THIGH_HANDLE_RADIUS, opacity);
 }
 
 // Continues the leg past the knee: draws the foot joint and the two arcs
@@ -726,8 +726,8 @@ static void drawShinHandles(Semni b, RenderState* rs, float opacity)
     PointF shin2World = nestedJointToWorld(shin2MidLocal, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle);
 
     drawHandle(footWorld, rs->draggingFoot || rs->hoverFoot, FOOT_HANDLE_RADIUS, opacity);
-    drawHandle(shin1World, rs->draggingShin1, SHIN_HANDLE_RADIUS, opacity);
-    drawHandle(shin2World, rs->draggingShin2, SHIN_HANDLE_RADIUS, opacity);
+    drawHandle(shin1World, rs->draggingShin1 || rs->hoverShin1, SHIN_HANDLE_RADIUS, opacity);
+    drawHandle(shin2World, rs->draggingShin2 || rs->hoverShin2, SHIN_HANDLE_RADIUS, opacity);
 }
 
 void drawSemniHandles(Semni b, RenderState* rs, float opacity)
@@ -761,8 +761,8 @@ void drawSemniHandles(Semni b, RenderState* rs, float opacity)
     PointF seamArc1Handle = rotatePoint(seamArc1MidLocal, center, angle);
     PointF seamArc2Handle = rotatePoint(seamArc2MidLocal, center, angle);
 
-    drawHandle(seamArc1Handle, rs->draggingSeamArc1, ARC_HANDLE_RADIUS, opacity);
-    drawHandle(seamArc2Handle, rs->draggingSeamArc2, ARC_HANDLE_RADIUS, opacity);
+    drawHandle(seamArc1Handle, rs->draggingSeamArc1 || rs->hoverSeamArc1, ARC_HANDLE_RADIUS, opacity);
+    drawHandle(seamArc2Handle, rs->draggingSeamArc2 || rs->hoverSeamArc2, ARC_HANDLE_RADIUS, opacity);
 
     // joint circle handles: highlight on hover too, not just while dragging
     drawHandle(inner,
@@ -1081,20 +1081,50 @@ static void drawRockyBodyRect(Rocky b, RenderState* rs, float opacity)
     PointF c2 = rotatePoint((PointF){ b.bodyX + b.bodyHalfWidth, b.bodyY + b.bodyHalfHeight }, center, angle);
     PointF c3 = rotatePoint((PointF){ b.bodyX - b.bodyHalfWidth, b.bodyY + b.bodyHalfHeight }, center, angle);
 
-    // highlights the same way Semni's hip circle does in drawSemniBody --
-    // dragging (actively resizing/moving, whether via the body handle or
-    // one of the 4 edges) or a plain hover both light it up, since
-    // (unlike hoverHip) there's no Shift-gated rotate on this handle to
-    // disambiguate from.
-    BOOL rockyBodyActive = rs->draggingRockyBody || rs->hoverRockyBody
-                         || rs->draggingRockyEdge != ROCKY_EDGE_NONE
-                         || rs->hoverRockyEdge != ROCKY_EDGE_NONE;
-    setColor(rs, rockyBodyActive, 0.2f, 0.4f, 1.0f, opacity);
-    glBegin(GL_LINE_LOOP);
+    // Requested directly: a plain hover no longer lights up any part of
+    // the rectangle -- only an actual drag does (rs->hoverRockyBody/
+    // hoverRockyEdge are deliberately NOT read below anymore). And for the
+    // 2 resize edges specifically, dragging one doesn't highlight itself --
+    // it highlights the OTHER pair instead. Dragging a HEIGHT handle (top/
+    // bottom, changes bodyHalfHeight -- see input.c's draggingRockyEdge
+    // handling) visibly stretches the two WIDTH edges (left/right) taller/
+    // shorter, since THEIR length spans the height; those are what light up.
+    // Symmetrically, dragging a WIDTH handle (left/right, changes
+    // bodyHalfWidth) stretches the two HEIGHT edges (top/bottom, whose
+    // length spans the width), so those light up instead. Moving the whole
+    // body (draggingRockyBody) still lights up all 4 together, since that
+    // drag actually does move every edge at once.
+    BOOL rockyBodyMoveActive = rs->draggingRockyBody;
+    BOOL widthHandleDragging  = rs->draggingRockyEdge == ROCKY_EDGE_LEFT || rs->draggingRockyEdge == ROCKY_EDGE_RIGHT;
+    BOOL heightHandleDragging = rs->draggingRockyEdge == ROCKY_EDGE_TOP  || rs->draggingRockyEdge == ROCKY_EDGE_BOTTOM;
+
+    BOOL leftActive   = rockyBodyMoveActive || heightHandleDragging;
+    BOOL rightActive  = rockyBodyMoveActive || heightHandleDragging;
+    BOOL topActive    = rockyBodyMoveActive || widthHandleDragging;
+    BOOL bottomActive = rockyBodyMoveActive || widthHandleDragging;
+
+    setColor(rs, bottomActive, 0.2f, 0.4f, 1.0f, opacity);
+    glBegin(GL_LINES);
     glVertex2f(c0.x, c0.y);
     glVertex2f(c1.x, c1.y);
+    glEnd();
+
+    setColor(rs, rightActive, 0.2f, 0.4f, 1.0f, opacity);
+    glBegin(GL_LINES);
+    glVertex2f(c1.x, c1.y);
+    glVertex2f(c2.x, c2.y);
+    glEnd();
+
+    setColor(rs, topActive, 0.2f, 0.4f, 1.0f, opacity);
+    glBegin(GL_LINES);
     glVertex2f(c2.x, c2.y);
     glVertex2f(c3.x, c3.y);
+    glEnd();
+
+    setColor(rs, leftActive, 0.2f, 0.4f, 1.0f, opacity);
+    glBegin(GL_LINES);
+    glVertex2f(c3.x, c3.y);
+    glVertex2f(c0.x, c0.y);
     glEnd();
 }
 
@@ -1288,10 +1318,12 @@ void drawRockyBodyCircleHover(Rocky b, int hoveredIndex, float opacity)
 // same c0..c3 corner construction drawRockyBodyRect uses to actually draw
 // the rectangle (just returned as 4 separate start/end pairs here instead
 // of one GL_LINE_LOOP), so View Segments' hit-test/ghost-overlay always
-// lines up with what's really on screen. Order: bottom (c0->c1), right
-// (c1->c2), top (c2->c3), left (c3->c0) -- see renderer.h's own comment on
-// NUM_ROCKY_RECT_SEGMENTS for why this differs from Rob.txt's own edge
-// order.
+// lines up with what's really on screen. Order (requested directly): top
+// (c2->c3, Body Height 1), right (c1->c2, Body Width 1), bottom (c0->c1,
+// Body Height 2), left (c3->c0, Body Width 2) -- see renderer.h's own
+// comment on NUM_ROCKY_RECT_SEGMENTS for why this differs from both
+// drawRockyBodyRect's own bottom/right/top/left traversal and Rob.txt's
+// own edge order.
 void computeRockyRectSegments(Rocky b, RockyEdgeSegment out[NUM_ROCKY_RECT_SEGMENTS])
 {
     PointF center = getRockyCenter(b);
@@ -1302,10 +1334,10 @@ void computeRockyRectSegments(Rocky b, RockyEdgeSegment out[NUM_ROCKY_RECT_SEGME
     PointF c2 = rotatePoint((PointF){ b.bodyX + b.bodyHalfWidth, b.bodyY + b.bodyHalfHeight }, center, angle);
     PointF c3 = rotatePoint((PointF){ b.bodyX - b.bodyHalfWidth, b.bodyY + b.bodyHalfHeight }, center, angle);
 
-    out[0].start = c0; out[0].end = c1;   // bottom
-    out[1].start = c1; out[1].end = c2;   // right
-    out[2].start = c2; out[2].end = c3;   // top
-    out[3].start = c3; out[3].end = c0;   // left
+    out[0].start = c2; out[0].end = c3;   // top    (Body Height 1)
+    out[1].start = c1; out[1].end = c2;   // right  (Body Width 1)
+    out[2].start = c0; out[2].end = c1;   // bottom (Body Height 2)
+    out[3].start = c3; out[3].end = c0;   // left   (Body Width 2)
 }
 
 // One distinguishable color per rectangle edge -- see renderer.h's own
@@ -1566,8 +1598,8 @@ void drawRocky(Rocky b, RenderState* rs, int includeHandles, float opacity)
             PointF shin1World = jointToWorld(shin1MidLocal, b.kneeCircle, b.kneeAngle, center, b.angle);
             PointF shin2World = jointToWorld(shin2MidLocal, b.kneeCircle, b.kneeAngle, center, b.angle);
 
-            drawHandle(shin1World, rs->draggingRockyShin1, ROCKY_SHIN_HANDLE_RADIUS, opacity);
-            drawHandle(shin2World, rs->draggingRockyShin2, ROCKY_SHIN_HANDLE_RADIUS, opacity);
+            drawHandle(shin1World, rs->draggingRockyShin1 || rs->hoverRockyShin1, ROCKY_SHIN_HANDLE_RADIUS, opacity);
+            drawHandle(shin2World, rs->draggingRockyShin2 || rs->hoverRockyShin2, ROCKY_SHIN_HANDLE_RADIUS, opacity);
         }
 
         // One small handle at the midpoint of each of the 4 edges --
@@ -1720,8 +1752,8 @@ static void drawStiloThigh1Handles(Stilo b, RenderState* rs, float opacity)
     PointF thigh1Arc2World = jointToWorld(thigh1Arc2MidLocal, b.hip1Circle, b.hip1Angle, center, angle);
 
     drawHandle(feet1World, rs->draggingStiloFeet1 || rs->hoverStiloFeet1, KNEE_HANDLE_RADIUS, opacity);
-    drawHandle(thigh1Arc1World, rs->draggingStiloThigh1Arc1, THIGH_HANDLE_RADIUS, opacity);
-    drawHandle(thigh1Arc2World, rs->draggingStiloThigh1Arc2, THIGH_HANDLE_RADIUS, opacity);
+    drawHandle(thigh1Arc1World, rs->draggingStiloThigh1Arc1 || rs->hoverStiloThigh1Arc1, THIGH_HANDLE_RADIUS, opacity);
+    drawHandle(thigh1Arc2World, rs->draggingStiloThigh1Arc2 || rs->hoverStiloThigh1Arc2, THIGH_HANDLE_RADIUS, opacity);
 }
 
 // ---- Stilo leg 2 ----
@@ -1789,8 +1821,8 @@ static void drawStiloThigh2Handles(Stilo b, RenderState* rs, float opacity)
     PointF thigh2Arc2World = jointToWorld(thigh2Arc2MidLocal, b.hip2Circle, b.hip2Angle, center, angle);
 
     drawHandle(feet2World, rs->draggingStiloFeet2 || rs->hoverStiloFeet2, KNEE_HANDLE_RADIUS, opacity);
-    drawHandle(thigh2Arc1World, rs->draggingStiloThigh2Arc1, THIGH_HANDLE_RADIUS, opacity);
-    drawHandle(thigh2Arc2World, rs->draggingStiloThigh2Arc2, THIGH_HANDLE_RADIUS, opacity);
+    drawHandle(thigh2Arc1World, rs->draggingStiloThigh2Arc1 || rs->hoverStiloThigh2Arc1, THIGH_HANDLE_RADIUS, opacity);
+    drawHandle(thigh2Arc2World, rs->draggingStiloThigh2Arc2 || rs->hoverStiloThigh2Arc2, THIGH_HANDLE_RADIUS, opacity);
 }
 
 static void drawStiloHandles(Stilo b, RenderState* rs, float opacity)
@@ -1819,8 +1851,8 @@ static void drawStiloHandles(Stilo b, RenderState* rs, float opacity)
     PointF seamArc1Handle = rotatePoint(seamArc1MidLocal, center, angle);
     PointF seamArc2Handle = rotatePoint(seamArc2MidLocal, center, angle);
 
-    drawHandle(seamArc1Handle, rs->draggingStiloSeamArc1, ARC_HANDLE_RADIUS, opacity);
-    drawHandle(seamArc2Handle, rs->draggingStiloSeamArc2, ARC_HANDLE_RADIUS, opacity);
+    drawHandle(seamArc1Handle, rs->draggingStiloSeamArc1 || rs->hoverStiloSeamArc1, ARC_HANDLE_RADIUS, opacity);
+    drawHandle(seamArc2Handle, rs->draggingStiloSeamArc2 || rs->hoverStiloSeamArc2, ARC_HANDLE_RADIUS, opacity);
 
     drawHandle(hip1, rs->draggingStiloHip1 || rs->hoverStiloHip1, HIP_HANDLE_RADIUS, opacity);
     // leg 2's hip handle -- torso (head/butt/seam arcs) is shared and drawn
@@ -2054,6 +2086,13 @@ static void renderRobot(AppState* app, int includeHandles, float opacity)
     rs.draggingShin1 = app->draggingShin1;
     rs.draggingShin2 = app->draggingShin2;
 
+    rs.hoverSeamArc1 = app->hoverSeamArc1;
+    rs.hoverSeamArc2 = app->hoverSeamArc2;
+    rs.hoverThigh1 = app->hoverThigh1;
+    rs.hoverThigh2 = app->hoverThigh2;
+    rs.hoverShin1 = app->hoverShin1;
+    rs.hoverShin2 = app->hoverShin2;
+
     rs.hoverRockyBody = app->hoverRockyBody;
     rs.draggingRockyBody = app->draggingRockyBody;
     rs.hoverRockyEdge = app->hoverRockyEdge;
@@ -2066,6 +2105,8 @@ static void renderRobot(AppState* app, int includeHandles, float opacity)
     rs.draggingRockyMassCenter = app->draggingRockyMassCenter;
     rs.draggingRockyShin1 = app->draggingRockyShin1;
     rs.draggingRockyShin2 = app->draggingRockyShin2;
+    rs.hoverRockyShin1 = app->hoverRockyShin1;
+    rs.hoverRockyShin2 = app->hoverRockyShin2;
 
     rs.hoverHip = app->hoverHip;
     rs.hoverKnee = app->hoverKnee;
@@ -2084,6 +2125,10 @@ static void renderRobot(AppState* app, int includeHandles, float opacity)
     rs.hoverStiloFeet1 = app->hoverStiloFeet1;
     rs.hoverStiloHead = app->hoverStiloHead;
     rs.hoverStiloButt = app->hoverStiloButt;
+    rs.hoverStiloSeamArc1 = app->hoverStiloSeamArc1;
+    rs.hoverStiloSeamArc2 = app->hoverStiloSeamArc2;
+    rs.hoverStiloThigh1Arc1 = app->hoverStiloThigh1Arc1;
+    rs.hoverStiloThigh1Arc2 = app->hoverStiloThigh1Arc2;
 
     rs.draggingStiloHip2 = app->draggingStiloHip2;
     rs.draggingStiloFeet2 = app->draggingStiloFeet2;
@@ -2092,6 +2137,8 @@ static void renderRobot(AppState* app, int includeHandles, float opacity)
 
     rs.hoverStiloHip2 = app->hoverStiloHip2;
     rs.hoverStiloFeet2 = app->hoverStiloFeet2;
+    rs.hoverStiloThigh2Arc1 = app->hoverStiloThigh2Arc1;
+    rs.hoverStiloThigh2Arc2 = app->hoverStiloThigh2Arc2;
 
     rs.showSegments = app->showCircleSegments;
     rs.hoveredCircleSegment = app->hoveredCircleSegment;

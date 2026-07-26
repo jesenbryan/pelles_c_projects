@@ -437,17 +437,21 @@ typedef struct {
 
     // Rocky's 2 shin connector-arc handles (the fillets between kneeCircle
     // and footCircle, shinArc1Angle/shinArc2Angle) -- mirrors Semni's own
-    // draggingShin1/draggingShin2 treatment: drag-only highlight, no
-    // separate hover-highlight state at all (Semni's own shin handles
-    // don't track a hoverShin1/hoverShin2 either -- see renderer.c's
-    // drawShinHandles, which only lights up on rs->draggingShin1/
-    // draggingShin2, and input.c's hover-label block, which just runs
-    // isNear directly against the handle position rather than reading a
-    // stored flag). Kept as Rocky-specific fields rather than reusing
-    // Semni's draggingShin1/draggingShin2, same "separate struct being
-    // edited" reasoning as hoverRockyBody/draggingRockyBody above.
+    // draggingShin1/draggingShin2. Kept as Rocky-specific fields rather
+    // than reusing Semni's draggingShin1/draggingShin2, same "separate
+    // struct being edited" reasoning as hoverRockyBody/draggingRockyBody
+    // above.
     int draggingRockyShin1;
     int draggingRockyShin2;
+
+    // hover-only companions to draggingRockyShin1/draggingRockyShin2 --
+    // requested directly so hovering an arc (not just dragging it) turns
+    // its handle yellow, same treatment hoverHip/hoverKnee/etc. below give
+    // the joint circle handles. Set in input.c's WM_MOUSEMOVE alongside the
+    // isNear checks that already feed the Rocky hover label, read back by
+    // renderer.c's drawRockyLeg (rs->hoverRockyShin1/hoverRockyShin2).
+    int hoverRockyShin1;
+    int hoverRockyShin2;
 
     // captured once, when a Rocky shin arc drag starts: the mouse's
     // perpendicular-to-axis offset (relative to the knee->foot axis) and
@@ -472,14 +476,27 @@ typedef struct {
 
     // true while the mouse is merely hovering near a joint circle handle
     // (hip/knee/foot/head/butt) -- separate from the "dragging" flags
-    // above, so those handles can flash yellow just from a hover, while
-    // drag-only handles (thigh/shin bulges, seam attach points) keep
-    // their dragging-only highlight
+    // above, so those handles can flash yellow just from a hover
     int hoverHip;
     int hoverKnee;
     int hoverFoot;
     int hoverButt;
     int hoverHead;
+
+    // hover-only companions to draggingSeamArc1/draggingSeamArc2/
+    // draggingThigh1/draggingThigh2/draggingShin1/draggingShin2 above --
+    // requested directly so hovering one of these arc bulge/seam handles
+    // (not just dragging it) also turns it yellow, same treatment
+    // hoverHip/hoverKnee/etc. just above already give the joint circle
+    // handles. Set in input.c's WM_MOUSEMOVE from the same isNear checks
+    // that already feed the Design > Robot mode hover label, read back by
+    // renderer.c's drawSemniHandles/drawThighHandles/drawShinHandles.
+    int hoverSeamArc1;
+    int hoverSeamArc2;
+    int hoverThigh1;
+    int hoverThigh2;
+    int hoverShin1;
+    int hoverShin2;
 
     // captured once, when a knee drag starts: footCircle's fixed offset
     // from kneeCircle at that moment. Re-applied fresh every WM_MOUSEMOVE
@@ -548,6 +565,18 @@ typedef struct {
     int hoverStiloButt;
     int hoverStiloHead;
 
+    // hover-only companions to draggingStiloSeamArc1/draggingStiloSeamArc2/
+    // draggingStiloThigh1Arc1/draggingStiloThigh1Arc2 above -- requested
+    // directly, same "hover also turns the handle yellow" treatment as
+    // Semni's own hoverSeamArc1/hoverThigh1/etc. Set in input.c's
+    // WM_MOUSEMOVE from the same isNear checks that already feed the Stilo
+    // hover label, read back by renderer.c's drawStiloHandles/
+    // drawStiloThigh1Handles.
+    int hoverStiloSeamArc1;
+    int hoverStiloSeamArc2;
+    int hoverStiloThigh1Arc1;
+    int hoverStiloThigh1Arc2;
+
     // captured once, when a hip1 drag starts: feet1Circle's fixed offset
     // from hip1Circle at that moment, re-applied fresh every WM_MOUSEMOVE
     // -- same "pin the leg's shape, only the hip's own position changes"
@@ -576,6 +605,14 @@ typedef struct {
 
     int hoverStiloHip2;
     int hoverStiloFeet2;
+
+    // hover-only companions to draggingStiloThigh2Arc1/
+    // draggingStiloThigh2Arc2 above -- same "hover also turns the handle
+    // yellow" treatment as leg 1's own hoverStiloThigh1Arc1/
+    // hoverStiloThigh1Arc2. No leg-2 seam-arc equivalent -- both legs share
+    // the one torso's hoverStiloSeamArc1/hoverStiloSeamArc2 above.
+    int hoverStiloThigh2Arc1;
+    int hoverStiloThigh2Arc2;
 
     // same offset-capture idea as stiloHip1DragFeetOffset above, for leg
     // 2's own hip drag
