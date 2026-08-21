@@ -18,25 +18,25 @@ typedef struct {
     float headRadius;
     float buttRadius;
 
-    // seam arc 1/2 (formerly "top"/"bottom"), each a circular arc
-    // internally tangent to both the head and butt circles (distance
-    // between centers == radius difference) -- crease-free by
-    // construction instead of by manual placement. Each is parameterized
-    // by the ANGLE where it attaches to the head circle (same convention
-    // as circleEdge) -- the fillet's radius, center, and its other
-    // tangent point on the butt circle are all derived from that angle
-    // via a closed-form solve every frame (see geometry.h's
-    // filletFromAttachAngle()/internalTangentPoint()). Driving this by
-    // the attach angle instead of the radius directly means the drag
-    // handle sits exactly at circleEdge(head, headRadius, angle) -- the
-    // point IS the parameter, so it tracks the mouse exactly with no
-    // drift.
+    // seam arc 1/2 (formerly "top"/"bottom"): each a bezier curve between
+    // the head and butt circles, with NO tangency constraint at all. Each
+    // circle's attach point is fixed at exactly a quarter turn (90
+    // degrees) around from the head-butt axis (see geometry.h's
+    // circleHalfPoint) -- seam arc 1 uses one perpendicular side, seam arc
+    // 2 the other, so together the two arcs split each circle into exact
+    // halves. The only free parameter left is where the curve's control
+    // point sits: seamArc1Bulge/seamArc2Bulge is that control point's
+    // signed perpendicular distance from the head-butt axis midpoint (see
+    // geometry.h's axisBulgePoint) -- positive/negative picks which side,
+    // clamped by config.h's MIN_ARC_BULGE/MAX_ARC_BULGE so the drag handle
+    // can't flatten the seam to a line or flip it across to the other
+    // arc's side.
     //
-    // Named seamArc1Angle/seamArc2Angle to match the thighArc1Angle/
-    // thighArc2Angle/shinArc1Angle/shinArc2Angle convention below
-    // ([BodyPart]Arc[N]Angle, "Arc" trailing), rather than arcSeam1/2.
-    float seamArc1Angle;
-    float seamArc2Angle;
+    // Named seamArc1Bulge/seamArc2Bulge to match the thighArc1Bulge/
+    // thighArc2Bulge/shinArc1Bulge/shinArc2Bulge convention below
+    // ([BodyPart]Arc[N]Bulge, "Arc" trailing), rather than arcSeam1/2.
+    float seamArc1Bulge;
+    float seamArc2Bulge;
 
     Point innerCircle;
     float innerRadius;
@@ -47,52 +47,45 @@ typedef struct {
     Point kneeCircle;
     float kneeRadius;
 
-    // the two thigh seams, both parameterized by the angle where they
-    // attach to innerCircle (same circleEdge/filletFromAttachAngle
-    // convention as seamArc1Angle/seamArc2Angle), with the fillet's
-    // radius, center, and other tangent point (on kneeCircle) derived
-    // from that angle every frame. They're NOT the same kind of curve,
-    // though: thighArc1Angle uses the usual convex construction
-    // (filletFromAttachAngle) and bulges outward, away from the hip-knee
-    // axis, same as seam arc 1/2. thighArc2Angle uses the concave
-    // construction (filletFromAttachAngleConcave) instead and pinches
-    // inward, toward the hip-knee axis -- its safe range sits on the
-    // opposite side of innerCircle from thighArc1Angle's (facing
-    // kneeCircle rather than away from it), so the two no longer share a
-    // degenerate point to stay clear of and don't need the "each stays on
-    // its own side" locking seam arc 1/2 and thighArc1Angle still use
-    // (see THIGH_ARC_SIDE_MARGIN_DEG) -- they already can't collide.
-    float thighArc1Angle;
-    float thighArc2Angle;
+    // the two thigh seams, same fixed-attach-point construction as
+    // seamArc1Bulge/seamArc2Bulge above, just between innerCircle and
+    // kneeCircle instead of head/butt: each circle's attach point sits a
+    // fixed quarter turn around from the hip-knee axis (circleHalfPoint),
+    // and thighArc1Bulge/thighArc2Bulge is the curve's control point's
+    // signed perpendicular distance from the hip-knee axis midpoint
+    // (axisBulgePoint). thighArc1Bulge bulges outward, away from the
+    // body, continuing the leg's outer silhouette (same role seam arc 1/2
+    // play for the torso); thighArc2Bulge sits on the opposite
+    // perpendicular side and pinches inward, toward the crotch. Each is
+    // clamped to its own sign (config.h's MIN/MAX_THIGH_ARC_BULGE for arc
+    // 1, MIN/MAX_THIGH_ARC2_BULGE for arc 2) so dragging one can't cross
+    // over into the other's side.
+    float thighArc1Bulge;
+    float thighArc2Bulge;
 
     // continues the leg past the knee: ankleCircle is the next joint,
     // connected back to kneeCircle by two arcs, same pattern as the thigh
     Point ankleCircle;
     float ankleRadius;
 
-    // the two shin seams, both parameterized by the angle where they
-    // attach to kneeCircle (same circleEdge/filletFromAttachAngle
-    // convention as the thigh pair above), with the fillet's radius,
-    // center, and other tangent point (on ankleCircle) derived from that
-    // angle every frame. Same convex/concave split as thighArc1Angle/
-    // thighArc2Angle: shinArc1Angle uses the usual convex construction
-    // (filletFromAttachAngle) and bulges outward, away from the
-    // knee-ankle axis. shinArc2Angle uses the concave construction
-    // (filletFromAttachAngleConcave) instead and pinches inward, toward
-    // the knee-ankle axis -- its safe range sits on the opposite side of
-    // kneeCircle from shinArc1Angle's, so the two don't share a
-    // degenerate point to stay clear of and drag independently with no
-    // side-locking needed between them.
-    float shinArc1Angle;
-    float shinArc2Angle;
+    // the two shin seams, same fixed-attach-point construction as the
+    // thigh pair above, just between kneeCircle and ankleCircle instead
+    // of innerCircle/kneeCircle. shinArc1Bulge bulges outward, away from
+    // the knee-ankle axis (the shin's outer silhouette); shinArc2Bulge
+    // sits on the opposite perpendicular side and pinches inward. Same
+    // sign-locked clamping as the thigh pair (config.h's MIN/
+    // MAX_SHIN_ARC_BULGE and MIN/MAX_SHIN_ARC2_BULGE).
+    float shinArc1Bulge;
+    float shinArc2Bulge;
 
     float angle;      // whole-body rotation
 
     // hip joint rotation: rotates the whole leg chain (kneeCircle,
     // ankleCircle) around innerCircle, independent of the whole-body angle
-    // above. thighArc1Angle/thighArc2Angle/shinArc1Angle/shinArc2Angle
-    // don't need rotating themselves -- they're angles measured in their
-    // own joint's local frame (around innerCircle or kneeCircle), so
+    // above. thighArc1Bulge/thighArc2Bulge/shinArc1Bulge/shinArc2Bulge
+    // don't need rotating themselves -- they're perpendicular distances
+    // measured in their own joint's local frame (around the
+    // innerCircle<->kneeCircle or kneeCircle<->ankleCircle axis), so
     // hipAngle rotating that whole frame at render/hit-test time carries
     // them along automatically.
     float hipAngle;
@@ -157,10 +150,10 @@ typedef struct {
     // from kneeCircle at that moment. Re-applied fresh every WM_MOUSEMOVE
     // (kneeCircle + offset) instead of nudging it frame by frame, so the
     // shin's length can't drift over a long drag -- it's pinned to exactly
-    // what it was when the drag began. shinArc1Angle/shinArc2Angle need no
-    // equivalent offset -- like thighArc1Angle/thighArc2Angle, they're
-    // already knee-frame-relative angles, unaffected by moving kneeCircle
-    // itself.
+    // what it was when the drag began. shinArc1Bulge/shinArc2Bulge need no
+    // equivalent offset -- like thighArc1Bulge/thighArc2Bulge, they're
+    // already knee-frame-relative distances, unaffected by moving
+    // kneeCircle itself.
     Point kneeDragAnkleOffset;
 
     // same idea, but for a hip drag: the whole leg (kneeCircle,
@@ -169,39 +162,37 @@ typedef struct {
     // innerCircle is captured when the hip drag starts, then reapplied
     // fresh every WM_MOUSEMOVE (innerCircle + offset), so the whole leg's
     // shape/pose is preserved exactly instead of the rest of the leg
-    // staying behind while just the hip circle moves. thighArc1Angle/
-    // thighArc2Angle/shinArc1Angle/shinArc2Angle don't need an offset here
+    // staying behind while just the hip circle moves. thighArc1Bulge/
+    // thighArc2Bulge/shinArc1Bulge/shinArc2Bulge don't need an offset here
     // -- they're already relative to their own joint (hip or knee), so a
     // hip drag doesn't change any of them directly.
     Point hipDragKneeOffset;
     Point hipDragAnkleOffset;
 
-    // captured once, when a seam arc drag starts: the mouse's local Y and
-    // the arc's angle at that moment. Each WM_MOUSEMOVE then sets the
-    // angle to (start angle + scaled Y delta since the drag began)
-    // instead of solving for an exact angle from the absolute mouse
-    // position -- see ARC_DRAG_SENSITIVITY_DEG_PER_UNIT's comment in
-    // config.h for why. Only one arc can be dragged at a time, so seam
-    // arc 1 and seam arc 2 share these two fields.
-    float arcDragStartMouseY;
-    float arcDragStartAngle;
+    // captured once, when a seam arc drag starts: the mouse's perpendicular
+    // offset from the head-butt axis (geometry.h's perpOffsetOnAxis) and
+    // the arc's bulge distance at that moment. Each WM_MOUSEMOVE then sets
+    // the bulge to (start bulge + perp offset moved since the drag began),
+    // a plain 1:1 world-unit delta -- no angle/sensitivity conversion
+    // needed now that bulge IS the world-unit quantity being dragged, not
+    // a derived angle. Only one arc can be dragged at a time, so seam arc
+    // 1 and seam arc 2 share these two fields.
+    float arcDragStartPerp;
+    float arcDragStartBulge;
 
-    // same idea as arcDragStartMouseY/arcDragStartAngle, for the thigh
-    // arcs -- except the hip->knee axis isn't fixed horizontal like the
-    // butt-head axis (it rotates with hipAngle and the user can pose it
-    // any direction), so the drag reads the mouse's perpendicular-to-axis
-    // offset (geometry.h's perpOffsetOnAxis) instead of raw screen Y. Only
-    // one of thighArc1Angle/thighArc2Angle can be dragged at a time, so
-    // they share these two fields too.
+    // same idea as arcDragStartPerp/arcDragStartBulge, for the thigh arcs
+    // -- perpendicular offset measured against the hip->knee axis instead
+    // of head-butt. Only one of thighArc1Bulge/thighArc2Bulge can be
+    // dragged at a time, so they share these two fields too.
     float thighArcDragStartPerp;
-    float thighArcDragStartAngle;
+    float thighArcDragStartBulge;
 
     // same idea again, for the shin arcs -- perpendicular offset measured
     // against the knee->ankle axis instead of hip->knee. Only one of
-    // shinArc1Angle/shinArc2Angle can be dragged at a time, so they share
+    // shinArc1Bulge/shinArc2Bulge can be dragged at a time, so they share
     // these two fields too.
     float shinArcDragStartPerp;
-    float shinArcDragStartAngle;
+    float shinArcDragStartBulge;
 
     Point mouseGL;
     DWORD lastLogTime;

@@ -118,8 +118,8 @@ int saveRobotAsEquations(const char* filename, AppState* app)
     fprintf(f, "BUTT_RADIUS=%.6f\n", robot->buttRadius);
 
     // BODY - Seam Arcs
-    fprintf(f, "SEAM_ARC1_ANGLE=%.6f\n", robot->seamArc1Angle);
-    fprintf(f, "SEAM_ARC2_ANGLE=%.6f\n", robot->seamArc2Angle);
+    fprintf(f, "SEAM_ARC1_BULGE=%.6f\n", robot->seamArc1Bulge);
+    fprintf(f, "SEAM_ARC2_BULGE=%.6f\n", robot->seamArc2Bulge);
 
     // HIP Joint
     fprintf(f, "HIP_X=%.6f\n", robot->innerCircle.x);
@@ -134,8 +134,8 @@ int saveRobotAsEquations(const char* filename, AppState* app)
     fprintf(f, "KNEE_ANGLE=%.6f\n", robot->kneeAngle);
 
     // THIGH - Arcs
-    fprintf(f, "THIGH_ARC1_ANGLE=%.6f\n", robot->thighArc1Angle);
-    fprintf(f, "THIGH_ARC2_ANGLE=%.6f\n", robot->thighArc2Angle);
+    fprintf(f, "THIGH_ARC1_BULGE=%.6f\n", robot->thighArc1Bulge);
+    fprintf(f, "THIGH_ARC2_BULGE=%.6f\n", robot->thighArc2Bulge);
 
     // SHIN - Ankle Circle
     fprintf(f, "ANKLE_X=%.6f\n", robot->ankleCircle.x);
@@ -143,8 +143,8 @@ int saveRobotAsEquations(const char* filename, AppState* app)
     fprintf(f, "ANKLE_RADIUS=%.6f\n", robot->ankleRadius);
 
     // SHIN - Arcs
-    fprintf(f, "SHIN_ARC1_ANGLE=%.6f\n", robot->shinArc1Angle);
-    fprintf(f, "SHIN_ARC2_ANGLE=%.6f\n", robot->shinArc2Angle);
+    fprintf(f, "SHIN_ARC1_BULGE=%.6f\n", robot->shinArc1Bulge);
+    fprintf(f, "SHIN_ARC2_BULGE=%.6f\n", robot->shinArc2Bulge);
 
     // BODY - Whole
     fprintf(f, "BODY_ANGLE=%.6f\n", robot->angle);

@@ -77,7 +77,7 @@ HWND platformCreateMainWindow(HINSTANCE hInst, int nShowCmd, WNDPROC wndProc, HM
     // repaint of the parent's client area covers it and it never appears.
     HWND hwnd = CreateWindow(
         L"Semni",
-        L"Semni",
+        L"RoboBuilder",
         WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
         CW_USEDEFAULT, CW_USEDEFAULT,
         800, 600,

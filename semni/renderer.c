@@ -27,47 +27,18 @@ void drawCircle(Point c, float r)
     glEnd();
 }
 
-// Draws a circular arc that passes through p0, p1, and p2 (p1 is the
-// "bulge" handle, same role it played as the bezier control point).
-void drawArc(Point p0, Point p1, Point p2)
+// Draws a pure quadratic bezier curve with p0/p2 as its two endpoints and
+// p1 as its actual control point (not solved backwards to land ON the
+// curve -- p1 just pulls the curve toward itself, standard bezier
+// behavior, so the curve generally does NOT pass through p1 itself,
+// unlike the old circular arc). p0/p2 now come from geometry.h's
+// circleHalfPoint -- a fixed "quarter turn around from the axis" point on
+// each circle, with no tangency solve involved at all -- and p1 comes
+// from axisBulgePoint, a freely-draggable perpendicular offset from the
+// axis midpoint. Callers just hand this whichever three points they've
+// built; the function itself doesn't care where they came from.
+void drawFilletCurve(Point p0, Point p1, Point p2)
 {
-    Circle circle = circumcircle(p0, p1, p2);
-
-    if (!circle.valid)
-    {
-        // p0, p1, p2 are (nearly) collinear -- fall back to straight lines
-        glBegin(GL_LINE_STRIP);
-        glVertex2f(p0.x, p0.y);
-        glVertex2f(p1.x, p1.y);
-        glVertex2f(p2.x, p2.y);
-        glEnd();
-        return;
-    }
-
-    float a0 = atan2f(p0.y - circle.center.y, p0.x - circle.center.x);
-    float a1 = atan2f(p1.y - circle.center.y, p1.x - circle.center.x);
-    float a2 = atan2f(p2.y - circle.center.y, p2.x - circle.center.x);
-
-    const float TWO_PI = 2.0f * 3.1415926f;
-
-    // sweep from a0 to a2, normalized into (-PI, PI]
-    float sweep = a2 - a0;
-    while (sweep <= -3.1415926f) sweep += TWO_PI;
-    while (sweep > 3.1415926f) sweep -= TWO_PI;
-
-    // where does a1 fall relative to a0, using the same normalization?
-    float toMid = a1 - a0;
-    while (toMid <= -3.1415926f) toMid += TWO_PI;
-    while (toMid > 3.1415926f) toMid -= TWO_PI;
-
-    // if a1 isn't on the short way from a0 to a2, go the long way around
-    int midOnShortPath = (sweep >= 0.0f)
-        ? (toMid >= 0.0f && toMid <= sweep)
-        : (toMid <= 0.0f && toMid >= sweep);
-
-    if (!midOnShortPath)
-        sweep = (sweep >= 0.0f) ? sweep - TWO_PI : sweep + TWO_PI;
-
     const int segments = 40;
 
     glBegin(GL_LINE_STRIP);
@@ -75,12 +46,13 @@ void drawArc(Point p0, Point p1, Point p2)
     for (int i = 0; i <= segments; i++)
     {
         float t = (float)i / (float)segments;
-        float a = a0 + sweep * t;
+        float u = 1.0f - t;
 
-        glVertex2f(
-            circle.center.x + cosf(a) * circle.radius,
-            circle.center.y + sinf(a) * circle.radius
-        );
+        // standard quadratic bezier basis: (1-t)^2*p0 + 2*(1-t)*t*p1 + t^2*p2
+        float bx = u * u * p0.x + 2.0f * u * t * p1.x + t * t * p2.x;
+        float by = u * u * p0.y + 2.0f * u * t * p1.y + t * t * p2.y;
+
+        glVertex2f(bx, by);
     }
 
     glEnd();
@@ -172,55 +144,48 @@ void drawSemniBody(Semni b, RenderState* rs)
     setColor(rs->draggingInner || (rs->hoverHip && !rs->shiftHeld), 0.2f, 0.4f, 1.0f);
     drawCircle(inner, b.innerRadius);
 
-    // seam arc 1/2 (formerly "top"/"bottom"): each is a circular arc
-    // internally tangent to both the head and butt circles, parameterized
-    // by the angle where it attaches to the head circle (seamArc1Angle/
-    // seamArc2Angle) -- the fillet's radius, center, and its other
-    // tangent point (on butt) all fall out of a closed-form solve. Done
-    // in local (unrotated) space, then rotated into world space at the
-    // end, same pattern used elsewhere for local-frame points.
+    // seam arc 1/2 (formerly "top"/"bottom"): each a bezier curve between
+    // the head and butt circles, with NO tangency solve at all. Each
+    // circle's attach point is fixed at exactly a quarter turn (90
+    // degrees) around from the head-butt axis (circleHalfPoint) -- seam
+    // arc 1 uses side +1, seam arc 2 side -1, so together they split each
+    // circle into exact halves. Done in local (unrotated) space, then
+    // rotated into world space at the end, same pattern used elsewhere
+    // for local-frame points.
     Point headLocal = { b.headX, b.y };
     Point buttLocal = { b.buttX, b.y };
-    Point bodyMidLocal = { (headLocal.x + buttLocal.x) * 0.5f, (headLocal.y + buttLocal.y) * 0.5f };
 
-    Fillet seamArc1Fillet = filletFromAttachAngle(headLocal, b.headRadius, buttLocal, b.buttRadius, b.seamArc1Angle, MIN_ARC_R, MAX_ARC_R);
-    Point seamArc1HeadTangentLocal = circleEdge(headLocal, b.headRadius, b.seamArc1Angle); // exact, by definition of the attach angle
-    Point seamArc1ButtTangentLocal = internalTangentPoint(seamArc1Fillet.center, seamArc1Fillet.radius, buttLocal, b.buttRadius);
-    // hint point for drawArc: the point on the fillet circle nearest the
-    // body's midline, so it sweeps the near/visible arc instead of the
-    // far side of a possibly-huge circle
-    Point seamArc1NearLocal = circleTowardPoint(seamArc1Fillet.center, seamArc1Fillet.radius, bodyMidLocal);
+    Point seamArc1HeadLocal = circleHalfPoint(headLocal, b.headRadius, headLocal, buttLocal, +1);
+    Point seamArc1ButtLocal = circleHalfPoint(buttLocal, b.buttRadius, headLocal, buttLocal, +1);
+    Point seamArc1BulgeLocal = axisBulgePoint(headLocal, buttLocal, b.seamArc1Bulge);
 
-    Fillet seamArc2Fillet = filletFromAttachAngle(headLocal, b.headRadius, buttLocal, b.buttRadius, b.seamArc2Angle, MIN_ARC_R, MAX_ARC_R);
-    Point seamArc2HeadTangentLocal = circleEdge(headLocal, b.headRadius, b.seamArc2Angle);
-    Point seamArc2ButtTangentLocal = internalTangentPoint(seamArc2Fillet.center, seamArc2Fillet.radius, buttLocal, b.buttRadius);
-    Point seamArc2NearLocal = circleTowardPoint(seamArc2Fillet.center, seamArc2Fillet.radius, bodyMidLocal);
+    Point seamArc2HeadLocal = circleHalfPoint(headLocal, b.headRadius, headLocal, buttLocal, -1);
+    Point seamArc2ButtLocal = circleHalfPoint(buttLocal, b.buttRadius, headLocal, buttLocal, -1);
+    Point seamArc2BulgeLocal = axisBulgePoint(headLocal, buttLocal, b.seamArc2Bulge);
 
-    // seamArc1HeadTangentLocal/seamArc1NearLocal/seamArc1ButtTangentLocal
-    // all sit exactly on the same known circle by construction, so
-    // feeding them through the existing 3-point drawArc reuses its
-    // circumcircle + sweep-direction logic for free -- the near-pole
-    // point just tells it which way (short or long way around) to sweep
+    // seamArc1HeadLocal/seamArc1BulgeLocal/seamArc1ButtLocal feed straight
+    // into drawFilletCurve as p0/p1/p2 -- the two fixed attach points and
+    // the draggable bulge control point
     //
-    // dragging either seam handle updates BOTH seamArc1Angle and
-    // seamArc2Angle (see WM_MOUSEMOVE's mirrored assignment), so both
+    // dragging either seam handle updates BOTH seamArc1Bulge and
+    // seamArc2Bulge (see WM_MOUSEMOVE's mirrored assignment), so both
     // arcs highlight together too -- otherwise only the one under the
     // cursor would turn blue even though the other is visibly moving too
     int seamActive = rs->draggingSeamArc1 || rs->draggingSeamArc2;
 
-    Point seamArc1P0 = rotatePoint(seamArc1HeadTangentLocal, center, angle);
-    Point seamArc1P1 = rotatePoint(seamArc1NearLocal, center, angle);
-    Point seamArc1P2 = rotatePoint(seamArc1ButtTangentLocal, center, angle);
+    Point seamArc1P0 = rotatePoint(seamArc1HeadLocal, center, angle);
+    Point seamArc1P1 = rotatePoint(seamArc1BulgeLocal, center, angle);
+    Point seamArc1P2 = rotatePoint(seamArc1ButtLocal, center, angle);
 
-    Point seamArc2P0 = rotatePoint(seamArc2HeadTangentLocal, center, angle);
-    Point seamArc2P1 = rotatePoint(seamArc2NearLocal, center, angle);
-    Point seamArc2P2 = rotatePoint(seamArc2ButtTangentLocal, center, angle);
-
-    setColor(seamActive, 0.2f, 0.4f, 1.0f);
-    drawArc(seamArc1P0, seamArc1P1, seamArc1P2);
+    Point seamArc2P0 = rotatePoint(seamArc2HeadLocal, center, angle);
+    Point seamArc2P1 = rotatePoint(seamArc2BulgeLocal, center, angle);
+    Point seamArc2P2 = rotatePoint(seamArc2ButtLocal, center, angle);
 
     setColor(seamActive, 0.2f, 0.4f, 1.0f);
-    drawArc(seamArc2P0, seamArc2P1, seamArc2P2);
+    drawFilletCurve(seamArc1P0, seamArc1P1, seamArc1P2);
+
+    setColor(seamActive, 0.2f, 0.4f, 1.0f);
+    drawFilletCurve(seamArc2P0, seamArc2P1, seamArc2P2);
 }
 
 // Draws the knee joint and the two arcs connecting it back to the inner
@@ -266,28 +231,20 @@ static void drawThigh(Semni b, RenderState* rs)
     setColor(hipRotateHint || (rs->hoverKnee && !rs->shiftHeld && !rs->draggingKnee), 0.2f, 0.4f, 1.0f);
     drawCircle(kneeWorld, b.kneeRadius);
 
-    // the two thigh arcs: same tangent-fillet construction as the
+    // the two thigh arcs: same fixed-attach-point construction as the
     // head/butt seams, just between innerCircle and kneeCircle -- worked
     // out in the leg's own local (pre-hipAngle) frame, then rotated into
     // world space at the end, same pattern drawSemniBody uses for the
-    // head/butt seams (which work in pre-body-angle local space)
-    Point axisMidLocal = { (b.innerCircle.x + b.kneeCircle.x) * 0.5f, (b.innerCircle.y + b.kneeCircle.y) * 0.5f };
+    // head/butt seams (which work in pre-body-angle local space).
+    // thighArc1 (outer silhouette) uses side -1, thighArc2 (inner pinch)
+    // uses side +1 -- see app.h's comment for why the sides land this way.
+    Point thigh1InnerLocal = circleHalfPoint(b.innerCircle, b.innerRadius, b.innerCircle, b.kneeCircle, -1);
+    Point thigh1KneeLocal = circleHalfPoint(b.kneeCircle, b.kneeRadius, b.innerCircle, b.kneeCircle, -1);
+    Point thigh1BulgeLocal = axisBulgePoint(b.innerCircle, b.kneeCircle, b.thighArc1Bulge);
 
-    Fillet thigh1Fillet = filletFromAttachAngle(b.innerCircle, b.innerRadius, b.kneeCircle, b.kneeRadius, b.thighArc1Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC_R);
-    Point thigh1InnerTangentLocal = circleEdge(b.innerCircle, b.innerRadius, b.thighArc1Angle);
-    Point thigh1KneeTangentLocal = internalTangentPoint(thigh1Fillet.center, thigh1Fillet.radius, b.kneeCircle, b.kneeRadius);
-    Point thigh1NearLocal = circleTowardPoint(thigh1Fillet.center, thigh1Fillet.radius, axisMidLocal);
-
-    // thighArc2Angle uses the concave construction (bulges inward instead
-    // of outward -- see app.h's comment). The knee-side tangent point for
-    // an externally-tangent fillet is just circleTowardPoint(fillet,
-    // kneeCircle) instead of internalTangentPoint -- externally tangent
-    // circles touch exactly on the line between their centers, which is
-    // exactly what circleTowardPoint finds.
-    Fillet thigh2Fillet = filletFromAttachAngleConcave(b.innerCircle, b.innerRadius, b.kneeCircle, b.kneeRadius, b.thighArc2Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC2_CONCAVE_R);
-    Point thigh2InnerTangentLocal = circleEdge(b.innerCircle, b.innerRadius, b.thighArc2Angle);
-    Point thigh2KneeTangentLocal = circleTowardPoint(thigh2Fillet.center, thigh2Fillet.radius, b.kneeCircle);
-    Point thigh2NearLocal = circleTowardPoint(thigh2Fillet.center, thigh2Fillet.radius, axisMidLocal);
+    Point thigh2InnerLocal = circleHalfPoint(b.innerCircle, b.innerRadius, b.innerCircle, b.kneeCircle, +1);
+    Point thigh2KneeLocal = circleHalfPoint(b.kneeCircle, b.kneeRadius, b.innerCircle, b.kneeCircle, +1);
+    Point thigh2BulgeLocal = axisBulgePoint(b.innerCircle, b.kneeCircle, b.thighArc2Bulge);
 
     // dragging the knee circle also stretches/shrinks both thigh arcs
     // (they attach to kneeCircle, which just moved along the hip->knee
@@ -295,14 +252,14 @@ static void drawThigh(Semni b, RenderState* rs)
     // so that gets the same blue highlight as actually dragging an arc's
     // own handle, same "carries other parts along" idea as hipRotateHint
     setColor(rs->draggingThigh1 || rs->draggingKnee || hipRotateHint, 0.2f, 0.4f, 1.0f);
-    drawArc(jointToWorld(thigh1InnerTangentLocal, b.innerCircle, b.hipAngle, center, angle),
-            jointToWorld(thigh1NearLocal, b.innerCircle, b.hipAngle, center, angle),
-            jointToWorld(thigh1KneeTangentLocal, b.innerCircle, b.hipAngle, center, angle));
+    drawFilletCurve(jointToWorld(thigh1InnerLocal, b.innerCircle, b.hipAngle, center, angle),
+            jointToWorld(thigh1BulgeLocal, b.innerCircle, b.hipAngle, center, angle),
+            jointToWorld(thigh1KneeLocal, b.innerCircle, b.hipAngle, center, angle));
 
     setColor(rs->draggingThigh2 || rs->draggingKnee || hipRotateHint, 0.2f, 0.4f, 1.0f);
-    drawArc(jointToWorld(thigh2InnerTangentLocal, b.innerCircle, b.hipAngle, center, angle),
-            jointToWorld(thigh2NearLocal, b.innerCircle, b.hipAngle, center, angle),
-            jointToWorld(thigh2KneeTangentLocal, b.innerCircle, b.hipAngle, center, angle));
+    drawFilletCurve(jointToWorld(thigh2InnerLocal, b.innerCircle, b.hipAngle, center, angle),
+            jointToWorld(thigh2BulgeLocal, b.innerCircle, b.hipAngle, center, angle),
+            jointToWorld(thigh2KneeLocal, b.innerCircle, b.hipAngle, center, angle));
 }
 
 static void drawThighHandles(Semni b, RenderState* rs)
@@ -312,19 +269,13 @@ static void drawThighHandles(Semni b, RenderState* rs)
 
     Point kneeWorld = jointToWorld(b.kneeCircle, b.innerCircle, b.hipAngle, center, angle);
 
-    // thigh arc handles: pinned to the exact middle of the hip->knee axis
-    // (circleAtAxisMid), same idea as the head/butt seam handles' use of
-    // circleAtX -- except the axis here can point any direction, so the
-    // generalized version is needed instead of pinning to a fixed X
-    Point axisMidLocal = { (b.innerCircle.x + b.kneeCircle.x) * 0.5f, (b.innerCircle.y + b.kneeCircle.y) * 0.5f };
-
-    Fillet thigh1Fillet = filletFromAttachAngle(b.innerCircle, b.innerRadius, b.kneeCircle, b.kneeRadius, b.thighArc1Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC_R);
-    Point thigh1NearLocal = circleTowardPoint(thigh1Fillet.center, thigh1Fillet.radius, axisMidLocal);
-    Point thigh1MidLocal = circleAtAxisMid(thigh1Fillet.center, thigh1Fillet.radius, b.innerCircle, b.kneeCircle, thigh1NearLocal);
-
-    Fillet thigh2Fillet = filletFromAttachAngleConcave(b.innerCircle, b.innerRadius, b.kneeCircle, b.kneeRadius, b.thighArc2Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC2_CONCAVE_R);
-    Point thigh2NearLocal = circleTowardPoint(thigh2Fillet.center, thigh2Fillet.radius, axisMidLocal);
-    Point thigh2MidLocal = circleAtAxisMid(thigh2Fillet.center, thigh2Fillet.radius, b.innerCircle, b.kneeCircle, thigh2NearLocal);
+    // thigh arc handles: sit exactly at the curve's bezier control point
+    // (axisBulgePoint) -- that point IS the draggable parameter now (no
+    // tangency solve to derive it from), so the handle can just be drawn
+    // where the curve is actually being pulled toward, with no separate
+    // "find the point on the fillet circle nearest the axis" step needed
+    Point thigh1MidLocal = axisBulgePoint(b.innerCircle, b.kneeCircle, b.thighArc1Bulge);
+    Point thigh2MidLocal = axisBulgePoint(b.innerCircle, b.kneeCircle, b.thighArc2Bulge);
 
     Point thigh1World = jointToWorld(thigh1MidLocal, b.innerCircle, b.hipAngle, center, angle);
     Point thigh2World = jointToWorld(thigh2MidLocal, b.innerCircle, b.hipAngle, center, angle);
@@ -335,13 +286,13 @@ static void drawThighHandles(Semni b, RenderState* rs)
 }
 
 // Continues the leg past the knee: draws the ankle joint and the two arcs
-// connecting it back to kneeCircle, same tangent-fillet construction as
-// drawThigh -- the shin arcs are parameterized by the angle where they
-// attach to kneeCircle (shinArc1Angle/shinArc2Angle), just one joint
-// further down the chain. The ankle and shin points first rotate around
-// kneeCircle by kneeAngle (the knee's own rotation), then follow the
-// hip/body transforms like the rest of the leg -- so scrolling on the
-// knee handle swings the shin without touching the thigh, hip, or body.
+// connecting it back to kneeCircle, same fixed-attach-point construction
+// as drawThigh -- the shin arcs' bulge control points are
+// shinArc1Bulge/shinArc2Bulge, just one joint further down the chain. The
+// ankle and shin points first rotate around kneeCircle by kneeAngle (the
+// knee's own rotation), then follow the hip/body transforms like the rest
+// of the leg -- so scrolling on the knee handle swings the shin without
+// touching the thigh, hip, or body.
 static void drawShin(Semni b, RenderState* rs)
 {
     Point center = getCenter(b);
@@ -381,25 +332,16 @@ static void drawShin(Semni b, RenderState* rs)
 
     // worked out in the shin's own local (pre-kneeAngle) frame, then
     // carried through the nested knee->hip->body transforms at the end,
-    // same pattern drawThigh uses for its pre-hipAngle local frame
-    Point axisMidLocal = { (b.kneeCircle.x + b.ankleCircle.x) * 0.5f, (b.kneeCircle.y + b.ankleCircle.y) * 0.5f };
+    // same pattern drawThigh uses for its pre-hipAngle local frame.
+    // shinArc1 (outer silhouette) uses side -1, shinArc2 (inner pinch)
+    // uses side +1 -- same convention as thighArc1/thighArc2.
+    Point shin1KneeLocal = circleHalfPoint(b.kneeCircle, b.kneeRadius, b.kneeCircle, b.ankleCircle, -1);
+    Point shin1AnkleLocal = circleHalfPoint(b.ankleCircle, b.ankleRadius, b.kneeCircle, b.ankleCircle, -1);
+    Point shin1BulgeLocal = axisBulgePoint(b.kneeCircle, b.ankleCircle, b.shinArc1Bulge);
 
-    Fillet shin1Fillet = filletFromAttachAngle(b.kneeCircle, b.kneeRadius, b.ankleCircle, b.ankleRadius, b.shinArc1Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC_R);
-    Point shin1KneeTangentLocal = circleEdge(b.kneeCircle, b.kneeRadius, b.shinArc1Angle);
-    Point shin1AnkleTangentLocal = internalTangentPoint(shin1Fillet.center, shin1Fillet.radius, b.ankleCircle, b.ankleRadius);
-    Point shin1NearLocal = circleTowardPoint(shin1Fillet.center, shin1Fillet.radius, axisMidLocal);
-
-    // shinArc2Angle uses the concave construction (bulges inward instead
-    // of outward -- see app.h's comment), same as thighArc2Angle. The
-    // ankle-side tangent point for an externally-tangent fillet is just
-    // circleTowardPoint(fillet, ankleCircle) instead of
-    // internalTangentPoint -- externally tangent circles touch exactly on
-    // the line between their centers, which is exactly what
-    // circleTowardPoint finds.
-    Fillet shin2Fillet = filletFromAttachAngleConcave(b.kneeCircle, b.kneeRadius, b.ankleCircle, b.ankleRadius, b.shinArc2Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC2_CONCAVE_R);
-    Point shin2KneeTangentLocal = circleEdge(b.kneeCircle, b.kneeRadius, b.shinArc2Angle);
-    Point shin2AnkleTangentLocal = circleTowardPoint(shin2Fillet.center, shin2Fillet.radius, b.ankleCircle);
-    Point shin2NearLocal = circleTowardPoint(shin2Fillet.center, shin2Fillet.radius, axisMidLocal);
+    Point shin2KneeLocal = circleHalfPoint(b.kneeCircle, b.kneeRadius, b.kneeCircle, b.ankleCircle, +1);
+    Point shin2AnkleLocal = circleHalfPoint(b.ankleCircle, b.ankleRadius, b.kneeCircle, b.ankleCircle, +1);
+    Point shin2BulgeLocal = axisBulgePoint(b.kneeCircle, b.ankleCircle, b.shinArc2Bulge);
 
     // dragging the ankle circle also stretches/shrinks both shin arcs
     // (they attach to ankleCircle, which just moved along the knee->ankle
@@ -407,14 +349,14 @@ static void drawShin(Semni b, RenderState* rs)
     // same "carries the other visibly-reacting parts along" idea as
     // draggingKnee getting added to the thigh arcs in drawThigh
     setColor(rs->draggingShin1 || rs->draggingAnkle || shinAffected, 0.2f, 0.4f, 1.0f);
-    drawArc(nestedJointToWorld(shin1KneeTangentLocal, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle),
-            nestedJointToWorld(shin1NearLocal, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle),
-            nestedJointToWorld(shin1AnkleTangentLocal, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle));
+    drawFilletCurve(nestedJointToWorld(shin1KneeLocal, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle),
+            nestedJointToWorld(shin1BulgeLocal, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle),
+            nestedJointToWorld(shin1AnkleLocal, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle));
 
     setColor(rs->draggingShin2 || rs->draggingAnkle || shinAffected, 0.2f, 0.4f, 1.0f);
-    drawArc(nestedJointToWorld(shin2KneeTangentLocal, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle),
-            nestedJointToWorld(shin2NearLocal, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle),
-            nestedJointToWorld(shin2AnkleTangentLocal, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle));
+    drawFilletCurve(nestedJointToWorld(shin2KneeLocal, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle),
+            nestedJointToWorld(shin2BulgeLocal, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle),
+            nestedJointToWorld(shin2AnkleLocal, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle));
 }
 
 static void drawShinHandles(Semni b, RenderState* rs)
@@ -424,17 +366,10 @@ static void drawShinHandles(Semni b, RenderState* rs)
 
     Point ankleWorld = nestedJointToWorld(b.ankleCircle, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle);
 
-    // shin arc handles: pinned to the exact middle of the knee->ankle axis
-    // (circleAtAxisMid), same idea as the thigh handles' use of it
-    Point axisMidLocal = { (b.kneeCircle.x + b.ankleCircle.x) * 0.5f, (b.kneeCircle.y + b.ankleCircle.y) * 0.5f };
-
-    Fillet shin1Fillet = filletFromAttachAngle(b.kneeCircle, b.kneeRadius, b.ankleCircle, b.ankleRadius, b.shinArc1Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC_R);
-    Point shin1NearLocal = circleTowardPoint(shin1Fillet.center, shin1Fillet.radius, axisMidLocal);
-    Point shin1MidLocal = circleAtAxisMid(shin1Fillet.center, shin1Fillet.radius, b.kneeCircle, b.ankleCircle, shin1NearLocal);
-
-    Fillet shin2Fillet = filletFromAttachAngleConcave(b.kneeCircle, b.kneeRadius, b.ankleCircle, b.ankleRadius, b.shinArc2Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC2_CONCAVE_R);
-    Point shin2NearLocal = circleTowardPoint(shin2Fillet.center, shin2Fillet.radius, axisMidLocal);
-    Point shin2MidLocal = circleAtAxisMid(shin2Fillet.center, shin2Fillet.radius, b.kneeCircle, b.ankleCircle, shin2NearLocal);
+    // shin arc handles: same "sit exactly at the bezier control point"
+    // idea as the thigh handles above
+    Point shin1MidLocal = axisBulgePoint(b.kneeCircle, b.ankleCircle, b.shinArc1Bulge);
+    Point shin2MidLocal = axisBulgePoint(b.kneeCircle, b.ankleCircle, b.shinArc2Bulge);
 
     Point shin1World = nestedJointToWorld(shin1MidLocal, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle);
     Point shin2World = nestedJointToWorld(shin2MidLocal, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle);
@@ -453,24 +388,15 @@ void drawSemniHandles(Semni b, RenderState* rs)
     Point headHandle   = rotatePoint((Point){b.headX, b.y}, center, angle);
     Point buttHandle    = rotatePoint((Point){b.buttX, b.y}, center, angle);
 
-    // seam attach handles: pinned to the exact midpoint between head and
-    // butt on X, with Y solved from the arc's actual fillet circle at
-    // that exact X (circleAtX) so the handle sits genuinely ON the
-    // visible curve AND in the true middle -- filletBulgePoint alone only
-    // gives the closest point to the midline, which is usually close but
-    // not exactly at bodyMid.x
+    // seam attach handles: sit exactly at the curve's bezier control point
+    // (axisBulgePoint) -- same "handle IS the draggable parameter, so draw
+    // it right where the curve is being pulled toward" idea as the thigh/
+    // shin handles
     Point headLocal = { b.headX, b.y };
     Point buttLocal = { b.buttX, b.y };
-    Point bodyMidLocal = { (headLocal.x + buttLocal.x) * 0.5f, (headLocal.y + buttLocal.y) * 0.5f };
 
-    Fillet seamArc1Fillet = filletFromAttachAngle(headLocal, b.headRadius, buttLocal, b.buttRadius, b.seamArc1Angle, MIN_ARC_R, MAX_ARC_R);
-    Fillet seamArc2Fillet = filletFromAttachAngle(headLocal, b.headRadius, buttLocal, b.buttRadius, b.seamArc2Angle, MIN_ARC_R, MAX_ARC_R);
-
-    Point seamArc1NearLocal = circleTowardPoint(seamArc1Fillet.center, seamArc1Fillet.radius, bodyMidLocal);
-    Point seamArc2NearLocal = circleTowardPoint(seamArc2Fillet.center, seamArc2Fillet.radius, bodyMidLocal);
-
-    Point seamArc1MidLocal = circleAtX(seamArc1Fillet.center, seamArc1Fillet.radius, bodyMidLocal.x, seamArc1NearLocal);
-    Point seamArc2MidLocal = circleAtX(seamArc2Fillet.center, seamArc2Fillet.radius, bodyMidLocal.x, seamArc2NearLocal);
+    Point seamArc1MidLocal = axisBulgePoint(headLocal, buttLocal, b.seamArc1Bulge);
+    Point seamArc2MidLocal = axisBulgePoint(headLocal, buttLocal, b.seamArc2Bulge);
 
     Point seamArc1Handle = rotatePoint(seamArc1MidLocal, center, angle);
     Point seamArc2Handle = rotatePoint(seamArc2MidLocal, center, angle);

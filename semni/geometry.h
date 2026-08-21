@@ -179,3 +179,38 @@ Point circleAtX(Point center, float radius, float targetX, Point preferNear);
 // whichever of the two crossing points is nearer "preferNear" so the
 // caller lands on the visible side.
 Point circleAtAxisMid(Point center, float radius, Point axisStart, Point axisEnd, Point preferNear);
+
+// ---- fixed "half the circle" fillet construction (no tangency solve) ----
+//
+// The functions above (filletFromAttachAngle and friends) build a fillet
+// by solving for a circle tangent to both c1 and c2. The functions below
+// replace that entirely for a simpler construction: each circle's attach
+// point is FIXED at exactly a quarter turn (90 degrees) around from the
+// axis connecting the two circle centers -- i.e. each circle is split
+// into exact halves by the two attach points used by a pair of opposing
+// fillets (see e.g. seamArc1Bulge/seamArc2Bulge in app.h), independent of
+// the circles' radii or how far apart they are. No singularities, no
+// safe-range clamping, no radius solve -- just fixed geometry plus a
+// freely-draggable bulge distance for the curve's control point.
+
+// The point on the circle (center, radius) exactly a quarter turn (90
+// degrees) around from the direction axisFrom->axisTo, i.e. perpendicular
+// to that axis. "side" selects which of the two perpendicular directions
+// (>=0 for one, <0 for the other). axisFrom/axisTo should be passed in
+// the SAME order for both circles of a fillet pair (always (c1, c2), even
+// when computing the point that lives ON c2) so both ends resolve the
+// perpendicular direction from the same reference axis and land on
+// consistent sides -- passing c2 as axisFrom and c1 as axisTo would flip
+// the direction and put the two attach points on opposite sides instead
+// of the same one.
+Point circleHalfPoint(Point center, float radius, Point axisFrom, Point axisTo, int side);
+
+// The bezier control point for a fixed-attach fillet: the axisFrom->axisTo
+// midpoint, offset sideways (perpendicular to the axis) by "bulge" world
+// units. Positive bulge points the same direction circleHalfPoint's
+// side >= 0 does; negative points the other way. Unlike the old tangency-
+// based construction, bulge is a completely free parameter -- any value
+// is geometrically valid, so callers only need a plain min/max clamp
+// (see config.h's *_BULGE constants) rather than filletSafeAngleRange's
+// singularity-avoiding range solve.
+Point axisBulgePoint(Point axisFrom, Point axisTo, float bulge);

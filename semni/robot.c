@@ -10,22 +10,6 @@ Point getCenter(Semni b)
     return c;
 }
 
-// Reflects an attach angle (circleEdge's cos/sin convention) the way a
-// point ON A CIRCLE reflects under an x-mirror: circleEdge(c1, r1, a) =
-// c1 + r1*(cos(a), sin(a)), so mirroring c1's own x (as mirrorHipLeg does
-// for innerCircle/kneeCircle) and wanting the point on the circle to
-// mirror too means r1*cos(a) has to negate while r1*sin(a) stays put --
-// i.e. a' = 180 - a (cos(180-a) = -cos(a), sin(180-a) = sin(a)).
-static float mirrorArcAngle(float angleDeg)
-{
-    float mirrored = 180.0f - angleDeg;
-
-    while (mirrored > 180.0f) mirrored -= 360.0f;
-    while (mirrored < -180.0f) mirrored += 360.0f;
-
-    return mirrored;
-}
-
 // The leg's joints (innerCircle, kneeCircle, ankleCircle) are stored as
 // raw local coordinates, in the frame BEFORE hipAngle/kneeAngle rotate
 // them into place (see app.h's comments on those fields) -- so mirroring
@@ -42,11 +26,17 @@ static float mirrorArcAngle(float angleDeg)
 // keeps the whole chain self-consistent as a true mirror image instead of
 // just moving the joints while leaving them bent the original way.
 //
-// The four arc attach angles (thighArc1Angle/thighArc2Angle/
-// shinArc1Angle/shinArc2Angle) aren't rotations being composed, though --
-// they're points parameterized around their own circle (circleEdge), so
-// they mirror via mirrorArcAngle (180 - angle) instead of negation; see
-// its comment.
+// The four arc bulge distances (thighArc1Bulge/thighArc2Bulge/
+// shinArc1Bulge/shinArc2Bulge) aren't rotations being composed either, but
+// they DO need to flip: each is a signed distance along a perpendicular
+// direction (geometry.h's axisBulgePoint) that's itself derived fresh
+// every frame from the hip->knee/knee->ankle axis, and an x-only
+// reflection of that axis's two endpoints reverses which physical
+// direction "positive perpendicular" points in (working through the
+// same "reflection reverses orientation" fact the rotation-angle negation
+// above relies on) -- so keeping the mirrored curve's shape a true mirror
+// image (not a re-bent version of the original) just needs a plain
+// negation, same as hipAngle/kneeAngle.
 void mirrorHipLeg(Semni* b)
 {
     float centerX = (b->buttX + b->headX) * 0.5f;
@@ -58,10 +48,10 @@ void mirrorHipLeg(Semni* b)
     b->hipAngle  = -b->hipAngle;
     b->kneeAngle = -b->kneeAngle;
 
-    b->thighArc1Angle = mirrorArcAngle(b->thighArc1Angle);
-    b->thighArc2Angle = mirrorArcAngle(b->thighArc2Angle);
-    b->shinArc1Angle  = mirrorArcAngle(b->shinArc1Angle);
-    b->shinArc2Angle  = mirrorArcAngle(b->shinArc2Angle);
+    b->thighArc1Bulge = -b->thighArc1Bulge;
+    b->thighArc2Bulge = -b->thighArc2Bulge;
+    b->shinArc1Bulge  = -b->shinArc1Bulge;
+    b->shinArc2Bulge  = -b->shinArc2Bulge;
 }
 
 void printRobotAsInit(Semni b)
@@ -73,8 +63,8 @@ void printRobotAsInit(Semni b)
     printf("app->robotScene.robot.buttRadius = %.6ff;\n", b.buttRadius);
     printf("app->robotScene.robot.headRadius = %.6ff;\n\n", b.headRadius);
 
-    printf("app->robotScene.robot.seamArc1Angle = %.6ff;\n", b.seamArc1Angle);
-    printf("app->robotScene.robot.seamArc2Angle = %.6ff;\n\n", b.seamArc2Angle);
+    printf("app->robotScene.robot.seamArc1Bulge = %.6ff;\n", b.seamArc1Bulge);
+    printf("app->robotScene.robot.seamArc2Bulge = %.6ff;\n\n", b.seamArc2Bulge);
 
     printf("app->robotScene.robot.innerCircle.x = %.6ff;\n", b.innerCircle.x);
     printf("app->robotScene.robot.innerCircle.y = %.6ff;\n\n", b.innerCircle.y);
@@ -90,16 +80,16 @@ void printRobotAsInit(Semni b)
 
     printf("app->robotScene.robot.kneeRadius = %.6ff;\n\n", b.kneeRadius);
 
-    printf("app->robotScene.robot.thighArc1Angle = %.6ff;\n", b.thighArc1Angle);
-    printf("app->robotScene.robot.thighArc2Angle = %.6ff;\n\n", b.thighArc2Angle);
+    printf("app->robotScene.robot.thighArc1Bulge = %.6ff;\n", b.thighArc1Bulge);
+    printf("app->robotScene.robot.thighArc2Bulge = %.6ff;\n\n", b.thighArc2Bulge);
 
     printf("app->robotScene.robot.ankleCircle.x = %.6ff;\n", b.ankleCircle.x);
     printf("app->robotScene.robot.ankleCircle.y = %.6ff;\n\n", b.ankleCircle.y);
 
     printf("app->robotScene.robot.ankleRadius = %.6ff;\n\n", b.ankleRadius);
 
-    printf("app->robotScene.robot.shinArc1Angle = %.6ff;\n", b.shinArc1Angle);
-    printf("app->robotScene.robot.shinArc2Angle = %.6ff;\n", b.shinArc2Angle);
+    printf("app->robotScene.robot.shinArc1Bulge = %.6ff;\n", b.shinArc1Bulge);
+    printf("app->robotScene.robot.shinArc2Bulge = %.6ff;\n", b.shinArc2Bulge);
 
     printf("----\n");
 }

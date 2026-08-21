@@ -14,43 +14,46 @@
 #include "app_init.h"
 
 // ---------------- ARC AUTO-ADJUST ----------------
-// Re-validates an arc pair's EXISTING angles against a circle's new
-// size/position, nudging an angle only as far as needed to keep its
-// fillet solve from exceeding maxRadius -- geometry.h's
-// clampToSafeAngleRange is a no-op when the current angle is already
-// safe, so an arc that's still comfortably valid after the resize/move
-// is left completely untouched, and one that isn't gets pulled back in
-// by the minimum amount rather than reset to some fixed default. Same
-// outer-bound margin (ARC_ANGLE_MARGIN_DEG and friends) the drag code
-// already computes maxDelta with -- this just applies it to the angle
-// that's already there instead of one freshly read off the mouse.
+// With the fixed-attach-point construction (geometry.h's circleHalfPoint/
+// axisBulgePoint), a bulge distance is valid for ANY circle size/position
+// -- there's no tangency solve to blow up or flip sides, so resizing or
+// moving a circle can never make an existing bulge value invalid the way
+// it could under the old angle-based construction. These functions are
+// kept as a clamp-only pass (re-applying the same MIN/MAX_*_BULGE bounds
+// WM_MOUSEMOVE's drag code already enforces) purely so an already-valid
+// pose stays valid after a save/load round trip or hand-edited init
+// values -- not because anything here can actually go wrong on its own.
+static float clampSigned(float value, float minAbs, float maxAbs, int positiveSide)
+{
+    if (positiveSide)
+    {
+        if (value < minAbs) value = minAbs;
+        if (value > maxAbs) value = maxAbs;
+    }
+    else
+    {
+        if (value > -minAbs) value = -minAbs;
+        if (value < -maxAbs) value = -maxAbs;
+    }
+    return value;
+}
+
 static void adjustHeadButtArcs(AppState* app)
 {
-    Point headLocal = { app->robotScene.robot.headX, app->robotScene.robot.y };
-    Point buttLocal = { app->robotScene.robot.buttX, app->robotScene.robot.y };
-
-    SafeAngleRange range = filletSafeAngleRange(headLocal, app->robotScene.robot.headRadius, buttLocal, app->robotScene.robot.buttRadius, MAX_ARC_R);
-
-    app->robotScene.robot.seamArc1Angle = clampToSafeAngleRange(app->robotScene.robot.seamArc1Angle, range, ARC_ANGLE_MARGIN_DEG);
-    app->robotScene.robot.seamArc2Angle = clampToSafeAngleRange(app->robotScene.robot.seamArc2Angle, range, ARC_ANGLE_MARGIN_DEG);
+    app->robotScene.robot.seamArc1Bulge = clampSigned(app->robotScene.robot.seamArc1Bulge, MIN_ARC_BULGE, MAX_ARC_BULGE, 1);
+    app->robotScene.robot.seamArc2Bulge = clampSigned(app->robotScene.robot.seamArc2Bulge, MIN_ARC_BULGE, MAX_ARC_BULGE, 0);
 }
 
 static void adjustThighArcs(AppState* app)
 {
-    SafeAngleRange range1 = filletSafeAngleRange(app->robotScene.robot.innerCircle, app->robotScene.robot.innerRadius, app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeRadius, MAX_THIGH_ARC_R);
-    SafeAngleRange range2 = filletSafeAngleRangeConcave(app->robotScene.robot.innerCircle, app->robotScene.robot.innerRadius, app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeRadius, MAX_THIGH_ARC2_CONCAVE_R);
-
-    app->robotScene.robot.thighArc1Angle = clampToSafeAngleRange(app->robotScene.robot.thighArc1Angle, range1, THIGH_ARC_ANGLE_MARGIN_DEG);
-    app->robotScene.robot.thighArc2Angle = clampToSafeAngleRange(app->robotScene.robot.thighArc2Angle, range2, THIGH_ARC_ANGLE_MARGIN_DEG);
+    app->robotScene.robot.thighArc1Bulge = clampSigned(app->robotScene.robot.thighArc1Bulge, MIN_THIGH_ARC_BULGE, MAX_THIGH_ARC_BULGE, 0);
+    app->robotScene.robot.thighArc2Bulge = clampSigned(app->robotScene.robot.thighArc2Bulge, MIN_THIGH_ARC2_BULGE, MAX_THIGH_ARC2_BULGE, 1);
 }
 
 static void adjustShinArcs(AppState* app)
 {
-    SafeAngleRange range1 = filletSafeAngleRange(app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeRadius, app->robotScene.robot.ankleCircle, app->robotScene.robot.ankleRadius, MAX_SHIN_ARC_R);
-    SafeAngleRange range2 = filletSafeAngleRangeConcave(app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeRadius, app->robotScene.robot.ankleCircle, app->robotScene.robot.ankleRadius, MAX_SHIN_ARC2_CONCAVE_R);
-
-    app->robotScene.robot.shinArc1Angle = clampToSafeAngleRange(app->robotScene.robot.shinArc1Angle, range1, SHIN_ARC_ANGLE_MARGIN_DEG);
-    app->robotScene.robot.shinArc2Angle = clampToSafeAngleRange(app->robotScene.robot.shinArc2Angle, range2, SHIN_ARC_ANGLE_MARGIN_DEG);
+    app->robotScene.robot.shinArc1Bulge = clampSigned(app->robotScene.robot.shinArc1Bulge, MIN_SHIN_ARC_BULGE, MAX_SHIN_ARC_BULGE, 0);
+    app->robotScene.robot.shinArc2Bulge = clampSigned(app->robotScene.robot.shinArc2Bulge, MIN_SHIN_ARC2_BULGE, MAX_SHIN_ARC2_BULGE, 1);
 }
 
 LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState* app)
@@ -78,23 +81,15 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
 
             Point mouse = app->mouseGL;
 
-            // seam attach handles: pinned to the exact midpoint between
-            // head and butt on X, with Y solved from the arc's actual
-            // fillet circle at that exact X (circleAtX) -- same
-            // construction as drawSemniHandles, so the hit-test matches
-            // exactly where the handle is actually drawn
+            // seam attach handles: sit exactly at the curve's bezier
+            // control point (axisBulgePoint) -- same construction as
+            // drawSemniHandles, so the hit-test matches exactly where the
+            // handle is actually drawn
             Point headLocal = { app->robotScene.robot.headX, app->robotScene.robot.y };
             Point buttLocal = { app->robotScene.robot.buttX, app->robotScene.robot.y };
-            Point bodyMidLocal = { (headLocal.x + buttLocal.x) * 0.5f, (headLocal.y + buttLocal.y) * 0.5f };
 
-            Fillet seamArc1Fillet = filletFromAttachAngle(headLocal, app->robotScene.robot.headRadius, buttLocal, app->robotScene.robot.buttRadius, app->robotScene.robot.seamArc1Angle, MIN_ARC_R, MAX_ARC_R);
-            Fillet seamArc2Fillet = filletFromAttachAngle(headLocal, app->robotScene.robot.headRadius, buttLocal, app->robotScene.robot.buttRadius, app->robotScene.robot.seamArc2Angle, MIN_ARC_R, MAX_ARC_R);
-
-            Point seamArc1NearLocal = circleTowardPoint(seamArc1Fillet.center, seamArc1Fillet.radius, bodyMidLocal);
-            Point seamArc2NearLocal = circleTowardPoint(seamArc2Fillet.center, seamArc2Fillet.radius, bodyMidLocal);
-
-            Point seamArc1MidLocal = circleAtX(seamArc1Fillet.center, seamArc1Fillet.radius, bodyMidLocal.x, seamArc1NearLocal);
-            Point seamArc2MidLocal = circleAtX(seamArc2Fillet.center, seamArc2Fillet.radius, bodyMidLocal.x, seamArc2NearLocal);
+            Point seamArc1MidLocal = axisBulgePoint(headLocal, buttLocal, app->robotScene.robot.seamArc1Bulge);
+            Point seamArc2MidLocal = axisBulgePoint(headLocal, buttLocal, app->robotScene.robot.seamArc2Bulge);
 
             Point seamArc1HandleWorld = rotatePoint(seamArc1MidLocal, center, app->robotScene.robot.angle);
             Point seamArc2HandleWorld = rotatePoint(seamArc2MidLocal, center, app->robotScene.robot.angle);
@@ -109,28 +104,11 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
 
             Point kneeWorld = jointToWorld(app->robotScene.robot.kneeCircle, hipPivot, hipAngle, center, app->robotScene.robot.angle);
 
-            // thigh arc handles: same tangent-fillet + circleAtAxisMid
+            // thigh arc handles: same "sit at the bezier control point"
             // construction used in renderer.c's drawThighHandles, so the
             // hit-test matches exactly where the handle is actually drawn
-            Point thighAxisMidLocal = { (app->robotScene.robot.innerCircle.x + app->robotScene.robot.kneeCircle.x) * 0.5f,
-                                         (app->robotScene.robot.innerCircle.y + app->robotScene.robot.kneeCircle.y) * 0.5f };
-
-            Fillet thigh1Fillet = filletFromAttachAngle(app->robotScene.robot.innerCircle, app->robotScene.robot.innerRadius,
-                                                         app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeRadius,
-                                                         app->robotScene.robot.thighArc1Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC_R);
-            Point thigh1NearLocal = circleTowardPoint(thigh1Fillet.center, thigh1Fillet.radius, thighAxisMidLocal);
-            Point thigh1MidLocal = circleAtAxisMid(thigh1Fillet.center, thigh1Fillet.radius, app->robotScene.robot.innerCircle, app->robotScene.robot.kneeCircle, thigh1NearLocal);
-
-            // thighArc2Angle uses the concave construction (bulges inward
-            // instead of outward) -- see app.h's comment. circleTowardPoint
-            // + circleAtAxisMid work unchanged for it (purely geometric,
-            // don't care whether the fillet is internally or externally
-            // tangent), only the fillet solve itself differs.
-            Fillet thigh2Fillet = filletFromAttachAngleConcave(app->robotScene.robot.innerCircle, app->robotScene.robot.innerRadius,
-                                                                app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeRadius,
-                                                                app->robotScene.robot.thighArc2Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC2_CONCAVE_R);
-            Point thigh2NearLocal = circleTowardPoint(thigh2Fillet.center, thigh2Fillet.radius, thighAxisMidLocal);
-            Point thigh2MidLocal = circleAtAxisMid(thigh2Fillet.center, thigh2Fillet.radius, app->robotScene.robot.innerCircle, app->robotScene.robot.kneeCircle, thigh2NearLocal);
+            Point thigh1MidLocal = axisBulgePoint(app->robotScene.robot.innerCircle, app->robotScene.robot.kneeCircle, app->robotScene.robot.thighArc1Bulge);
+            Point thigh2MidLocal = axisBulgePoint(app->robotScene.robot.innerCircle, app->robotScene.robot.kneeCircle, app->robotScene.robot.thighArc2Bulge);
 
             Point thigh1World = jointToWorld(thigh1MidLocal, hipPivot, hipAngle, center, app->robotScene.robot.angle);
             Point thigh2World = jointToWorld(thigh2MidLocal, hipPivot, hipAngle, center, app->robotScene.robot.angle);
@@ -149,28 +127,13 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
 
             Point ankleWorld = nestedJointToWorld(app->robotScene.robot.ankleCircle, kneePivot, kneeAngle, hipPivot, hipAngle, center, app->robotScene.robot.angle);
 
-            // shin arc handles: same tangent-fillet + circleAtAxisMid
+            // shin arc handles: same "sit at the bezier control point"
             // construction used for the thigh handles above (and in
             // renderer.c's drawShinHandles), just between kneeCircle and
             // ankleCircle instead of innerCircle and kneeCircle, so the
             // hit-test matches exactly where the handle is actually drawn
-            Point shinAxisMidLocal = { (app->robotScene.robot.kneeCircle.x + app->robotScene.robot.ankleCircle.x) * 0.5f,
-                                        (app->robotScene.robot.kneeCircle.y + app->robotScene.robot.ankleCircle.y) * 0.5f };
-
-            Fillet shin1Fillet = filletFromAttachAngle(app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeRadius,
-                                                        app->robotScene.robot.ankleCircle, app->robotScene.robot.ankleRadius,
-                                                        app->robotScene.robot.shinArc1Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC_R);
-            Point shin1NearLocal = circleTowardPoint(shin1Fillet.center, shin1Fillet.radius, shinAxisMidLocal);
-            Point shin1MidLocal = circleAtAxisMid(shin1Fillet.center, shin1Fillet.radius, app->robotScene.robot.kneeCircle, app->robotScene.robot.ankleCircle, shin1NearLocal);
-
-            // shinArc2Angle uses the concave construction (bulges inward
-            // instead of outward -- see app.h's comment), same as
-            // thighArc2Angle
-            Fillet shin2Fillet = filletFromAttachAngleConcave(app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeRadius,
-                                                               app->robotScene.robot.ankleCircle, app->robotScene.robot.ankleRadius,
-                                                               app->robotScene.robot.shinArc2Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC2_CONCAVE_R);
-            Point shin2NearLocal = circleTowardPoint(shin2Fillet.center, shin2Fillet.radius, shinAxisMidLocal);
-            Point shin2MidLocal = circleAtAxisMid(shin2Fillet.center, shin2Fillet.radius, app->robotScene.robot.kneeCircle, app->robotScene.robot.ankleCircle, shin2NearLocal);
+            Point shin1MidLocal = axisBulgePoint(app->robotScene.robot.kneeCircle, app->robotScene.robot.ankleCircle, app->robotScene.robot.shinArc1Bulge);
+            Point shin2MidLocal = axisBulgePoint(app->robotScene.robot.kneeCircle, app->robotScene.robot.ankleCircle, app->robotScene.robot.shinArc2Bulge);
 
             Point shin1World = nestedJointToWorld(shin1MidLocal, kneePivot, kneeAngle, hipPivot, hipAngle, center, app->robotScene.robot.angle);
             Point shin2World = nestedJointToWorld(shin2MidLocal, kneePivot, kneeAngle, hipPivot, hipAngle, center, app->robotScene.robot.angle);
@@ -186,19 +149,20 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 app->draggingSeamArc1 = 1;
                 app->activeHandle = 1;
 
-                // remember where the drag started (mouse Y + current
-                // angle) so WM_MOUSEMOVE can nudge the angle incrementally
-                // from here instead of solving an absolute position
-                app->arcDragStartMouseY = inverseRotate(mouse, center, app->robotScene.robot.angle).y;
-                app->arcDragStartAngle = app->robotScene.robot.seamArc1Angle;
+                // remember where the drag started (mouse's perpendicular
+                // offset from the head-butt axis + current bulge) so
+                // WM_MOUSEMOVE can nudge the bulge incrementally from here
+                // instead of solving an absolute position
+                app->arcDragStartPerp = perpOffsetOnAxis(inverseRotate(mouse, center, app->robotScene.robot.angle), headLocal, buttLocal);
+                app->arcDragStartBulge = app->robotScene.robot.seamArc1Bulge;
             }
             else if (isNear(mouse, seamArc2HandleWorld, ARC_HANDLE_RADIUS))
             {
                 app->draggingSeamArc2 = 1;
                 app->activeHandle = 2;
 
-                app->arcDragStartMouseY = inverseRotate(mouse, center, app->robotScene.robot.angle).y;
-                app->arcDragStartAngle = app->robotScene.robot.seamArc2Angle;
+                app->arcDragStartPerp = perpOffsetOnAxis(inverseRotate(mouse, center, app->robotScene.robot.angle), headLocal, buttLocal);
+                app->arcDragStartBulge = app->robotScene.robot.seamArc2Bulge;
             }
             else if (isNear(mouse, innerWorld, HIP_HANDLE_RADIUS))
             {
@@ -213,7 +177,7 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 app->hipDragKneeOffset.x = app->robotScene.robot.kneeCircle.x - hip.x;
                 app->hipDragKneeOffset.y = app->robotScene.robot.kneeCircle.y - hip.y;
 
-                // thighArc1Angle/thighArc2Angle/shinArc1Angle/shinArc2Angle
+                // thighArc1Bulge/thighArc2Bulge/shinArc1Bulge/shinArc2Bulge
                 // need no offset -- they're already relative to their own
                 // joint (hip or knee), unaffected by moving innerCircle
                 // itself
@@ -234,9 +198,9 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 app->kneeDragAnkleOffset.x = app->robotScene.robot.ankleCircle.x - knee.x;
                 app->kneeDragAnkleOffset.y = app->robotScene.robot.ankleCircle.y - knee.y;
 
-                // shinArc1Angle/shinArc2Angle need no offset -- they're
-                // already knee-frame-relative angles, unaffected by moving
-                // kneeCircle itself
+                // shinArc1Bulge/shinArc2Bulge need no offset -- they're
+                // already knee-frame-relative distances, unaffected by
+                // moving kneeCircle itself
             }
             else if (isNear(mouse, thigh1World, THIGH_HANDLE_RADIUS))
             {
@@ -244,11 +208,11 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 app->activeHandle = 5;
 
                 // remember where the drag started (mouse's perpendicular-
-                // to-axis offset + current angle) so WM_MOUSEMOVE can nudge
-                // the angle incrementally from here, same idea as
-                // arcDragStartMouseY/arcDragStartAngle for the seam arcs
+                // to-axis offset + current bulge) so WM_MOUSEMOVE can nudge
+                // the bulge incrementally from here, same idea as
+                // arcDragStartPerp/arcDragStartBulge for the seam arcs
                 app->thighArcDragStartPerp = perpOffsetOnAxis(legLocalMouseDown, app->robotScene.robot.innerCircle, app->robotScene.robot.kneeCircle);
-                app->thighArcDragStartAngle = app->robotScene.robot.thighArc1Angle;
+                app->thighArcDragStartBulge = app->robotScene.robot.thighArc1Bulge;
             }
             else if (isNear(mouse, thigh2World, THIGH_HANDLE_RADIUS))
             {
@@ -256,7 +220,7 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 app->activeHandle = 6;
 
                 app->thighArcDragStartPerp = perpOffsetOnAxis(legLocalMouseDown, app->robotScene.robot.innerCircle, app->robotScene.robot.kneeCircle);
-                app->thighArcDragStartAngle = app->robotScene.robot.thighArc2Angle;
+                app->thighArcDragStartBulge = app->robotScene.robot.thighArc2Bulge;
             }
             else if (isNear(mouse, ankleWorld, ANKLE_HANDLE_RADIUS))
             {
@@ -270,9 +234,9 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
 
                 // remember where the drag started (mouse's perpendicular-
                 // to-axis offset, relative to the knee->ankle axis + the
-                // current angle), same idea as thighArcDragStartPerp/Angle
+                // current bulge), same idea as thighArcDragStartPerp/Bulge
                 app->shinArcDragStartPerp = perpOffsetOnAxis(shinLocalMouseDown, app->robotScene.robot.kneeCircle, app->robotScene.robot.ankleCircle);
-                app->shinArcDragStartAngle = app->robotScene.robot.shinArc1Angle;
+                app->shinArcDragStartBulge = app->robotScene.robot.shinArc1Bulge;
             }
             else if (isNear(mouse, shin2World, SHIN_HANDLE_RADIUS))
             {
@@ -280,7 +244,7 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 app->activeHandle = 9;
 
                 app->shinArcDragStartPerp = perpOffsetOnAxis(shinLocalMouseDown, app->robotScene.robot.kneeCircle, app->robotScene.robot.ankleCircle);
-                app->shinArcDragStartAngle = app->robotScene.robot.shinArc2Angle;
+                app->shinArcDragStartBulge = app->robotScene.robot.shinArc2Bulge;
             }
         }
         break;
@@ -344,54 +308,30 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             // positions (seam arc 1, seam arc 2, both thigh arcs, both
             // shin arcs), which the code below only computes while a drag
             // is active -- so they're worked out fresh here too, same
-            // fillet + circleAtX/circleAtAxisMid construction
-            // WM_LBUTTONDOWN's hit-test and renderer.c's drawSemniHandles/
-            // drawThighHandles/drawShinHandles use, so this always lines
-            // up with where each handle is actually drawn. Kept in its
-            // own "Hover"-suffixed locals so it can't collide with the
-            // (differently-scoped) drag-only versions of the same
-            // computation further down.
+            // axisBulgePoint construction WM_LBUTTONDOWN's hit-test and
+            // renderer.c's drawSemniHandles/drawThighHandles/
+            // drawShinHandles use, so this always lines up with where each
+            // handle is actually drawn. Kept in its own "Hover"-suffixed
+            // locals so it can't collide with the (differently-scoped)
+            // drag-only versions of the same computation further down.
             {
                 Point headLocalHover = { app->robotScene.robot.headX, app->robotScene.robot.y };
                 Point buttLocalHover = { app->robotScene.robot.buttX, app->robotScene.robot.y };
-                Point bodyMidLocalHover = { (headLocalHover.x + buttLocalHover.x) * 0.5f, (headLocalHover.y + buttLocalHover.y) * 0.5f };
 
-                Fillet seamArc1FilletHover = filletFromAttachAngle(headLocalHover, app->robotScene.robot.headRadius, buttLocalHover, app->robotScene.robot.buttRadius, app->robotScene.robot.seamArc1Angle, MIN_ARC_R, MAX_ARC_R);
-                Fillet seamArc2FilletHover = filletFromAttachAngle(headLocalHover, app->robotScene.robot.headRadius, buttLocalHover, app->robotScene.robot.buttRadius, app->robotScene.robot.seamArc2Angle, MIN_ARC_R, MAX_ARC_R);
-
-                Point seamArc1NearLocalHover = circleTowardPoint(seamArc1FilletHover.center, seamArc1FilletHover.radius, bodyMidLocalHover);
-                Point seamArc2NearLocalHover = circleTowardPoint(seamArc2FilletHover.center, seamArc2FilletHover.radius, bodyMidLocalHover);
-
-                Point seamArc1MidLocalHover = circleAtX(seamArc1FilletHover.center, seamArc1FilletHover.radius, bodyMidLocalHover.x, seamArc1NearLocalHover);
-                Point seamArc2MidLocalHover = circleAtX(seamArc2FilletHover.center, seamArc2FilletHover.radius, bodyMidLocalHover.x, seamArc2NearLocalHover);
+                Point seamArc1MidLocalHover = axisBulgePoint(headLocalHover, buttLocalHover, app->robotScene.robot.seamArc1Bulge);
+                Point seamArc2MidLocalHover = axisBulgePoint(headLocalHover, buttLocalHover, app->robotScene.robot.seamArc2Bulge);
 
                 Point seamArc1HandleWorldHover = rotatePoint(seamArc1MidLocalHover, center, angle);
                 Point seamArc2HandleWorldHover = rotatePoint(seamArc2MidLocalHover, center, angle);
 
-                Point thighAxisMidLocalHover = { (app->robotScene.robot.innerCircle.x + app->robotScene.robot.kneeCircle.x) * 0.5f,
-                                                  (app->robotScene.robot.innerCircle.y + app->robotScene.robot.kneeCircle.y) * 0.5f };
-
-                Fillet thigh1FilletHover = filletFromAttachAngle(app->robotScene.robot.innerCircle, app->robotScene.robot.innerRadius, app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeRadius, app->robotScene.robot.thighArc1Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC_R);
-                Point thigh1NearLocalHover = circleTowardPoint(thigh1FilletHover.center, thigh1FilletHover.radius, thighAxisMidLocalHover);
-                Point thigh1MidLocalHover = circleAtAxisMid(thigh1FilletHover.center, thigh1FilletHover.radius, app->robotScene.robot.innerCircle, app->robotScene.robot.kneeCircle, thigh1NearLocalHover);
-
-                Fillet thigh2FilletHover = filletFromAttachAngleConcave(app->robotScene.robot.innerCircle, app->robotScene.robot.innerRadius, app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeRadius, app->robotScene.robot.thighArc2Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC2_CONCAVE_R);
-                Point thigh2NearLocalHover = circleTowardPoint(thigh2FilletHover.center, thigh2FilletHover.radius, thighAxisMidLocalHover);
-                Point thigh2MidLocalHover = circleAtAxisMid(thigh2FilletHover.center, thigh2FilletHover.radius, app->robotScene.robot.innerCircle, app->robotScene.robot.kneeCircle, thigh2NearLocalHover);
+                Point thigh1MidLocalHover = axisBulgePoint(app->robotScene.robot.innerCircle, app->robotScene.robot.kneeCircle, app->robotScene.robot.thighArc1Bulge);
+                Point thigh2MidLocalHover = axisBulgePoint(app->robotScene.robot.innerCircle, app->robotScene.robot.kneeCircle, app->robotScene.robot.thighArc2Bulge);
 
                 Point thigh1WorldHover = jointToWorld(thigh1MidLocalHover, app->robotScene.robot.innerCircle, app->robotScene.robot.hipAngle, center, angle);
                 Point thigh2WorldHover = jointToWorld(thigh2MidLocalHover, app->robotScene.robot.innerCircle, app->robotScene.robot.hipAngle, center, angle);
 
-                Point shinAxisMidLocalHover = { (app->robotScene.robot.kneeCircle.x + app->robotScene.robot.ankleCircle.x) * 0.5f,
-                                                 (app->robotScene.robot.kneeCircle.y + app->robotScene.robot.ankleCircle.y) * 0.5f };
-
-                Fillet shin1FilletHover = filletFromAttachAngle(app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeRadius, app->robotScene.robot.ankleCircle, app->robotScene.robot.ankleRadius, app->robotScene.robot.shinArc1Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC_R);
-                Point shin1NearLocalHover = circleTowardPoint(shin1FilletHover.center, shin1FilletHover.radius, shinAxisMidLocalHover);
-                Point shin1MidLocalHover = circleAtAxisMid(shin1FilletHover.center, shin1FilletHover.radius, app->robotScene.robot.kneeCircle, app->robotScene.robot.ankleCircle, shin1NearLocalHover);
-
-                Fillet shin2FilletHover = filletFromAttachAngleConcave(app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeRadius, app->robotScene.robot.ankleCircle, app->robotScene.robot.ankleRadius, app->robotScene.robot.shinArc2Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC2_CONCAVE_R);
-                Point shin2NearLocalHover = circleTowardPoint(shin2FilletHover.center, shin2FilletHover.radius, shinAxisMidLocalHover);
-                Point shin2MidLocalHover = circleAtAxisMid(shin2FilletHover.center, shin2FilletHover.radius, app->robotScene.robot.kneeCircle, app->robotScene.robot.ankleCircle, shin2NearLocalHover);
+                Point shin1MidLocalHover = axisBulgePoint(app->robotScene.robot.kneeCircle, app->robotScene.robot.ankleCircle, app->robotScene.robot.shinArc1Bulge);
+                Point shin2MidLocalHover = axisBulgePoint(app->robotScene.robot.kneeCircle, app->robotScene.robot.ankleCircle, app->robotScene.robot.shinArc2Bulge);
 
                 Point shin1WorldHover = nestedJointToWorld(shin1MidLocalHover, app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeAngle, app->robotScene.robot.innerCircle, app->robotScene.robot.hipAngle, center, angle);
                 Point shin2WorldHover = nestedJointToWorld(shin2MidLocalHover, app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeAngle, app->robotScene.robot.innerCircle, app->robotScene.robot.hipAngle, center, angle);
@@ -425,14 +365,15 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 // Doing it here (display-only) instead of swapping the
                 // underlying headX/buttX/headRadius/buttRadius field
                 // values (which was tried and reverted) avoids corrupting
-                // seamArc1Angle/seamArc2Angle: those are stored as angles
-                // measured specifically around the head circle
-                // (filletFromAttachAngle/circleEdge take headLocal as
-                // their asymmetric "c1" argument), so swapping which
-                // physical circle headX/headRadius point to would silently
-                // re-interpret those tuned angles around a different
-                // circle entirely -- not just relabel them, which is what
-                // caused the seam handle drag to look broken/inverted.
+                // seamArc1Bulge/seamArc2Bulge: axisBulgePoint's sign
+                // convention is measured specifically against the
+                // headLocal->buttLocal axis direction (headLocal passed
+                // first, buttLocal second, everywhere this is computed),
+                // so swapping which physical circle headX/headRadius point
+                // to would silently flip that axis direction and
+                // re-interpret the tuned bulge values on the opposite side
+                // -- not just relabel them, which is what caused the seam
+                // handle drag to look broken/inverted.
                 else if (app->hoverHead)
                     hoverLabel = L"Butt";
                 else if (app->hoverButt)
@@ -452,72 +393,40 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             Point headLocal = { app->robotScene.robot.headX, app->robotScene.robot.y };
             Point buttLocal = { app->robotScene.robot.buttX, app->robotScene.robot.y };
 
-            // the seam handle now sits at the arc's visible middle/bulge
-            // point rather than the head-circle tangent point, so the
-            // attach angle can no longer be read directly off the mouse's
-            // polar angle around the head circle -- the handle isn't ON
-            // that circle anymore. Instead it drags along ONE axis only
-            // (vertical mouse movement), incrementally: angle = (angle
-            // when the drag started) + (Y moved since then) * a
-            // sensitivity constant -- see ARC_DRAG_SENSITIVITY_DEG_PER_UNIT
-            // in config.h for why. Clamped on TWO sides: the far side (via
-            // filletSafeAngleRange) stops it from flattening into a line,
-            // and the near side keeps it away from centerDeg itself -- a
-            // second, different degenerate point where the arc's bulge
-            // collapses flat against the head-butt axis and flips to the
-            // opposite side. Each handle is locked to its own side of
-            // centerDeg (seam arc 1 stays negative-delta, seam arc 2 stays
-            // positive-delta) so they can never cross into each other's
-            // territory.
+            // the seam handle sits exactly at the curve's bezier control
+            // point, and bulge IS the world-unit quantity being dragged --
+            // no angle conversion, no tangency solve to stay clear of.
+            // Dragged incrementally along the head-butt axis's
+            // perpendicular direction (perpOffsetOnAxis), same "read the
+            // delta, not an absolute position" approach the old angle drag
+            // used, just simpler now: bulge = (bulge when the drag
+            // started) + (perpendicular offset moved since then), clamped
+            // to config.h's MIN/MAX_ARC_BULGE with clampSigned so each
+            // handle stays on its own side (seam arc 1 positive, seam arc
+            // 2 negative) instead of crossing into the other's territory.
             //
             // The two arcs are kept symmetrical: dragging either handle
-            // also updates the OTHER arc's angle to centerDeg - delta --
-            // i.e. the same distance from centerDeg, mirrored to the
-            // opposite side. Since both arcs share the exact same
-            // centerDeg/safe range (it only depends on headLocal/buttLocal/
-            // radii, not on which handle is being dragged), the mirrored
-            // delta is automatically valid for the other arc too -- no
-            // extra clamping needed.
+            // also updates the OTHER arc's bulge to the negated value --
+            // since both arcs share the same axis midpoint, the negated
+            // bulge is automatically the same distance to the opposite
+            // side, so no extra clamping is needed beyond the dragged
+            // handle's own.
             if (app->draggingSeamArc1)
             {
-                SafeAngleRange range = filletSafeAngleRange(headLocal, app->robotScene.robot.headRadius, buttLocal, app->robotScene.robot.buttRadius, MAX_ARC_R);
-                float maxDelta = range.halfWidthDeg - ARC_ANGLE_MARGIN_DEG;
-                if (maxDelta < ARC_SIDE_MARGIN_DEG) maxDelta = ARC_SIDE_MARGIN_DEG;
+                float perpNow = perpOffsetOnAxis(localMouse, headLocal, buttLocal);
+                float raw = app->arcDragStartBulge + (perpNow - app->arcDragStartPerp);
 
-                float deltaY = localMouse.y - app->arcDragStartMouseY;
-                float raw = app->arcDragStartAngle + deltaY * ARC_DRAG_SENSITIVITY_DEG_PER_UNIT;
-
-                float delta = raw - range.centerDeg;
-                while (delta > 180.0f) delta -= 360.0f;
-                while (delta < -180.0f) delta += 360.0f;
-
-                if (delta > -ARC_SIDE_MARGIN_DEG) delta = -ARC_SIDE_MARGIN_DEG;
-                if (delta < -maxDelta) delta = -maxDelta;
-
-                app->robotScene.robot.seamArc1Angle = range.centerDeg + delta;
-                app->robotScene.robot.seamArc2Angle = range.centerDeg - delta;
+                app->robotScene.robot.seamArc1Bulge = clampSigned(raw, MIN_ARC_BULGE, MAX_ARC_BULGE, 1);
+                app->robotScene.robot.seamArc2Bulge = -app->robotScene.robot.seamArc1Bulge;
             }
 
             if (app->draggingSeamArc2)
             {
-                SafeAngleRange range = filletSafeAngleRange(headLocal, app->robotScene.robot.headRadius, buttLocal, app->robotScene.robot.buttRadius, MAX_ARC_R);
-                float maxDelta = range.halfWidthDeg - ARC_ANGLE_MARGIN_DEG;
-                if (maxDelta < ARC_SIDE_MARGIN_DEG) maxDelta = ARC_SIDE_MARGIN_DEG;
+                float perpNow = perpOffsetOnAxis(localMouse, headLocal, buttLocal);
+                float raw = app->arcDragStartBulge + (perpNow - app->arcDragStartPerp);
 
-                float deltaY = localMouse.y - app->arcDragStartMouseY;
-                float raw = app->arcDragStartAngle + deltaY * ARC_DRAG_SENSITIVITY_DEG_PER_UNIT;
-
-                float delta = raw - range.centerDeg;
-                while (delta > 180.0f) delta -= 360.0f;
-                while (delta < -180.0f) delta += 360.0f;
-
-                // mirror image of seam arc 1's clamp -- locked to the
-                // opposite (positive-delta) side of centerDeg
-                if (delta < ARC_SIDE_MARGIN_DEG) delta = ARC_SIDE_MARGIN_DEG;
-                if (delta > maxDelta) delta = maxDelta;
-
-                app->robotScene.robot.seamArc2Angle = range.centerDeg + delta;
-                app->robotScene.robot.seamArc1Angle = range.centerDeg - delta;
+                app->robotScene.robot.seamArc2Bulge = clampSigned(raw, MIN_ARC_BULGE, MAX_ARC_BULGE, 0);
+                app->robotScene.robot.seamArc1Bulge = -app->robotScene.robot.seamArc2Bulge;
             }
 
             // dragging the hip carries the whole leg along as one rigid
@@ -533,13 +442,13 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 app->robotScene.robot.kneeCircle.x = newInner.x + app->hipDragKneeOffset.x;
                 app->robotScene.robot.kneeCircle.y = newInner.y + app->hipDragKneeOffset.y;
 
-                // thighArc1Angle/thighArc2Angle don't move with the hip --
+                // thighArc1Bulge/thighArc2Bulge don't move with the hip --
                 // they're already relative to it
 
                 app->robotScene.robot.ankleCircle.x = newInner.x + app->hipDragAnkleOffset.x;
                 app->robotScene.robot.ankleCircle.y = newInner.y + app->hipDragAnkleOffset.y;
 
-                // shinArc1Angle/shinArc2Angle don't move with the hip
+                // shinArc1Bulge/shinArc2Bulge don't move with the hip
                 // either -- already relative to kneeCircle, which itself
                 // just got carried along via hipDragKneeOffset above
 
@@ -548,10 +457,9 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 // dragging the hip carries the whole leg as a rigid
                 // translation, so the thigh/shin arcs' underlying
                 // distances never actually change and this ends up a
-                // no-op -- called anyway for the same reason as the
-                // length-changing drags below (consistency: moving any
+                // no-op -- called anyway for consistency (moving any
                 // circle re-validates its arcs), and it's cheap since
-                // clampToSafeAngleRange leaves an already-safe angle alone
+                // clampSigned leaves an already-in-range bulge alone
                 adjustThighArcs(app);
                 adjustShinArcs(app);
             }
@@ -581,84 +489,48 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 app->robotScene.robot.ankleCircle.x = newKnee.x + app->kneeDragAnkleOffset.x;
                 app->robotScene.robot.ankleCircle.y = newKnee.y + app->kneeDragAnkleOffset.y;
 
-                // shinArc1Angle/shinArc2Angle don't need re-anchoring
+                // shinArc1Bulge/shinArc2Bulge don't need re-anchoring
                 // either -- already relative to kneeCircle, which just
                 // moved to newKnee above
 
-                // the hip<->knee distance just changed, so the thigh arcs'
-                // fillet solve did too -- re-validate their existing
-                // angles against it. The shin arcs are left alone
-                // (knee<->ankle distance is preserved by the re-anchor
-                // above), matching the thigh-only blue highlight this
-                // drag already gets
+                // the hip<->knee distance just changed; re-validate the
+                // thigh arcs' bulge values against the new distance (a
+                // no-op in practice now -- see adjustThighArcs' comment).
+                // The shin arcs are left alone (knee<->ankle distance is
+                // preserved by the re-anchor above), matching the
+                // thigh-only blue highlight this drag already gets
                 adjustThighArcs(app);
             }
 
-            // thigh arcs: same tangent-restricted, angle-driven drag as
-            // the head/butt seams above (seamArc1Angle/seamArc2Angle), but
-            // reading the mouse's perpendicular-to-axis movement
-            // (perpOffsetOnAxis) instead of raw Y, since the hip->knee
-            // axis isn't fixed horizontal like the head-butt axis -- it
-            // rotates with hipAngle and the user can pose the leg any
-            // direction. thighArc1Angle (convex) stays locked to the
-            // negative-delta side of ITS centerDeg, same "stay off the
-            // degenerate center" safety seam arc 1/2 uses. thighArc2Angle
-            // (concave) drags against a totally different, disjoint safe
-            // range (see its own block below) so it doesn't need that
-            // same one-sided lock. Dragging one never mirrors the other --
-            // the thigh's two sides aren't meant to bulge symmetrically.
+            // thigh arcs: same "bulge IS the dragged quantity" drag as the
+            // head/butt seams above, reading the mouse's perpendicular-to-
+            // axis movement (perpOffsetOnAxis) against the hip->knee axis
+            // instead of head-butt -- needed since that axis isn't fixed
+            // horizontal, it rotates with hipAngle as the user poses the
+            // leg. thighArc1Bulge and thighArc2Bulge drag independently
+            // (unlike the seam pair, dragging one doesn't mirror the
+            // other -- the thigh's two sides aren't meant to bulge
+            // symmetrically), each clamped to its own sign via clampSigned
+            // (config.h's MIN/MAX_THIGH_ARC_BULGE for arc 1, MIN/
+            // MAX_THIGH_ARC2_BULGE for arc 2) so they can't cross sides.
             // Nothing needs to "recenter" on a hip/knee move the way the
-            // old free-point handles did: the angle is already fully
-            // relative to innerCircle/kneeCircle, so the fillet solve
-            // just adapts automatically every frame.
+            // old free-point handles did: bulge is already fully relative
+            // to innerCircle/kneeCircle's own axis, so axisBulgePoint just
+            // adapts automatically every frame.
             if (app->draggingThigh1)
             {
-                SafeAngleRange range = filletSafeAngleRange(app->robotScene.robot.innerCircle, app->robotScene.robot.innerRadius,
-                                                             app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeRadius,
-                                                             MAX_THIGH_ARC_R);
-                float maxDelta = range.halfWidthDeg - THIGH_ARC_ANGLE_MARGIN_DEG;
-                if (maxDelta < THIGH_ARC_SIDE_MARGIN_DEG) maxDelta = THIGH_ARC_SIDE_MARGIN_DEG;
-
                 float perpNow = perpOffsetOnAxis(legLocalMouse, app->robotScene.robot.innerCircle, app->robotScene.robot.kneeCircle);
-                float raw = app->thighArcDragStartAngle + (perpNow - app->thighArcDragStartPerp) * THIGH_ARC_DRAG_SENSITIVITY_DEG_PER_UNIT;
+                float raw = app->thighArcDragStartBulge + (perpNow - app->thighArcDragStartPerp);
 
-                float delta = raw - range.centerDeg;
-                while (delta > 180.0f) delta -= 360.0f;
-                while (delta < -180.0f) delta += 360.0f;
-
-                if (delta > -THIGH_ARC_SIDE_MARGIN_DEG) delta = -THIGH_ARC_SIDE_MARGIN_DEG;
-                if (delta < -maxDelta) delta = -maxDelta;
-
-                app->robotScene.robot.thighArc1Angle = range.centerDeg + delta;
+                app->robotScene.robot.thighArc1Bulge = clampSigned(raw, MIN_THIGH_ARC_BULGE, MAX_THIGH_ARC_BULGE, 0);
             }
 
-            // thighArc2Angle drags the same incremental, perpendicular-
-            // offset way as thighArc1Angle, but against its own concave
-            // safe range (filletSafeAngleRangeConcave) -- which is
-            // centered on the opposite side of innerCircle, facing
-            // kneeCircle. No side-lock needed here: thighArc1Angle's
-            // range and this one no longer share a degenerate center to
-            // stay apart from, so this just clamps symmetrically to
-            // whichever side of ITS OWN center the drag reaches.
             if (app->draggingThigh2)
             {
-                SafeAngleRange range = filletSafeAngleRangeConcave(app->robotScene.robot.innerCircle, app->robotScene.robot.innerRadius,
-                                                                    app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeRadius,
-                                                                    MAX_THIGH_ARC2_CONCAVE_R);
-                float maxDelta = range.halfWidthDeg - THIGH_ARC_ANGLE_MARGIN_DEG;
-                if (maxDelta < 0.0f) maxDelta = 0.0f;
-
                 float perpNow = perpOffsetOnAxis(legLocalMouse, app->robotScene.robot.innerCircle, app->robotScene.robot.kneeCircle);
-                float raw = app->thighArcDragStartAngle + (perpNow - app->thighArcDragStartPerp) * THIGH_ARC_DRAG_SENSITIVITY_DEG_PER_UNIT;
+                float raw = app->thighArcDragStartBulge + (perpNow - app->thighArcDragStartPerp);
 
-                float delta = raw - range.centerDeg;
-                while (delta > 180.0f) delta -= 360.0f;
-                while (delta < -180.0f) delta += 360.0f;
-
-                if (delta > maxDelta) delta = maxDelta;
-                if (delta < -maxDelta) delta = -maxDelta;
-
-                app->robotScene.robot.thighArc2Angle = range.centerDeg + delta;
+                app->robotScene.robot.thighArc2Bulge = clampSigned(raw, MIN_THIGH_ARC2_BULGE, MAX_THIGH_ARC2_BULGE, 1);
             }
 
             // the shin sits in a frame additionally rotated by kneeAngle
@@ -677,73 +549,38 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     shinLocalMouse,
                     MIN_LIMB_LENGTH);
 
-                // knee<->ankle distance just changed, so the shin arcs'
-                // fillet solve did too -- re-validate their existing
-                // angles against it
+                // knee<->ankle distance just changed; re-validate the shin
+                // arcs' bulge values against the new distance (a no-op in
+                // practice now -- see adjustShinArcs' comment)
                 adjustShinArcs(app);
             }
 
-            // shin arcs: same tangent-restricted, angle-driven drag as the
+            // shin arcs: same "bulge IS the dragged quantity" drag as the
             // thigh arcs above, just reading the mouse's perpendicular-to-
             // axis movement relative to the knee->ankle axis instead of
             // hip->knee (shinLocalMouse already has kneeAngle undone, same
             // way legLocalMouse has hipAngle undone for the thigh).
-            // shinArc1Angle (convex) stays locked to the negative-delta
-            // side of ITS centerDeg, same "stay off the degenerate center"
-            // safety seam arc 1/2 and thighArc1Angle use. shinArc2Angle
-            // (concave) drags against a totally different, disjoint safe
-            // range (see its own block below) so it doesn't need that
-            // same one-sided lock. Dragging one never mirrors the other.
-            // Nothing needs recentering on a knee/ankle move -- the angle
-            // is already fully relative to kneeCircle/ankleCircle, so the
-            // fillet solve just adapts automatically every frame.
+            // shinArc1Bulge and shinArc2Bulge drag independently, each
+            // clamped to its own sign via clampSigned (config.h's MIN/
+            // MAX_SHIN_ARC_BULGE for arc 1, MIN/MAX_SHIN_ARC2_BULGE for
+            // arc 2). Nothing needs recentering on a knee/ankle move --
+            // bulge is already fully relative to kneeCircle/ankleCircle's
+            // own axis, so axisBulgePoint just adapts automatically every
+            // frame.
             if (app->draggingShin1)
             {
-                SafeAngleRange range = filletSafeAngleRange(app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeRadius,
-                                                             app->robotScene.robot.ankleCircle, app->robotScene.robot.ankleRadius,
-                                                             MAX_SHIN_ARC_R);
-                float maxDelta = range.halfWidthDeg - SHIN_ARC_ANGLE_MARGIN_DEG;
-                if (maxDelta < SHIN_ARC_SIDE_MARGIN_DEG) maxDelta = SHIN_ARC_SIDE_MARGIN_DEG;
-
                 float perpNow = perpOffsetOnAxis(shinLocalMouse, app->robotScene.robot.kneeCircle, app->robotScene.robot.ankleCircle);
-                float raw = app->shinArcDragStartAngle + (perpNow - app->shinArcDragStartPerp) * SHIN_ARC_DRAG_SENSITIVITY_DEG_PER_UNIT;
+                float raw = app->shinArcDragStartBulge + (perpNow - app->shinArcDragStartPerp);
 
-                float delta = raw - range.centerDeg;
-                while (delta > 180.0f) delta -= 360.0f;
-                while (delta < -180.0f) delta += 360.0f;
-
-                if (delta > -SHIN_ARC_SIDE_MARGIN_DEG) delta = -SHIN_ARC_SIDE_MARGIN_DEG;
-                if (delta < -maxDelta) delta = -maxDelta;
-
-                app->robotScene.robot.shinArc1Angle = range.centerDeg + delta;
+                app->robotScene.robot.shinArc1Bulge = clampSigned(raw, MIN_SHIN_ARC_BULGE, MAX_SHIN_ARC_BULGE, 0);
             }
 
-            // shinArc2Angle drags the same incremental, perpendicular-
-            // offset way as shinArc1Angle, but against its own concave
-            // safe range (filletSafeAngleRangeConcave) -- centered on the
-            // opposite side of kneeCircle, facing ankleCircle. No
-            // side-lock needed: shinArc1Angle's range and this one don't
-            // share a degenerate center, so this just clamps symmetrically
-            // to whichever side of ITS OWN center the drag reaches.
             if (app->draggingShin2)
             {
-                SafeAngleRange range = filletSafeAngleRangeConcave(app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeRadius,
-                                                                    app->robotScene.robot.ankleCircle, app->robotScene.robot.ankleRadius,
-                                                                    MAX_SHIN_ARC2_CONCAVE_R);
-                float maxDelta = range.halfWidthDeg - SHIN_ARC_ANGLE_MARGIN_DEG;
-                if (maxDelta < 0.0f) maxDelta = 0.0f;
-
                 float perpNow = perpOffsetOnAxis(shinLocalMouse, app->robotScene.robot.kneeCircle, app->robotScene.robot.ankleCircle);
-                float raw = app->shinArcDragStartAngle + (perpNow - app->shinArcDragStartPerp) * SHIN_ARC_DRAG_SENSITIVITY_DEG_PER_UNIT;
+                float raw = app->shinArcDragStartBulge + (perpNow - app->shinArcDragStartPerp);
 
-                float delta = raw - range.centerDeg;
-                while (delta > 180.0f) delta -= 360.0f;
-                while (delta < -180.0f) delta += 360.0f;
-
-                if (delta > maxDelta) delta = maxDelta;
-                if (delta < -maxDelta) delta = -maxDelta;
-
-                app->robotScene.robot.shinArc2Angle = range.centerDeg + delta;
+                app->robotScene.robot.shinArc2Bulge = clampSigned(raw, MIN_SHIN_ARC2_BULGE, MAX_SHIN_ARC2_BULGE, 1);
             }
         }
         break;

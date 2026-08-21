@@ -443,8 +443,42 @@ Point circleAtAxisMid(Point center, float radius, Point axisStart, Point axisEnd
     return (dist1 <= dist2) ? p1 : p2;
 }
 
-// Finds the circle that passes through all three points.
-// Used to draw an arc through p0, p1, p2 instead of a bezier curve.
+Point circleHalfPoint(Point center, float radius, Point axisFrom, Point axisTo, int side)
+{
+    Point d = { axisTo.x - axisFrom.x, axisTo.y - axisFrom.y };
+    float dist = sqrtf(d.x * d.x + d.y * d.y);
+
+    if (dist < 1e-6f)
+        return (Point){ center.x + radius, center.y }; // degenerate axis -- no perpendicular direction, arbitrary point
+
+    Point dir = { d.x / dist, d.y / dist };
+    Point perp = { -dir.y, dir.x };
+    float s = (side >= 0) ? 1.0f : -1.0f;
+
+    return (Point){ center.x + perp.x * radius * s, center.y + perp.y * radius * s };
+}
+
+Point axisBulgePoint(Point axisFrom, Point axisTo, float bulge)
+{
+    Point mid = { (axisFrom.x + axisTo.x) * 0.5f, (axisFrom.y + axisTo.y) * 0.5f };
+
+    Point d = { axisTo.x - axisFrom.x, axisTo.y - axisFrom.y };
+    float dist = sqrtf(d.x * d.x + d.y * d.y);
+
+    if (dist < 1e-6f)
+        return mid; // degenerate axis -- no perpendicular direction to offset along
+
+    Point dir = { d.x / dist, d.y / dist };
+    Point perp = { -dir.y, dir.x };
+
+    return (Point){ mid.x + perp.x * bulge, mid.y + perp.y * bulge };
+}
+
+// Finds the circle that passes through all three points. Formerly used by
+// the renderer to draw the kreisbogen (circular arc) fillets as true
+// arcs; the renderer now draws those fillets as quadratic bezier curves
+// instead (see drawFilletCurve in renderer.c), so this is currently
+// unused there, but kept as a general-purpose geometry utility.
 Circle circumcircle(Point p0, Point p1, Point p2)
 {
     Circle c;
