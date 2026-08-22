@@ -945,47 +945,37 @@ static ChainTangents computeLimbStyleTangents(PointF c1, float r1, PointF c2, fl
 }
 
 // Writes one (start, end, mid) arc/segment line, translated by -origin and
-// scaled by "scale" -- same 6-float-per-line convention every export in
-// this file uses.
+// scaled by "scale". Every shape line in Semni's/Stilo's Rob.txt/Leg.txt/
+// Leg1.txt/Leg2.txt now leads with a type flag -- "0" here -- followed by
+// the same 6 floats this always wrote, so a reader can tell an arc line
+// (this one) apart from a full-circle line (writeFullCircleLine below)
+// before parsing the rest. Rocky's own Rob.txt/Arm.txt (saveRockyAsRobArm
+// above) are UNCHANGED and still have no leading flag -- this flagged
+// format is specific to the newer Semni/Stilo export.
 static void writeArcLine(FILE* f, PointF start, PointF end, PointF mid, PointF origin, float scale)
 {
-    fprintf(f, "%.6f %.6f %.6f %.6f %.6f %.6f\n",
+    fprintf(f, "0 %.6f %.6f %.6f %.6f %.6f %.6f\n",
         (start.x - origin.x) * scale, (start.y - origin.y) * scale,
         (end.x - origin.x) * scale, (end.y - origin.y) * scale,
         (mid.x - origin.x) * scale, (mid.y - origin.y) * scale);
 }
 
-// Splits a full circle's boundary into n arcs at the given n tangent
-// angles (degrees), writing one arc line per piece -- generalizes Rocky's
-// own fixed "always exactly 2 halves" knee/foot split (saveRockyAsRobArm
-// above) to Semni's kneeCircle, which has 4 relevant tangent points (2
-// from the thigh arcs, 2 from the shin arcs) instead of 2. n is small
-// (<=4 in practice) so a plain insertion sort is plenty.
-static void writeCircleSplitArcs(FILE* f, PointF center, float radius, float* anglesDeg, int n, PointF origin, float scale)
+// Writes one FULL circle as a single line: type flag "1", followed by its
+// center and radius, then two unused 0.0 fields padding it out to the
+// same 6-numbers-after-the-flag width writeArcLine's arc lines use (so
+// every shape line in the file is the same 7-token shape regardless of
+// which kind it is). Every one of Semni's/Stilo's body circles (head,
+// butt, hip(s), knee, foot/feet) is a genuine, complete circle -- the
+// neighboring seam/thigh/shin arcs just happen to connect to points on
+// its boundary -- so unlike those connecting arcs, it never needs the
+// tangent-point splitting an earlier version of this file used (2 halves
+// for most circles, 4 pieces for Semni's kneeCircle): center+radius fully
+// and exactly describes the circle in one line, with nothing lost.
+static void writeFullCircleLine(FILE* f, PointF center, float radius, PointF origin, float scale)
 {
-    float sorted[4];
-    for (int i = 0; i < n; i++) sorted[i] = anglesDeg[i];
-    for (int i = 1; i < n; i++)
-    {
-        float key = sorted[i];
-        int j = i - 1;
-        while (j >= 0 && sorted[j] > key) { sorted[j + 1] = sorted[j]; j--; }
-        sorted[j + 1] = key;
-    }
-
-    for (int i = 0; i < n; i++)
-    {
-        float a0 = sorted[i];
-        float a1 = sorted[(i + 1) % n];
-        float sweep = robArmWrap360(a1 - a0);
-        if (i == n - 1) sweep = 360.0f - (sorted[n - 1] - sorted[0]); // closing piece wraps back to sorted[0]
-
-        PointF start = circleEdge(center, radius, a0);
-        PointF end = circleEdge(center, radius, (i == n - 1) ? (sorted[0] + 360.0f) : a1);
-        PointF mid = circleEdge(center, radius, a0 + sweep * 0.5f);
-
-        writeArcLine(f, start, end, mid, origin, scale);
-    }
+    fprintf(f, "1 %.6f %.6f %.6f 0.000000 0.000000\n",
+        (center.x - origin.x) * scale, (center.y - origin.y) * scale,
+        radius * scale);
 }
 
 // Fine polygon approximation of a two-circle-plus-two-fillets stage's
@@ -1042,14 +1032,12 @@ int saveSemniAsRobLeg(AppState* app)
         fprintf(f, "%.6f %.6f %.6f\n", centroid.x, centroid.y, 1.0f);
         fprintf(f, "%.6f %.6f\n", jointRel.x, jointRel.y);
 
-        float headAngles[2] = { robArmAngleAroundDeg(headC, seam.c1Tan1), robArmAngleAroundDeg(headC, seam.c1Tan2) };
-        writeCircleSplitArcs(f, headC, s->headRadius, headAngles, 2, headC, ROBOT_LEG_EXPORT_SCALE);
+        writeFullCircleLine(f, headC, s->headRadius, headC, ROBOT_LEG_EXPORT_SCALE);
 
         writeArcLine(f, seam.c1Tan1, seam.c2Tan1, seam.mid1, headC, ROBOT_LEG_EXPORT_SCALE);
         writeArcLine(f, seam.c2Tan2, seam.c1Tan2, seam.mid2, headC, ROBOT_LEG_EXPORT_SCALE);
 
-        float buttAngles[2] = { robArmAngleAroundDeg(buttC, seam.c2Tan1), robArmAngleAroundDeg(buttC, seam.c2Tan2) };
-        writeCircleSplitArcs(f, buttC, s->buttRadius, buttAngles, 2, headC, ROBOT_LEG_EXPORT_SCALE);
+        writeFullCircleLine(f, buttC, s->buttRadius, headC, ROBOT_LEG_EXPORT_SCALE);
 
         fclose(f);
     }
@@ -1058,10 +1046,7 @@ int saveSemniAsRobLeg(AppState* app)
     //
     // Local origin is the hip (innerCircle) -- same "origin AT the joint,
     // so its own joint line is trivially 0 0" convention Rocky's Arm.txt
-    // uses. kneeCircle sits between the two stages and has FOUR relevant
-    // tangent points (2 from the thigh arcs, 2 from the shin arcs), so its
-    // own split uses writeCircleSplitArcs' generalized n-way form instead
-    // of Rocky's fixed 2-way one.
+    // uses.
     {
         PointF hipC = s->innerCircle;
         PointF kneeC = s->kneeCircle;
@@ -1097,23 +1082,17 @@ int saveSemniAsRobLeg(AppState* app)
         fprintf(f, "%.6f %.6f %.6f\n", legCentroid.x, legCentroid.y, 1.0f);
         fprintf(f, "%.6f %.6f\n", 0.0f, 0.0f);
 
-        float hipAngles[2] = { robArmAngleAroundDeg(hipC, thigh.c1Tan1), robArmAngleAroundDeg(hipC, thigh.c1Tan2) };
-        writeCircleSplitArcs(f, hipC, s->innerRadius, hipAngles, 2, hipC, ROBOT_LEG_EXPORT_SCALE);
+        writeFullCircleLine(f, hipC, s->innerRadius, hipC, ROBOT_LEG_EXPORT_SCALE);
 
         writeArcLine(f, thigh.c1Tan1, thigh.c2Tan1, thigh.mid1, hipC, ROBOT_LEG_EXPORT_SCALE);
         writeArcLine(f, thigh.c1Tan2, thigh.c2Tan2, thigh.mid2, hipC, ROBOT_LEG_EXPORT_SCALE);
 
-        float kneeAngles[4] = {
-            robArmAngleAroundDeg(kneeC, thigh.c2Tan1), robArmAngleAroundDeg(kneeC, thigh.c2Tan2),
-            robArmAngleAroundDeg(kneeC, shin.c1Tan1), robArmAngleAroundDeg(kneeC, shin.c1Tan2)
-        };
-        writeCircleSplitArcs(f, kneeC, s->kneeRadius, kneeAngles, 4, hipC, ROBOT_LEG_EXPORT_SCALE);
+        writeFullCircleLine(f, kneeC, s->kneeRadius, hipC, ROBOT_LEG_EXPORT_SCALE);
 
         writeArcLine(f, shin.c1Tan1, shin.c2Tan1, shin.mid1, hipC, ROBOT_LEG_EXPORT_SCALE);
         writeArcLine(f, shin.c1Tan2, shin.c2Tan2, shin.mid2, hipC, ROBOT_LEG_EXPORT_SCALE);
 
-        float footAngles[2] = { robArmAngleAroundDeg(footC, shin.c2Tan1), robArmAngleAroundDeg(footC, shin.c2Tan2) };
-        writeCircleSplitArcs(f, footC, s->footRadius, footAngles, 2, hipC, ROBOT_LEG_EXPORT_SCALE);
+        writeFullCircleLine(f, footC, s->footRadius, hipC, ROBOT_LEG_EXPORT_SCALE);
 
         fclose(f);
     }
@@ -1150,14 +1129,12 @@ static int writeStiloLegFile(const char* filename, PointF hipC, float hipR, Poin
     fprintf(f, "%.6f %.6f %.6f\n", centroid.x, centroid.y, 1.0f);
     fprintf(f, "%.6f %.6f\n", 0.0f, 0.0f);
 
-    float hipAngles[2] = { robArmAngleAroundDeg(hipC, thigh.c1Tan1), robArmAngleAroundDeg(hipC, thigh.c1Tan2) };
-    writeCircleSplitArcs(f, hipC, hipR, hipAngles, 2, hipC, ROBOT_LEG_EXPORT_SCALE);
+    writeFullCircleLine(f, hipC, hipR, hipC, ROBOT_LEG_EXPORT_SCALE);
 
     writeArcLine(f, thigh.c1Tan1, thigh.c2Tan1, thigh.mid1, hipC, ROBOT_LEG_EXPORT_SCALE);
     writeArcLine(f, thigh.c1Tan2, thigh.c2Tan2, thigh.mid2, hipC, ROBOT_LEG_EXPORT_SCALE);
 
-    float feetAngles[2] = { robArmAngleAroundDeg(feetC, thigh.c2Tan1), robArmAngleAroundDeg(feetC, thigh.c2Tan2) };
-    writeCircleSplitArcs(f, feetC, feetR, feetAngles, 2, hipC, ROBOT_LEG_EXPORT_SCALE);
+    writeFullCircleLine(f, feetC, feetR, hipC, ROBOT_LEG_EXPORT_SCALE);
 
     fclose(f);
     return 1;
@@ -1195,14 +1172,12 @@ int saveStiloAsRobLeg(AppState* app)
         fprintf(f, "%.6f %.6f\n", joint1Rel.x, joint1Rel.y);
         fprintf(f, "%.6f %.6f\n", joint2Rel.x, joint2Rel.y);
 
-        float headAngles[2] = { robArmAngleAroundDeg(headC, seam.c1Tan1), robArmAngleAroundDeg(headC, seam.c1Tan2) };
-        writeCircleSplitArcs(f, headC, s->headRadius, headAngles, 2, headC, ROBOT_LEG_EXPORT_SCALE);
+        writeFullCircleLine(f, headC, s->headRadius, headC, ROBOT_LEG_EXPORT_SCALE);
 
         writeArcLine(f, seam.c1Tan1, seam.c2Tan1, seam.mid1, headC, ROBOT_LEG_EXPORT_SCALE);
         writeArcLine(f, seam.c2Tan2, seam.c1Tan2, seam.mid2, headC, ROBOT_LEG_EXPORT_SCALE);
 
-        float buttAngles[2] = { robArmAngleAroundDeg(buttC, seam.c2Tan1), robArmAngleAroundDeg(buttC, seam.c2Tan2) };
-        writeCircleSplitArcs(f, buttC, s->buttRadius, buttAngles, 2, headC, ROBOT_LEG_EXPORT_SCALE);
+        writeFullCircleLine(f, buttC, s->buttRadius, headC, ROBOT_LEG_EXPORT_SCALE);
 
         fclose(f);
     }
