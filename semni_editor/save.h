@@ -57,3 +57,23 @@ int saveRockyAsRobArm(AppState* app);
 int robArmSampleArcThroughMid(PointF center, PointF start, PointF mid, PointF end, int steps, PointF* out);
 int robArmSampleArcAwayFrom(PointF center, PointF start, PointF end, PointF otherCenter, int steps, PointF* out);
 PointF robArmPolygonCentroid(PointF* pts, int n);
+
+// Same Rob.txt/Leg.txt-style export as saveRockyAsRobArm above, generalized
+// to Semni's arc-based (head/butt/seam-arc) torso and its two-stage
+// (hip->knee->foot) leg -- see save.c's own comment above each
+// implementation for the exact file format and joint/origin conventions.
+// Writes SemniExport\Rob.txt (torso) and SemniExport\Leg.txt (leg).
+// Semni has no bodyWeight/legWeight fields (unlike Rocky) -- both are
+// written as a flat 1.0, and each half's own geometric centroid is used
+// in place of a mass-weighted combined center. Returns 0 if either file
+// can't be opened for writing, 1 on success.
+int saveSemniAsRobLeg(AppState* app);
+
+// Same idea as saveSemniAsRobLeg, for Stilo -- Stilo shares Semni's own
+// torso shape (so StiloExport\Rob.txt lists both legs' hip joints), but
+// has TWO independent single-stage legs instead of Semni's one two-stage
+// leg, so it writes StiloExport\Leg1.txt and StiloExport\Leg2.txt (one
+// per leg) rather than a single Leg.txt. Same weight=1.0/geometric-
+// centroid simplification as saveSemniAsRobLeg. Returns 0 if any of the
+// three files can't be opened for writing, 1 on success.
+int saveStiloAsRobLeg(AppState* app);

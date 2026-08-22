@@ -10,7 +10,7 @@
 #include "robot.h"         // For translateRobot -- dragging the robot into position in Simulation mode
 #include "config.h"        // For INACTIVE_MODE_DIM_ALPHA
 #include "sim_camera.h"    // Simulation mode's own independent zoom/pan (see sim_camera.h)
-#include "save.h"          // For saveCanvasAsBMP/saveRobotAsEquations/saveRockyAsEquations/saveStiloAsEquations/saveRockyAsRobArm -- File > Save (ID_SAVE below) now dispatches to these directly, folded in from the old Robot editor Save button
+#include "save.h"          // For saveCanvasAsBMP/saveRockyAsEquations/saveRockyAsRobArm/saveSemniAsRobLeg/saveStiloAsRobLeg -- File > Save (ID_SAVE below) now dispatches to these directly, folded in from the old Robot editor Save button. saveRobotAsEquations/saveStiloAsEquations are declared here too but no longer called from this file -- they're still used by input.c's Standing/Home pose buttons (Poses\*.txt).
 #include "help_dialog.h"   // For showControlsHelpDialog -- Help > Controls Help... (ID_HELP below)
 #include <math.h>
 #include <string.h>
@@ -35,16 +35,14 @@ DesignLayer designLayer = LAYER_ENVIRONMENT;
 // Whether renderCombinedFrame HIDES whichever Design-mode layer (Robot or
 // Environment) ISN'T the active one entirely (opacity 0) instead of just
 // dimming it (the normal INACTIVE_MODE_DIM_ALPHA fade) -- see
-// renderCombinedFrame's own dimAmount comment. Off by default, matching
-// this app's original dimming-only behavior from before this toggle
-// existed; toggled from the new View > Hide Inactive Layer menu item
-// (main.c's buildMainMenu, WM_COMMAND's ID_TOGGLE_HIDE_INACTIVE handling
-// below) for anyone who'd rather the inactive layer vanish outright, e.g.
-// to see the active one completely unobstructed. Simulation is unaffected
-// either way -- it already always draws both layers at full opacity
-// regardless of this flag (see renderCombinedFrame's own simulationActive
-// handling).
-BOOL hideInactiveLayer = FALSE;
+// renderCombinedFrame's own dimAmount comment. On by default -- toggled
+// from the View > Hide Inactive Layer menu item (main.c's buildMainMenu,
+// WM_COMMAND's ID_TOGGLE_HIDE_INACTIVE handling below) for anyone who'd
+// rather see the inactive layer's normal dim fade instead of it vanishing
+// outright. Simulation is unaffected either way -- it already always draws
+// both layers at full opacity regardless of this flag (see
+// renderCombinedFrame's own simulationActive handling).
+BOOL hideInactiveLayer = TRUE;
 
 float segmentPointsWorld[MAX_SEGMENT_POINTS * 2];   // NEW
 int   segmentStarts[MAX_ARC_SEGMENTS];              // NEW
@@ -1258,6 +1256,7 @@ void canvasRenderFrame(float dimAmount)
         glLineWidth(1.0f);
         glDisable(GL_BLEND);
     }
+
 
 	// Rendered when EITHER "View Segments" is checked OR Comparison Mode
 	// is active - the two controls are independent, so Comparison Mode
@@ -3369,14 +3368,28 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	            case ROBOT_KIND_STILO:
 	                CreateDirectoryA("StiloExport", NULL);
 	                saveCanvasAsBMP("StiloExport\\stilo.bmp", app.hwndMain, &app);
-	                saveStiloAsEquations("StiloExport\\stilo.txt", &app);
+
+	                // Rob.txt (torso, both hip joints) + Leg1.txt/Leg2.txt
+	                // (see save.c's saveStiloAsRobLeg) -- same Rocky-style
+	                // convention as saveRockyAsRobArm above, generalized to
+	                // Stilo's arc-based torso and two independent legs.
+	                // Supersedes the old stilo.txt KEY=value equations dump
+	                // (saveStiloAsEquations), no longer written here.
+	                saveStiloAsRobLeg(&app);
 	                break;
 
 	            case ROBOT_KIND_SEMNI:
 	            default:
 	                CreateDirectoryA("SemniExport", NULL);
 	                saveCanvasAsBMP("SemniExport\\semni.bmp", app.hwndMain, &app);
-	                saveRobotAsEquations("SemniExport\\semni.txt", &app);
+
+	                // Rob.txt (torso) + Leg.txt (hip/knee/foot leg) -- see
+	                // save.c's saveSemniAsRobLeg, same Rocky-style
+	                // convention as saveRockyAsRobArm above, generalized to
+	                // Semni's arc-based torso and two-stage leg. Supersedes
+	                // the old semni.txt KEY=value equations dump
+	                // (saveRobotAsEquations), no longer written here.
+	                saveSemniAsRobLeg(&app);
 	                break;
 	        }
 

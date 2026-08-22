@@ -96,13 +96,15 @@ static HMENU buildMainMenu(void)
     // hideInactiveLayer, WM_COMMAND's ID_TOGGLE_HIDE_INACTIVE handling) is
     // the first thing that belongs here: whether switching between Design >
     // Robot/Environment makes whichever one isn't active disappear
-    // entirely, rather than the normal partial dim. Off by default --
-    // canvas.c's own ID_TOGGLE_HIDE_INACTIVE handler locates this menu via
-    // GetSubMenu(hMenuBar, 2) by fixed index, same as Mode/Design above --
-    // inserting anything between Mode and View, or before View, would
-    // silently break that lookup too.
+    // entirely, rather than the normal partial dim. On by default (see
+    // canvas.c's own hideInactiveLayer comment for why) -- MF_CHECKED here
+    // just makes the menu's own initial checkmark agree with that from the
+    // first frame; canvas.c's own ID_TOGGLE_HIDE_INACTIVE handler locates
+    // this menu via GetSubMenu(hMenuBar, 2) by fixed index, same as Mode/
+    // Design above -- inserting anything between Mode and View, or before
+    // View, would silently break that lookup too.
     HMENU hViewMenu = CreatePopupMenu();
-    AppendMenu(hViewMenu, MF_STRING, ID_TOGGLE_HIDE_INACTIVE, L"Hide Inactive Layer");
+    AppendMenu(hViewMenu, MF_STRING | MF_CHECKED, ID_TOGGLE_HIDE_INACTIVE, L"Hide Inactive Layer");
     AppendMenu(hMenuBar, MF_POPUP, (UINT_PTR)hViewMenu, L"&View");
 
     HMENU hHelpMenu = CreatePopupMenu();
@@ -117,10 +119,13 @@ static HMENU buildMainMenu(void)
     CheckMenuItem(hDesignMenu, ID_LAYER_ROBOT, MF_BYCOMMAND | MF_UNCHECKED);
     CheckMenuItem(hDesignMenu, ID_LAYER_ENVIRONMENT, MF_BYCOMMAND | MF_CHECKED);
 
-    // Matches hideInactiveLayer's own default (FALSE, canvas.c) for the
+    // Matches hideInactiveLayer's own default (TRUE, canvas.c) for the
     // same "checkmark agrees with reality from the first frame" reason as
-    // above.
-    CheckMenuItem(hViewMenu, ID_TOGGLE_HIDE_INACTIVE, MF_BYCOMMAND | MF_UNCHECKED);
+    // above -- also already set via the AppendMenu's own MF_CHECKED flag
+    // just above, this just keeps it explicit/self-documenting the same
+    // way ID_LAYER_ENVIRONMENT's own CheckMenuItem call is, rather than
+    // relying solely on the AppendMenu flag.
+    CheckMenuItem(hViewMenu, ID_TOGGLE_HIDE_INACTIVE, MF_BYCOMMAND | MF_CHECKED);
 
     return hMenuBar;
 }

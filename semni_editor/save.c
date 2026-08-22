@@ -8,7 +8,7 @@
 
 #include "save.h"
 #include "renderer.h"
-#include "config.h"    // For MIN_SHIN_ARC_R/MAX_SHIN_ARC_R/MAX_SHIN_ARC2_CONCAVE_R, used by saveRockyAsRobArm below
+#include "config.h"    // For MIN_SHIN_ARC_R/MAX_SHIN_ARC_R/MAX_SHIN_ARC2_CONCAVE_R/MAX_SEMNI_THIGH_ARC_R/MIN_THIGH_ARC_R/ROCKY_EXPORT_SCALE, used by saveRockyAsRobArm/saveSemniAsRobLeg/saveStiloAsRobLeg below
 
 int saveCanvasAsBMP(const char* filename, HWND hwnd, AppState* app)
 {
@@ -861,6 +861,364 @@ int saveRockyAsRobArm(AppState* app)
     char path[MAX_PATH];
     GetCurrentDirectoryA(MAX_PATH, path);
     printf("Saved Rocky body/leg as Rob.txt + Arm.txt in: %s\\RockyExport\n", path);
+
+    return 1;
+}
+
+// ---- Rob.txt / Leg.txt export (Semni + Stilo) ----
+//
+// Same overall convention as saveRockyAsRobArm above (mass+weight line,
+// joint line(s), then a list of (start, end, mid-ON-the-curve) arc
+// triples), generalized to Semni's/Stilo's arc-based torso (head circle,
+// butt circle, 2 connecting seam arcs -- topologically the same shape as
+// Rocky's own knee/foot leg, just under different field names) and to
+// Semni's two-stage hip->knee->foot leg / Stilo's two independent
+// single-stage hip->feet legs.
+//
+// Neither Semni nor Stilo has Rocky's own bodyWeight/legWeight fields, so
+// every mass line below writes a flat 1.0 instead of a user-set value, and
+// every "mass center" is that one piece's own plain geometric centroid
+// (no weighted combination across pieces the way Rob.txt's rectangle+leg
+// combination is for Rocky) -- callers wanting a true combined-system mass
+// center will need to combine these themselves once real per-part weights
+// exist.
+//
+// ROBOT_LEG_EXPORT_SCALE reuses ROCKY_EXPORT_SCALE (config.h) -- there's
+// no independent calibration for Semni/Stilo's own export, so this is a
+// reasonable placeholder rather than a verified value.
+#define ROBOT_LEG_EXPORT_SCALE ROCKY_EXPORT_SCALE
+
+// The two tangent points + genuine on-curve midpoint for each of a pair of
+// connecting arcs between two circles (c1/r1 and c2/r2), plus each arc's
+// own fillet -- shared scratch result type for the two tangent-computing
+// helpers just below.
+typedef struct { PointF c1Tan1, c2Tan1, mid1, c1Tan2, c2Tan2, mid2; Fillet fillet1, fillet2; } ChainTangents;
+
+// Torso seam-arc style: BOTH connecting arcs are convex (filletFromAttachAngle)
+// and BOTH use internalTangentPoint for their far tangent -- matches
+// drawSemniBody's/drawStiloBody's own seamArc1/seamArc2 construction
+// exactly (unlike the thigh/shin-style pairing below, where the second
+// arc bulges the other way).
+static ChainTangents computeSeamStyleTangents(PointF c1, float r1, PointF c2, float r2,
+                                               float arc1AngleDeg, float arc2AngleDeg,
+                                               float minR, float maxR)
+{
+    ChainTangents t;
+    PointF axisMid = { (c1.x + c2.x) * 0.5f, (c1.y + c2.y) * 0.5f };
+
+    t.fillet1 = filletFromAttachAngle(c1, r1, c2, r2, arc1AngleDeg, minR, maxR);
+    t.c1Tan1 = circleEdge(c1, r1, arc1AngleDeg);
+    t.c2Tan1 = internalTangentPoint(t.fillet1.center, t.fillet1.radius, c2, r2);
+    t.mid1 = circleTowardPoint(t.fillet1.center, t.fillet1.radius, axisMid);
+
+    t.fillet2 = filletFromAttachAngle(c1, r1, c2, r2, arc2AngleDeg, minR, maxR);
+    t.c1Tan2 = circleEdge(c1, r1, arc2AngleDeg);
+    t.c2Tan2 = internalTangentPoint(t.fillet2.center, t.fillet2.radius, c2, r2);
+    t.mid2 = circleTowardPoint(t.fillet2.center, t.fillet2.radius, axisMid);
+
+    return t;
+}
+
+// Limb (thigh/shin) style: arc1 convex + internalTangentPoint (same as
+// above), but arc2 is CONCAVE (filletFromAttachAngleConcave) + its far
+// tangent found via circleTowardPoint(fillet2, c2) instead -- matches
+// drawThigh/drawShin/drawRockyLeg/drawStiloThigh1's own construction
+// (same pattern saveRockyAsRobArm's shin1/shin2 already uses above).
+static ChainTangents computeLimbStyleTangents(PointF c1, float r1, PointF c2, float r2,
+                                               float arc1AngleDeg, float arc2AngleDeg,
+                                               float minR, float maxR1, float maxR2)
+{
+    ChainTangents t;
+    PointF axisMid = { (c1.x + c2.x) * 0.5f, (c1.y + c2.y) * 0.5f };
+
+    t.fillet1 = filletFromAttachAngle(c1, r1, c2, r2, arc1AngleDeg, minR, maxR1);
+    t.c1Tan1 = circleEdge(c1, r1, arc1AngleDeg);
+    t.c2Tan1 = internalTangentPoint(t.fillet1.center, t.fillet1.radius, c2, r2);
+    t.mid1 = circleTowardPoint(t.fillet1.center, t.fillet1.radius, axisMid);
+
+    t.fillet2 = filletFromAttachAngleConcave(c1, r1, c2, r2, arc2AngleDeg, minR, maxR2);
+    t.c1Tan2 = circleEdge(c1, r1, arc2AngleDeg);
+    t.c2Tan2 = circleTowardPoint(t.fillet2.center, t.fillet2.radius, c2);
+    t.mid2 = circleTowardPoint(t.fillet2.center, t.fillet2.radius, axisMid);
+
+    return t;
+}
+
+// Writes one (start, end, mid) arc/segment line, translated by -origin and
+// scaled by "scale" -- same 6-float-per-line convention every export in
+// this file uses.
+static void writeArcLine(FILE* f, PointF start, PointF end, PointF mid, PointF origin, float scale)
+{
+    fprintf(f, "%.6f %.6f %.6f %.6f %.6f %.6f\n",
+        (start.x - origin.x) * scale, (start.y - origin.y) * scale,
+        (end.x - origin.x) * scale, (end.y - origin.y) * scale,
+        (mid.x - origin.x) * scale, (mid.y - origin.y) * scale);
+}
+
+// Splits a full circle's boundary into n arcs at the given n tangent
+// angles (degrees), writing one arc line per piece -- generalizes Rocky's
+// own fixed "always exactly 2 halves" knee/foot split (saveRockyAsRobArm
+// above) to Semni's kneeCircle, which has 4 relevant tangent points (2
+// from the thigh arcs, 2 from the shin arcs) instead of 2. n is small
+// (<=4 in practice) so a plain insertion sort is plenty.
+static void writeCircleSplitArcs(FILE* f, PointF center, float radius, float* anglesDeg, int n, PointF origin, float scale)
+{
+    float sorted[4];
+    for (int i = 0; i < n; i++) sorted[i] = anglesDeg[i];
+    for (int i = 1; i < n; i++)
+    {
+        float key = sorted[i];
+        int j = i - 1;
+        while (j >= 0 && sorted[j] > key) { sorted[j + 1] = sorted[j]; j--; }
+        sorted[j + 1] = key;
+    }
+
+    for (int i = 0; i < n; i++)
+    {
+        float a0 = sorted[i];
+        float a1 = sorted[(i + 1) % n];
+        float sweep = robArmWrap360(a1 - a0);
+        if (i == n - 1) sweep = 360.0f - (sorted[n - 1] - sorted[0]); // closing piece wraps back to sorted[0]
+
+        PointF start = circleEdge(center, radius, a0);
+        PointF end = circleEdge(center, radius, (i == n - 1) ? (sorted[0] + 360.0f) : a1);
+        PointF mid = circleEdge(center, radius, a0 + sweep * 0.5f);
+
+        writeArcLine(f, start, end, mid, origin, scale);
+    }
+}
+
+// Fine polygon approximation of a two-circle-plus-two-fillets stage's
+// outline (torso seam stage, a Semni thigh/shin stage, or a Stilo leg
+// stage) -- same 4-piece traversal saveRockyAsRobArm's own leg centroid
+// uses (connector1, c2's own boundary arc, connector2, c1's own boundary
+// arc), reused here for the centroid of any such stage. Purely for the
+// approximate centroid below -- doesn't affect the exact arc endpoints
+// written to file.
+static int sampleLimbStageOutline(PointF c1, float r1, PointF c2, float r2, ChainTangents t, PointF* out)
+{
+    int n = 0;
+    n += robArmSampleArcThroughMid(t.fillet1.center, t.c1Tan1, t.mid1, t.c2Tan1, ROB_ARM_ARC_SAMPLES, out + n);
+    n += robArmSampleArcAwayFrom(c2, t.c2Tan1, t.c2Tan2, c1, ROB_ARM_ARC_SAMPLES, out + n);
+    n += robArmSampleArcThroughMid(t.fillet2.center, t.c2Tan2, t.mid2, t.c1Tan2, ROB_ARM_ARC_SAMPLES, out + n);
+    n += robArmSampleArcAwayFrom(c1, t.c1Tan2, t.c1Tan1, c2, ROB_ARM_ARC_SAMPLES, out + n);
+    return n;
+}
+
+int saveSemniAsRobLeg(AppState* app)
+{
+    Semni* s = &app->robotScene.robot;
+
+    CreateDirectoryA("SemniExport", NULL);
+
+    // ---- Rob.txt: arc-based torso (head circle, butt circle, 2 seam arcs) ----
+    //
+    // Local origin is the head circle's own center -- Semni's physical
+    // headX-based circle (see renderer.c's own comment on the head/butt
+    // display-name swap; this uses the physical field, not whichever
+    // label the UI happens to show for it). Joint line gives the hip
+    // (innerCircle) position relative to that origin, same "joint
+    // location relative to this file's own origin" convention Rocky's
+    // Rob.txt uses for its own knee joint.
+    {
+        PointF headC = { s->headX, s->y };
+        PointF buttC = { s->buttX, s->y };
+
+        ChainTangents seam = computeSeamStyleTangents(headC, s->headRadius, buttC, s->buttRadius,
+                                                        s->seamArc1Angle, s->seamArc2Angle,
+                                                        MIN_ARC_R, MAX_ARC_R);
+
+        PointF poly[4 * (ROB_ARM_ARC_SAMPLES + 1)];
+        int polyN = sampleLimbStageOutline(headC, s->headRadius, buttC, s->buttRadius, seam, poly);
+        PointF centroidWorld = robArmPolygonCentroid(poly, polyN);
+        PointF centroid = { (centroidWorld.x - headC.x) * ROBOT_LEG_EXPORT_SCALE, (centroidWorld.y - headC.y) * ROBOT_LEG_EXPORT_SCALE };
+
+        PointF jointRel = { (s->innerCircle.x - headC.x) * ROBOT_LEG_EXPORT_SCALE, (s->innerCircle.y - headC.y) * ROBOT_LEG_EXPORT_SCALE };
+
+        FILE* f = fopen("SemniExport\\Rob.txt", "w");
+        if (!f)
+            return 0;
+
+        fprintf(f, "%.6f %.6f %.6f\n", centroid.x, centroid.y, 1.0f);
+        fprintf(f, "%.6f %.6f\n", jointRel.x, jointRel.y);
+
+        float headAngles[2] = { robArmAngleAroundDeg(headC, seam.c1Tan1), robArmAngleAroundDeg(headC, seam.c1Tan2) };
+        writeCircleSplitArcs(f, headC, s->headRadius, headAngles, 2, headC, ROBOT_LEG_EXPORT_SCALE);
+
+        writeArcLine(f, seam.c1Tan1, seam.c2Tan1, seam.mid1, headC, ROBOT_LEG_EXPORT_SCALE);
+        writeArcLine(f, seam.c2Tan2, seam.c1Tan2, seam.mid2, headC, ROBOT_LEG_EXPORT_SCALE);
+
+        float buttAngles[2] = { robArmAngleAroundDeg(buttC, seam.c2Tan1), robArmAngleAroundDeg(buttC, seam.c2Tan2) };
+        writeCircleSplitArcs(f, buttC, s->buttRadius, buttAngles, 2, headC, ROBOT_LEG_EXPORT_SCALE);
+
+        fclose(f);
+    }
+
+    // ---- Leg.txt: two-stage hip -> knee -> foot leg ----
+    //
+    // Local origin is the hip (innerCircle) -- same "origin AT the joint,
+    // so its own joint line is trivially 0 0" convention Rocky's Arm.txt
+    // uses. kneeCircle sits between the two stages and has FOUR relevant
+    // tangent points (2 from the thigh arcs, 2 from the shin arcs), so its
+    // own split uses writeCircleSplitArcs' generalized n-way form instead
+    // of Rocky's fixed 2-way one.
+    {
+        PointF hipC = s->innerCircle;
+        PointF kneeC = s->kneeCircle;
+        PointF footC = s->footCircle;
+
+        ChainTangents thigh = computeLimbStyleTangents(hipC, s->innerRadius, kneeC, s->kneeRadius,
+                                                          s->thighArc1Angle, s->thighArc2Angle,
+                                                          MIN_THIGH_ARC_R, MAX_SEMNI_THIGH_ARC_R, MAX_THIGH_ARC2_CONCAVE_R);
+        ChainTangents shin = computeLimbStyleTangents(kneeC, s->kneeRadius, footC, s->footRadius,
+                                                         s->shinArc1Angle, s->shinArc2Angle,
+                                                         MIN_SHIN_ARC_R, MAX_SHIN_ARC_R, MAX_SHIN_ARC2_CONCAVE_R);
+
+        // Approximate leg centroid: the plain average of the thigh stage's
+        // and shin stage's own centroids -- a simplification (an exact
+        // combined centroid would need each stage's own area as a
+        // weight), consistent with this whole export already hardcoding
+        // weight=1.0 rather than modeling real per-part mass.
+        PointF thighPoly[4 * (ROB_ARM_ARC_SAMPLES + 1)];
+        int thighN = sampleLimbStageOutline(hipC, s->innerRadius, kneeC, s->kneeRadius, thigh, thighPoly);
+        PointF thighCentroid = robArmPolygonCentroid(thighPoly, thighN);
+
+        PointF shinPoly[4 * (ROB_ARM_ARC_SAMPLES + 1)];
+        int shinN = sampleLimbStageOutline(kneeC, s->kneeRadius, footC, s->footRadius, shin, shinPoly);
+        PointF shinCentroid = robArmPolygonCentroid(shinPoly, shinN);
+
+        PointF legCentroidWorld = { (thighCentroid.x + shinCentroid.x) * 0.5f, (thighCentroid.y + shinCentroid.y) * 0.5f };
+        PointF legCentroid = { (legCentroidWorld.x - hipC.x) * ROBOT_LEG_EXPORT_SCALE, (legCentroidWorld.y - hipC.y) * ROBOT_LEG_EXPORT_SCALE };
+
+        FILE* f = fopen("SemniExport\\Leg.txt", "w");
+        if (!f)
+            return 0;
+
+        fprintf(f, "%.6f %.6f %.6f\n", legCentroid.x, legCentroid.y, 1.0f);
+        fprintf(f, "%.6f %.6f\n", 0.0f, 0.0f);
+
+        float hipAngles[2] = { robArmAngleAroundDeg(hipC, thigh.c1Tan1), robArmAngleAroundDeg(hipC, thigh.c1Tan2) };
+        writeCircleSplitArcs(f, hipC, s->innerRadius, hipAngles, 2, hipC, ROBOT_LEG_EXPORT_SCALE);
+
+        writeArcLine(f, thigh.c1Tan1, thigh.c2Tan1, thigh.mid1, hipC, ROBOT_LEG_EXPORT_SCALE);
+        writeArcLine(f, thigh.c1Tan2, thigh.c2Tan2, thigh.mid2, hipC, ROBOT_LEG_EXPORT_SCALE);
+
+        float kneeAngles[4] = {
+            robArmAngleAroundDeg(kneeC, thigh.c2Tan1), robArmAngleAroundDeg(kneeC, thigh.c2Tan2),
+            robArmAngleAroundDeg(kneeC, shin.c1Tan1), robArmAngleAroundDeg(kneeC, shin.c1Tan2)
+        };
+        writeCircleSplitArcs(f, kneeC, s->kneeRadius, kneeAngles, 4, hipC, ROBOT_LEG_EXPORT_SCALE);
+
+        writeArcLine(f, shin.c1Tan1, shin.c2Tan1, shin.mid1, hipC, ROBOT_LEG_EXPORT_SCALE);
+        writeArcLine(f, shin.c1Tan2, shin.c2Tan2, shin.mid2, hipC, ROBOT_LEG_EXPORT_SCALE);
+
+        float footAngles[2] = { robArmAngleAroundDeg(footC, shin.c2Tan1), robArmAngleAroundDeg(footC, shin.c2Tan2) };
+        writeCircleSplitArcs(f, footC, s->footRadius, footAngles, 2, hipC, ROBOT_LEG_EXPORT_SCALE);
+
+        fclose(f);
+    }
+
+    char path[MAX_PATH];
+    GetCurrentDirectoryA(MAX_PATH, path);
+    printf("Saved Semni body/leg as Rob.txt + Leg.txt in: %s\\SemniExport\n", path);
+
+    return 1;
+}
+
+// Writes one Stilo leg (hip->feet, single stage) as an 8-line file --
+// structurally identical to Rocky's own Arm.txt (mass+weight, joint "0 0",
+// hip circle split into 2 halves, thigh arc 1, thigh arc 2, feet circle
+// split into 2 halves), just under Stilo's own hipCircle/feetCircle/
+// thighArc1Angle/thighArc2Angle field names. Shared by both of Stilo's
+// legs -- caller passes leg 1's or leg 2's own fields/filename.
+static int writeStiloLegFile(const char* filename, PointF hipC, float hipR, PointF feetC, float feetR,
+                              float thighArc1AngleDeg, float thighArc2AngleDeg)
+{
+    ChainTangents thigh = computeLimbStyleTangents(hipC, hipR, feetC, feetR,
+                                                     thighArc1AngleDeg, thighArc2AngleDeg,
+                                                     MIN_THIGH_ARC_R, MAX_SEMNI_THIGH_ARC_R, MAX_THIGH_ARC2_CONCAVE_R);
+
+    PointF poly[4 * (ROB_ARM_ARC_SAMPLES + 1)];
+    int polyN = sampleLimbStageOutline(hipC, hipR, feetC, feetR, thigh, poly);
+    PointF centroidWorld = robArmPolygonCentroid(poly, polyN);
+    PointF centroid = { (centroidWorld.x - hipC.x) * ROBOT_LEG_EXPORT_SCALE, (centroidWorld.y - hipC.y) * ROBOT_LEG_EXPORT_SCALE };
+
+    FILE* f = fopen(filename, "w");
+    if (!f)
+        return 0;
+
+    fprintf(f, "%.6f %.6f %.6f\n", centroid.x, centroid.y, 1.0f);
+    fprintf(f, "%.6f %.6f\n", 0.0f, 0.0f);
+
+    float hipAngles[2] = { robArmAngleAroundDeg(hipC, thigh.c1Tan1), robArmAngleAroundDeg(hipC, thigh.c1Tan2) };
+    writeCircleSplitArcs(f, hipC, hipR, hipAngles, 2, hipC, ROBOT_LEG_EXPORT_SCALE);
+
+    writeArcLine(f, thigh.c1Tan1, thigh.c2Tan1, thigh.mid1, hipC, ROBOT_LEG_EXPORT_SCALE);
+    writeArcLine(f, thigh.c1Tan2, thigh.c2Tan2, thigh.mid2, hipC, ROBOT_LEG_EXPORT_SCALE);
+
+    float feetAngles[2] = { robArmAngleAroundDeg(feetC, thigh.c2Tan1), robArmAngleAroundDeg(feetC, thigh.c2Tan2) };
+    writeCircleSplitArcs(f, feetC, feetR, feetAngles, 2, hipC, ROBOT_LEG_EXPORT_SCALE);
+
+    fclose(f);
+    return 1;
+}
+
+int saveStiloAsRobLeg(AppState* app)
+{
+    Stilo* s = &app->robotScene.stilo;
+
+    CreateDirectoryA("StiloExport", NULL);
+
+    // ---- Rob.txt: same arc-based torso shape as Semni's own, plus TWO
+    // joint lines (one per leg) instead of Semni's one ----
+    {
+        PointF headC = { s->headX, s->y };
+        PointF buttC = { s->buttX, s->y };
+
+        ChainTangents seam = computeSeamStyleTangents(headC, s->headRadius, buttC, s->buttRadius,
+                                                        s->seamArc1Angle, s->seamArc2Angle,
+                                                        MIN_ARC_R, MAX_ARC_R);
+
+        PointF poly[4 * (ROB_ARM_ARC_SAMPLES + 1)];
+        int polyN = sampleLimbStageOutline(headC, s->headRadius, buttC, s->buttRadius, seam, poly);
+        PointF centroidWorld = robArmPolygonCentroid(poly, polyN);
+        PointF centroid = { (centroidWorld.x - headC.x) * ROBOT_LEG_EXPORT_SCALE, (centroidWorld.y - headC.y) * ROBOT_LEG_EXPORT_SCALE };
+
+        PointF joint1Rel = { (s->hip1Circle.x - headC.x) * ROBOT_LEG_EXPORT_SCALE, (s->hip1Circle.y - headC.y) * ROBOT_LEG_EXPORT_SCALE };
+        PointF joint2Rel = { (s->hip2Circle.x - headC.x) * ROBOT_LEG_EXPORT_SCALE, (s->hip2Circle.y - headC.y) * ROBOT_LEG_EXPORT_SCALE };
+
+        FILE* f = fopen("StiloExport\\Rob.txt", "w");
+        if (!f)
+            return 0;
+
+        fprintf(f, "%.6f %.6f %.6f\n", centroid.x, centroid.y, 1.0f);
+        fprintf(f, "%.6f %.6f\n", joint1Rel.x, joint1Rel.y);
+        fprintf(f, "%.6f %.6f\n", joint2Rel.x, joint2Rel.y);
+
+        float headAngles[2] = { robArmAngleAroundDeg(headC, seam.c1Tan1), robArmAngleAroundDeg(headC, seam.c1Tan2) };
+        writeCircleSplitArcs(f, headC, s->headRadius, headAngles, 2, headC, ROBOT_LEG_EXPORT_SCALE);
+
+        writeArcLine(f, seam.c1Tan1, seam.c2Tan1, seam.mid1, headC, ROBOT_LEG_EXPORT_SCALE);
+        writeArcLine(f, seam.c2Tan2, seam.c1Tan2, seam.mid2, headC, ROBOT_LEG_EXPORT_SCALE);
+
+        float buttAngles[2] = { robArmAngleAroundDeg(buttC, seam.c2Tan1), robArmAngleAroundDeg(buttC, seam.c2Tan2) };
+        writeCircleSplitArcs(f, buttC, s->buttRadius, buttAngles, 2, headC, ROBOT_LEG_EXPORT_SCALE);
+
+        fclose(f);
+    }
+
+    // ---- Leg1.txt / Leg2.txt: each leg's own single-stage hip -> feet ----
+    if (!writeStiloLegFile("StiloExport\\Leg1.txt", s->hip1Circle, s->hip1Radius, s->feet1Circle, s->feet1Radius,
+                            s->thigh1Arc1Angle, s->thigh1Arc2Angle))
+        return 0;
+
+    if (!writeStiloLegFile("StiloExport\\Leg2.txt", s->hip2Circle, s->hip2Radius, s->feet2Circle, s->feet2Radius,
+                            s->thigh2Arc1Angle, s->thigh2Arc2Angle))
+        return 0;
+
+    char path[MAX_PATH];
+    GetCurrentDirectoryA(MAX_PATH, path);
+    printf("Saved Stilo body/legs as Rob.txt + Leg1.txt + Leg2.txt in: %s\\StiloExport\n", path);
 
     return 1;
 }

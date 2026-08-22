@@ -54,8 +54,7 @@ extern DesignLayer designLayer;
 // currently active (opacity 0, fully invisible) instead of just dimming it
 // (the normal INACTIVE_MODE_DIM_ALPHA fade) -- see canvas.c's own
 // definition/comment. Toggled from the View > Hide Inactive Layer menu item
-// (ID_TOGGLE_HIDE_INACTIVE above). FALSE by default -- matches this app's
-// original dimming-only behavior from before this toggle existed.
+// (ID_TOGGLE_HIDE_INACTIVE above). TRUE by default.
 extern BOOL hideInactiveLayer;
 
 // Canvas state that should always reset together (see ResetCanvas)
