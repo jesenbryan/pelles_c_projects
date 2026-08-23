@@ -355,6 +355,13 @@
 // is independent of the mm LABEL'S conversion factor below.
 #define ROBOT_VIEW_HALF_EXTENT 9.0f
 
+// Starting value for graphics.c's own g_zoom (Design > Robot's camera
+// zoom, see graphicsGetZoom's "zoom > 1 magnifies" convention) -- both
+// what the Robot editor opens at AND what Ctrl+Numpad 0 (graphicsResetView)
+// returns to, so "reset" always lands back on the same view the editor
+// starts on rather than some separate, lower default. 5.0 == 500%.
+#define ROBOT_INITIAL_ZOOM 5.0f
+
 // Real-world size conversion factor (world units -> mm), used by input.c's
 // live robot size readout (hRobotSizeLabel) and renderer.c's
 // drawRobotSizeBox (both also scaled by the current ROBOT_SCALE_MIN/MAX

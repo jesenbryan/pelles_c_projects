@@ -1,4 +1,5 @@
 ﻿#include "app.h"
+#include "save.h" // for loadRobotPoseFromFile/loadRockyPoseFromFile/loadStiloPoseFromFile -- see initAppState below
 
 void initHomePosition(AppState* app)
 {
@@ -194,9 +195,25 @@ void initStiloHomePosition(AppState* app)
 
 void initAppState(AppState* app)
 {
-	initHomePosition(app);
-	initRockyHomePosition(app);
+	// Seed every robot kind into its Home pose on startup -- "custom file
+	// first, hardcoded default as fallback" pattern, same as input.c's
+	// robot-kind-switch handler (WM_COMMAND's kind combo box) and the
+	// Home button (ID_HOME_POSITION_BUTTON) both already use, so a user
+	// who has saved their own custom Home pose (Poses\*_home.txt, see
+	// ID_SET_HOME_BUTTON) sees THAT pose right from launch, not just
+	// initHomePosition/initRockyHomePosition/initStiloHomePosition's own
+	// hardcoded numbers. Falls back to the hardcoded pose for whichever
+	// kind has no saved file yet (e.g. a fresh install with no Poses
+	// folder), exactly like every other caller of these loaders.
+	if (!loadRobotPoseFromFile("Poses\\semni_home.txt", &app->robotScene.robot))
+		initHomePosition(app);
+
+	if (!loadRockyPoseFromFile("Poses\\rocky_home.txt", &app->robotScene.rocky))
+		initRockyHomePosition(app);
+
 	initStiloHomePosition(app);
+	loadStiloPoseFromFile("Poses\\stilo_home.txt", &app->robotScene.stilo);
+
 	app->robotScene.activeKind = ROBOT_KIND_SEMNI;
 
 	// Rob.txt/Arm.txt export weights (see app.h's Rocky.bodyWeight/

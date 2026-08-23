@@ -15,20 +15,26 @@ typedef struct {
 } HelpRow;
 
 static const HelpRow kHelpRows[] = {
+    { L"General",                        L"Scroll Wheel",        L"Zoom in / out" },
+    { NULL,                              L"Middle-click + Drag", L"Pan the view" },
+    { NULL,                              L"Ctrl + Numpad 0",     L"Reset zoom and panning" },
+
+    { L"Drawing (Design > Environment)", L"Left-click + Drag",   L"Draw a freehand stroke" },
+    { NULL,                              L"Hold Shift",          L"Constrain the stroke to a straight line" },
+
     { L"Robot Editing (Design > Robot)", L"Left-click + Drag",   L"Move, resize, or reshape a handle" },
-    { NULL,                              L"Scroll Wheel",        L"Resize the hovered joint's circle" },
-    { NULL,                              L"Shift + Scroll",      L"Rotate the hovered joint (Semni: Hip, Knee — Rocky: Knee — Stilo: Hip 1, Hip 2)" },
+    { NULL,                              L"Scroll Wheel (handle)", L"Resize the hovered joint's circle" },
+    { NULL,                              L"Shift + Scroll (handle)", L"Rotate the hovered joint" },
     { NULL,                              L"Left / Right Arrow",  L"Rotate the whole robot" },
     { NULL,                              L"Up / Down Arrow",     L"Move the whole robot (hold Ctrl for finer steps)" },
     { NULL,                              L"Esc",                 L"Return to Environment view" },
 
-    { L"Simulation",                    L"Left-click + Drag",   L"Move the robot" },
+    { L"Simulation (Work in Progress)",  L"Left-click + Drag",   L"Move the robot" },
     { NULL,                              L"Shift + Scroll",      L"Rotate the hovered joint" },
     { NULL,                              L"Left / Right Arrow",  L"Rotate the whole robot" },
     { NULL,                              L"G",                   L"Nudge the robot down" },
     { NULL,                              L"Shift + G",           L"Toggle auto gravity" },
     { NULL,                              L"Shift + W",           L"Toggle Walk" },
-    { NULL,                              L"Ctrl + Numpad 0",     L"Reset the camera" },
 };
 #define HELP_ROW_COUNT (sizeof(kHelpRows) / sizeof(kHelpRows[0]))
 
@@ -242,7 +248,7 @@ void showControlsHelpDialog(HWND owner)
 
     HWND hDlg = CreateWindowEx(
         WS_EX_DLGMODALFRAME,
-        kHelpWndClass, L"Robot Controls",
+        kHelpWndClass, L"Controls",
         WS_POPUP | WS_CAPTION | WS_SYSMENU,
         x, y, winW, winH,
         owner, NULL, GetModuleHandle(NULL), NULL);

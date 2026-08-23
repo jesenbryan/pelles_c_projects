@@ -25,7 +25,7 @@ static HGLRC hrc;
 // origin, which is also the body's own rotation pivot -- see getCenter())
 // means the robot can never be scrolled out of view, at the cost of not
 // being able to zoom toward wherever the cursor happens to be.
-static float g_zoom = 1.0f;
+static float g_zoom = ROBOT_INITIAL_ZOOM;
 
 // Current "Robot Size" slider value (see ROBOT_SCALE_MIN/MAX in config.h,
 // input.c's WM_HSCROLL) -- folded directly into effectiveZoom below so
@@ -377,7 +377,7 @@ void graphicsSetActiveRobotKind(int kind)
 // than just the currently active one.
 void graphicsResetView(void)
 {
-    g_zoom = 1.0f;
+    g_zoom = ROBOT_INITIAL_ZOOM;
     g_panX = 0.0f;
     g_panY = 0.0f;
 
