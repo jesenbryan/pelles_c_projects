@@ -70,11 +70,12 @@ PointF robArmPolygonCentroid(PointF* pts, int n);
 //
 // Unlike Rocky's own Rob.txt/Arm.txt (plain 6-float lines, no flag), every
 // shape line here leads with a type flag: "0 ..." for a 6-float arc line
-// (start, end, mid -- same meaning as before) and "1 cx cy r 0 0" for a
-// FULL circle (center + radius, the last two fields unused/padding) --
-// see writeArcLine/writeFullCircleLine in save.c. This lets every body
-// circle (head, butt, hip, knee, foot) be written as ONE line instead of
-// being split into 2 (or, for Semni's kneeCircle, 4) tangent-point pieces.
+// (start, end, mid -- same meaning as before) and "1 cx cy r" for a FULL
+// circle (just center + radius, no padding -- the two line kinds are told
+// apart by the leading flag, not by a shared length) -- see
+// writeArcLine/writeFullCircleLine in save.c. This lets every body circle
+// (head, butt, hip, knee, foot) be written as ONE line instead of being
+// split into 2 (or, for Semni's kneeCircle, 4) tangent-point pieces.
 int saveSemniAsRobLeg(AppState* app);
 
 // Same idea as saveSemniAsRobLeg, for Stilo -- Stilo shares Semni's own

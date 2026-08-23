@@ -961,19 +961,21 @@ static void writeArcLine(FILE* f, PointF start, PointF end, PointF mid, PointF o
 }
 
 // Writes one FULL circle as a single line: type flag "1", followed by its
-// center and radius, then two unused 0.0 fields padding it out to the
-// same 6-numbers-after-the-flag width writeArcLine's arc lines use (so
-// every shape line in the file is the same 7-token shape regardless of
-// which kind it is). Every one of Semni's/Stilo's body circles (head,
-// butt, hip(s), knee, foot/feet) is a genuine, complete circle -- the
-// neighboring seam/thigh/shin arcs just happen to connect to points on
-// its boundary -- so unlike those connecting arcs, it never needs the
-// tangent-point splitting an earlier version of this file used (2 halves
-// for most circles, 4 pieces for Semni's kneeCircle): center+radius fully
-// and exactly describes the circle in one line, with nothing lost.
+// center and radius -- 4 tokens total, shorter than writeArcLine's 7
+// (flag + 6 floats) since a circle only needs 3 numbers to describe fully,
+// with no padding fields to reach a common width. A reader tells the two
+// line kinds apart from the leading flag alone, so there's no need for
+// every line to be the same length. Every one of Semni's/Stilo's body
+// circles (head, butt, hip(s), knee, foot/feet) is a genuine, complete
+// circle -- the neighboring seam/thigh/shin arcs just happen to connect to
+// points on its boundary -- so unlike those connecting arcs, it never
+// needs the tangent-point splitting an earlier version of this file used
+// (2 halves for most circles, 4 pieces for Semni's kneeCircle):
+// center+radius fully and exactly describes the circle in one line, with
+// nothing lost.
 static void writeFullCircleLine(FILE* f, PointF center, float radius, PointF origin, float scale)
 {
-    fprintf(f, "1 %.6f %.6f %.6f 0.000000 0.000000\n",
+    fprintf(f, "1 %.6f %.6f %.6f\n",
         (center.x - origin.x) * scale, (center.y - origin.y) * scale,
         radius * scale);
 }
