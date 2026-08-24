@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<settings version="1.0">
-	<category name="write.c" />
-	<category name="main.c" />
-	<category name="io.h" />
-	<category name="plot.plt" />
-	<category name="read.c" />
-</settings>

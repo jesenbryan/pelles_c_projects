@@ -374,10 +374,14 @@ void graphicsSetActiveRobotKind(int kind)
 // Resets zoom/pan and EVERY kind's anchor slot -- unlike
 // graphicsSetActiveRobotKind, which only switches which slot is live, this
 // is the deliberate full reset (Ctrl+0), so it clears all three rather
-// than just the currently active one.
+// than just the currently active one. Deliberately resets to 1.0 (100%),
+// NOT ROBOT_INITIAL_ZOOM (the 500% the editor opens at) -- Ctrl+0 is the
+// "back to a known, neutral baseline" shortcut, same idea as Simulation's
+// own Ctrl+Numpad0 (canvas.c) resetting canvas.zoom to 1.0 rather than
+// whatever it started the session at.
 void graphicsResetView(void)
 {
-    g_zoom = ROBOT_INITIAL_ZOOM;
+    g_zoom = 1.0f;
     g_panX = 0.0f;
     g_panY = 0.0f;
 

@@ -356,10 +356,10 @@
 #define ROBOT_VIEW_HALF_EXTENT 9.0f
 
 // Starting value for graphics.c's own g_zoom (Design > Robot's camera
-// zoom, see graphicsGetZoom's "zoom > 1 magnifies" convention) -- both
-// what the Robot editor opens at AND what Ctrl+Numpad 0 (graphicsResetView)
-// returns to, so "reset" always lands back on the same view the editor
-// starts on rather than some separate, lower default. 5.0 == 500%.
+// zoom, see graphicsGetZoom's "zoom > 1 magnifies" convention) -- what the
+// Robot editor opens at. Deliberately NOT what Ctrl+Numpad 0
+// (graphicsResetView) returns to -- that resets to a flat 1.0 (100%), a
+// neutral baseline distinct from this launch-time default. 5.0 == 500%.
 #define ROBOT_INITIAL_ZOOM 5.0f
 
 // Real-world size conversion factor (world units -> mm), used by input.c's
