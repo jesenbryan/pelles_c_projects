@@ -144,14 +144,18 @@ LRESULT CALLBACK WndProcUI(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		    // separate bool - the button IS the toggle state.
 		    BOOL nowChecked = (SendMessage(hViewSegBtn, BM_GETCHECK, 0, 0) == BST_CHECKED);
 
-		    if (nowChecked && canvas.segmentResultCount == 0)
+		    if (nowChecked)
 		    {
-		        // Nothing traced yet - trace on demand (canvas drawing takes
-		        // priority, falls back to a pending uploaded BMP) so View
-		        // Segments works standalone without requiring a separate
-		        // Trace step first (the old standalone Trace button was
-		        // removed for exactly this reason -- both this and
-		        // Comparison Mode below already trace on demand).
+		        // ALWAYS retrace on check, not just the first time
+		        // (canvas.segmentResultCount == 0) -- the old "only if
+		        // nothing traced yet" gate meant re-checking View Segments
+		        // after drawing more of the contour (or editing/erasing
+		        // part of it) kept showing the STALE trace from before
+		        // those changes, since nothing else re-traces on its own.
+		        // This also still covers the original "nothing traced
+		        // yet" case for free (canvas drawing takes priority, falls
+		        // back to a pending uploaded BMP), so View Segments still
+		        // works standalone without a separate Trace step first.
 		        RunTracePipeline();
 		    }
 		    canvas.showSegments = nowChecked;
@@ -162,11 +166,14 @@ LRESULT CALLBACK WndProcUI(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		    // Toggle between showing original strokes vs. reconstructed arc line
 		    BOOL nowChecked = (SendMessage(hComparisonBtn, BM_GETCHECK, 0, 0) == BST_CHECKED);
 
-		    if (nowChecked && canvas.segmentResultCount == 0)
+		    if (nowChecked)
 		    {
-		        // Same as View Segments: trace on demand so Comparison Mode
-		        // is also usable on its own, without needing View Segments
-		        // pressed first.
+		        // Same as View Segments above: ALWAYS retrace on check
+		        // (not just when nothing's been traced yet), so re-
+		        // checking Comparison Mode after drawing more never shows
+		        // a stale reconstruction either -- and it still covers
+		        // "usable on its own, without needing View Segments
+		        // pressed first" the same way it always did.
 		        RunTracePipeline();
 		    }
 		    canvas.comparisonMode = nowChecked;

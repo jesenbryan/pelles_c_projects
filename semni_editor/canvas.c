@@ -3331,6 +3331,7 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	                saveBMP_UI("EnvExport\\Env.bmp", img, img->bin, BMP_RGB);
 	                free(img->data);
 	                free(img->bin);
+	                free(img->radius); // canvasToImage's own exact-radius raster -- see bmp.h
 	                free(img);
 	            }
 	        }

@@ -24,6 +24,7 @@ static void freePendingBmpImage(void)
     if (!s_pendingBmpImage) return;
     free(s_pendingBmpImage->data);
     free(s_pendingBmpImage->bin);
+    free(s_pendingBmpImage->radius); // NULL for an uploaded BMP -- free(NULL) is a no-op
     free(s_pendingBmpImage);
     s_pendingBmpImage = NULL;
 }
@@ -270,43 +271,72 @@ static void runPipelineOnImage(Image* img, const char* sourceLabel, BOOL stretch
             // endpoint snapping in canvas_bridge.c). Averaging over the
             // whole path first keeps every segment of the same stroke
             // rendered at the exact same, more representative width.
-            double sum = 0.0;
-            for (int k = 0; k < numPoints; k++)
+            // EXACT path (img->radius != NULL, i.e. a hand-drawn canvas
+            // stroke, see canvasToImage): every pixel canvasToImage
+            // actually stamped carries the TRUE intended half-thickness
+            // it was stamped with (strokeThickness[s]/2 -- see
+            // canvas_bridge.c's stampDisc/setBinPixel), and that value is
+            // the same across the whole stroke (see the comment above),
+            // so there's no need to measure or average anything -- one
+            // lookup at any point on this path is already the exact,
+            // noise-free answer. This is what the measurement loop below
+            // (kept as the `else` fallback for an uploaded BMP, which has
+            // no such known-exact source) could only APPROXIMATE by
+            // scanning the post-thinning raster for how wide the
+            // original stroke was at each point and averaging -- pixel-
+            // grid quantization and ring-search resolution both leave
+            // slack there, which is exactly what let Simulation's ground
+            // collision (canvas.c's pointCollidesWithAnyEnvironmentStroke,
+            // fed by this same avgRadiusPx via segmentThicknessWorld) sit
+            // a hair off from the actually-drawn line instead of exactly
+            // on it.
+            float pathAvgRadiusPx;
+
+            if (img->radius && numPoints > 0)
             {
-                // Local tangent direction at path[k], from its two
-                // immediate neighbors (one-sided at either end of the
-                // path) -- lets the width measurement below cut straight
-                // across the stroke's TRUE perpendicular regardless of
-                // which way it happens to run, instead of always
-                // measuring along a fixed pair of axes (see
-                // measureLocalRadiusPxDirectional's comment for why that
-                // matters).
-                int kPrev = (k > 0) ? k - 1 : k;
-                int kNext = (k < numPoints - 1) ? k + 1 : k;
-
-                float tdx = (float)(path[kNext].x - path[kPrev].x);
-                float tdy = (float)(path[kNext].y - path[kPrev].y);
-                float tlen = sqrtf(tdx * tdx + tdy * tdy);
-
-                if (tlen > 1e-3f)
-                {
-                    sum += measureLocalRadiusPxDirectional(origBin, w, h,
-                                                 path[k].x, path[k].y,
-                                                 tdx / tlen, tdy / tlen,
-                                                 MAX_MEASURED_STROKE_RADIUS_PX);
-                }
-                else
-                {
-                    // Degenerate (a single-point path, or repeated
-                    // coordinates) -- no tangent to measure across, so
-                    // fall back to the old direction-agnostic ring
-                    // search rather than dividing by a near-zero tlen.
-                    sum += measureLocalRadiusPx(origBin, w, h,
-                                                 path[k].x, path[k].y,
-                                                 MAX_MEASURED_STROKE_RADIUS_PX);
-                }
+                pathAvgRadiusPx = img->radius[path[0].y * w + path[0].x];
             }
-            float pathAvgRadiusPx = (numPoints > 0) ? (float)(sum / numPoints) : 1.0f;
+            else
+            {
+                double sum = 0.0;
+                for (int k = 0; k < numPoints; k++)
+                {
+                    // Local tangent direction at path[k], from its two
+                    // immediate neighbors (one-sided at either end of the
+                    // path) -- lets the width measurement below cut straight
+                    // across the stroke's TRUE perpendicular regardless of
+                    // which way it happens to run, instead of always
+                    // measuring along a fixed pair of axes (see
+                    // measureLocalRadiusPxDirectional's comment for why that
+                    // matters).
+                    int kPrev = (k > 0) ? k - 1 : k;
+                    int kNext = (k < numPoints - 1) ? k + 1 : k;
+
+                    float tdx = (float)(path[kNext].x - path[kPrev].x);
+                    float tdy = (float)(path[kNext].y - path[kPrev].y);
+                    float tlen = sqrtf(tdx * tdx + tdy * tdy);
+
+                    if (tlen > 1e-3f)
+                    {
+                        sum += measureLocalRadiusPxDirectional(origBin, w, h,
+                                                     path[k].x, path[k].y,
+                                                     tdx / tlen, tdy / tlen,
+                                                     MAX_MEASURED_STROKE_RADIUS_PX);
+                    }
+                    else
+                    {
+                        // Degenerate (a single-point path, or repeated
+                        // coordinates) -- no tangent to measure across, so
+                        // fall back to the old direction-agnostic ring
+                        // search rather than dividing by a near-zero tlen.
+                        sum += measureLocalRadiusPx(origBin, w, h,
+                                                     path[k].x, path[k].y,
+                                                     MAX_MEASURED_STROKE_RADIUS_PX);
+                    }
+                }
+                pathAvgRadiusPx = (numPoints > 0) ? (float)(sum / numPoints) : 1.0f;
+            }
+
             if (pathAvgRadiusPx < 1.0f) pathAvgRadiusPx = 1.0f;
 
             for (int i = 0; i < segCount; i++)
@@ -332,6 +362,7 @@ static void runPipelineOnImage(Image* img, const char* sourceLabel, BOOL stretch
 
     free(img->data);
     free(img->bin);
+    free(img->radius); // NULL for an uploaded BMP -- free(NULL) is a no-op
     free(img);
 }
 
@@ -366,6 +397,7 @@ void RunUploadPipeline(void)
     if (!img->bin) {
         printf("Failed to binarize uploaded image\n");
         free(img->data);
+        free(img->radius); // already NULL (loadBMP), but free(NULL) is a no-op
         free(img);
         return;
     }

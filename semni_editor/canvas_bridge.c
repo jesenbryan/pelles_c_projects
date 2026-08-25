@@ -7,24 +7,107 @@
 
 #define ARC_PI 3.14159265358979323846
 
-// Inverse of the pixel->world mapping used in canvas.c's mouse handlers.
-// Must use the CURRENT window size/zoom, since a stroke's stored (x,y)
-// is in world space and gets reprojected under whatever zoom is active now.
+// world<->pixel mapping used by canvasToImage's rasterization below (and,
+// through it, everything View Segments/Comparison Mode/ground-collision
+// tracing produces) -- FIXED per trace, from the drawing's OWN bounding
+// box, deliberately NOT the live camera's canvas.zoom/panX/panY the way
+// this used to work. The old version reprojected strokes through
+// whatever the on-screen view happened to be at trace time: zoom out and
+// the raster (still just w x h pixels) had to cover more world space per
+// pixel, losing precision; zoom in past the point where part of a stroke
+// scrolled off screen and that part fell outside [0,w)x[0,h) entirely --
+// stampDisc/stampSegment's own bounds check (setBinPixel) silently
+// dropped it, so View Segments' ghost overlay was missing whatever
+// wasn't currently in view. Tracing off a fixed bounding box instead
+// means the WHOLE drawing is always captured at one consistent
+// resolution, independent of wherever the camera happens to be pointed.
+// computeTraceBounds (below) sets g_traceOriginX/Y/g_tracePxPerWorld once
+// per canvasToImage call; pixelToWorldExact (the inverse, used when
+// converting traced points back to world space) reads the same three.
+static float g_traceOriginX = 0.0f;
+static float g_traceOriginY = 0.0f;
+static float g_tracePxPerWorld = 1.0f; // pixels per world unit -- ONE value for both axes (isotropic), so a drawn circle traces back out as a circle, not an ellipse
+
+// Smallest world-unit span computeTraceBounds will ever fit the raster
+// to, so a degenerate drawing (a single dot, or every point on one exact
+// horizontal/vertical line) can't collapse a span to 0 and blow up
+// g_tracePxPerWorld into infinity/NaN.
+#define TRACE_MIN_WORLD_SPAN 0.05f
+
+// Scans every point in every stroke (points[]/canvas.pointCount, already
+// flat across strokes) for its world-space bounding box, then derives the
+// fixed mapping worldToPixel/pixelToWorldExact use to fit that box into a
+// w x h raster -- letterboxed (whichever axis is tighter wins the shared
+// scale) and centered, with a margin wide enough that a stroke's own
+// rendered THICKNESS (stamped as a disc/ribbon around each point, not
+// just the bare point itself) never gets clipped by sitting right at the
+// raster's edge. Called once per canvasToImage, before any stamping.
+static void computeTraceBounds(int w, int h)
+{
+    if (canvas.pointCount < 2) {
+        // Nothing (or a single point) to bound -- values here don't
+        // matter, canvasToImage's own stroke loop has nothing to stamp.
+        g_traceOriginX = 0.0f;
+        g_traceOriginY = 0.0f;
+        g_tracePxPerWorld = 1.0f;
+        return;
+    }
+
+    float minX = points[0], maxX = points[0];
+    float minY = points[1], maxY = points[1];
+
+    // canvas.pointCount is a FLOAT index (2 floats per point, see
+    // canvas.c's WM_LBUTTONDOWN/WM_MOUSEMOVE -- it's incremented twice per
+    // point, once for x and once for y, same convention strokeStarts[]
+    // uses), so it's already the right bound for a straight for-loop here.
+    for (int i = 0; i < canvas.pointCount; i += 2) {
+        float x = points[i], y = points[i + 1];
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+    }
+
+    // Margin, in WORLD units, sized off the thickest stroke currently on
+    // the canvas -- strokeThickness[] is the same raw slider-pixel value
+    // canvas.c's real-stroke render divides by glWindowWidth (at zoom==1)
+    // to get a world-unit half-width, so this approximates that same
+    // conversion; doubled since this only needs to be generous enough to
+    // avoid clipping, not exact.
+    float maxThicknessPx = 1.0f;
+    for (int s = 0; s < canvas.strokeCount; s++)
+        if (strokeThickness[s] > maxThicknessPx) maxThicknessPx = strokeThickness[s];
+
+    float margin = (maxThicknessPx / (float)w) * 2.0f;
+
+    minX -= margin; maxX += margin;
+    minY -= margin; maxY += margin;
+
+    float spanX = maxX - minX;
+    float spanY = maxY - minY;
+    if (spanX < TRACE_MIN_WORLD_SPAN) spanX = TRACE_MIN_WORLD_SPAN;
+    if (spanY < TRACE_MIN_WORLD_SPAN) spanY = TRACE_MIN_WORLD_SPAN;
+
+    // Isotropic scale: fit whichever axis is tighter against the raster,
+    // same letterboxing idea the live camera's own aspect handling uses
+    // elsewhere, just computed against the DRAWING's box instead of the
+    // window's.
+    float scaleX = (float)w / spanX;
+    float scaleY = (float)h / spanY;
+    g_tracePxPerWorld = (scaleX < scaleY) ? scaleX : scaleY;
+
+    // Origin = the bounding box's own center -- the world point that
+    // lands at pixel (w/2, h/2), so the drawing sits centered in the
+    // raster with equal letterbox margin on whichever axis has slack.
+    g_traceOriginX = (minX + maxX) * 0.5f;
+    g_traceOriginY = (minY + maxY) * 0.5f;
+}
+
 static void worldToPixel(float wx, float wy, int w, int h, float* px, float* py)
 {
-    float aspect = (float)w / (float)h;
-
-    // undo pan to get the ortho-space coordinate currently on screen
-    float orthoX = wx - canvas.panX;
-    float orthoY = wy - canvas.panY;
-
-    if (aspect >= 1.0f) {
-        *px = (w / 2.0f) * (orthoX / (aspect * canvas.zoom) + 1.0f);
-        *py = (h / 2.0f) * (1.0f - orthoY / canvas.zoom);
-    } else {
-        *px = (w / 2.0f) * (orthoX / canvas.zoom + 1.0f);
-        *py = (h / 2.0f) * (1.0f - (orthoY * aspect) / canvas.zoom);
-    }
+    *px = (w / 2.0f) + (wx - g_traceOriginX) * g_tracePxPerWorld;
+    // Y flipped: screen pixels grow downward, world Y grows upward.
+    *py = (h / 2.0f) - (wy - g_traceOriginY) * g_tracePxPerWorld;
 }
 
 // px/py are PIXEL-INDEX-space coordinates (an integer i means "pixel i",
@@ -47,18 +130,16 @@ static void pixelToWorldExact(float px, float py, int w, int h, float* wx, float
     px += 0.5f;
     py += 0.5f;
 
-    float aspect = (float)w / (float)h;
-
-    if (aspect >= 1.0f) {
-        *wx = ((2.0f * px / w) - 1.0f) * aspect * canvas.zoom;
-        *wy = (1.0f - (2.0f * py / h)) * canvas.zoom;
-    } else {
-        *wx = ((2.0f * px / w) - 1.0f) * canvas.zoom;
-        *wy = (1.0f - (2.0f * py / h)) * (1.0f / aspect) * canvas.zoom;
-    }
-
-    *wx += canvas.panX;   // NEW: store as true world coords, like strokes do
-    *wy += canvas.panY;   // NEW
+    // Exact inverse of worldToPixel above -- same fixed, drawing-bounding-
+    // box-derived g_traceOriginX/Y/g_tracePxPerWorld (set once per trace
+    // by computeTraceBounds), not the live camera. w/h still matter here
+    // (pixel (w/2, h/2) is where g_traceOrigin lands, same as
+    // worldToPixel), they just no longer feed an aspect/zoom calculation
+    // directly -- computeTraceBounds already baked this same w/h into
+    // g_tracePxPerWorld, so this only has to undo the half-width/height
+    // offset and the shared scale.
+    *wx = g_traceOriginX + (px - w / 2.0f) / g_tracePxPerWorld;
+    *wy = g_traceOriginY - (py - h / 2.0f) / g_tracePxPerWorld;
 }
 
 // Uses the FIXED bg bounds, so no canvas.zoom/pan math needed here —
@@ -98,12 +179,19 @@ void addBranchMarker(int imgW, int imgH, int px, int py, BOOL stretched)
     if (hWndGL) InvalidateRect(hWndGL, NULL, FALSE);
 }
 
-static void setBinPixel(Image* img, int x, int y)
+static void setBinPixel(Image* img, int x, int y, float r)
 {
     if (x < 0 || y < 0 || x >= img->width || y >= img->height) return;
 
     int idx = y * img->width + x;
     img->bin[idx] = 1;
+
+    // Record the EXACT half-thickness this pixel was stamped with (see
+    // bmp.h's own comment on Image.radius) -- only when the caller
+    // actually has one (canvasToImage's hand-drawn strokes; NULL for an
+    // uploaded BMP raster, which never calls stampDisc/stampSegment at
+    // all, so this is purely defensive).
+    if (img->radius) img->radius[idx] = r;
 
     img->data[idx * 3 + 0] = 0; // B
     img->data[idx * 3 + 1] = 0; // G
@@ -122,7 +210,7 @@ static void stampDisc(Image* img, float cx, float cy, float r)
             float dx = (x + 0.5f) - cx;
             float dy = (y + 0.5f) - cy;
             if (dx * dx + dy * dy <= r * r) {
-                setBinPixel(img, x, y);
+                setBinPixel(img, x, y, r);
             }
         }
     }
@@ -395,14 +483,27 @@ Image* canvasToImage(void)
     img->data = (uint8_t*)malloc((size_t)w * h * 3);
     img->bin  = (uint8_t*)calloc((size_t)w * h, sizeof(uint8_t));
 
-    if (!img->data || !img->bin) {
+    // Parallel EXACT-radius raster (see bmp.h's Image.radius) -- calloc'd
+    // to 0 so an unstamped pixel reads as "no known radius" rather than
+    // garbage; every pixel setBinPixel actually touches below overwrites
+    // its 0 with the real stamped r, which is always > 0.
+    img->radius = (float*)calloc((size_t)w * h, sizeof(float));
+
+    if (!img->data || !img->bin || !img->radius) {
         free(img->data);
         free(img->bin);
+        free(img->radius);
         free(img);
         return NULL;
     }
 
     memset(img->data, 255, (size_t)w * h * 3); // white background
+
+    // Fixed, zoom/pan-independent mapping for this trace -- see its own
+    // comment. Must run before the stroke loop below (worldToPixel reads
+    // the globals it sets) and after canvas.pointCount's own empty check
+    // above (it assumes at least one point exists).
+    computeTraceBounds(w, h);
 
     for (int s = 0; s < canvas.strokeCount; s++)
     {

@@ -59,6 +59,14 @@ Image* loadBMP(const char* filename)
 
     img->data = malloc(img->width * img->height * 3);
 
+    // No known-exact per-pixel stroke thickness for a loaded BMP (unlike
+    // canvasToImage's own hand-drawn strokes) -- explicitly NULL, same
+    // convention as img->bin below (left for the caller to fill in, or
+    // in this case never filled in at all), so pipeline.c's radius
+    // lookup correctly falls back to measuring it instead of reading
+    // uninitialized memory.
+    img->radius = NULL;
+
     int rowSize = (img->width * 3 + 3) & ~3;
 
     uint8_t* row = malloc(rowSize);
