@@ -362,6 +362,46 @@ static float robotLengthToEnvWorld(float rlen)
     return rlen * (envHalfY / robotHalfY);
 }
 
+// Single source of truth for the environment line's Simulation-mode
+// half-width, in env-world-space units -- used by BOTH the renderer (the
+// Comparison Mode ribbon and its raw-stroke fallback, canvas.c's main
+// paint routine) and collision (pointCollidesWithAnyEnvironmentStroke,
+// just below) so the two can never drift apart the way they did before:
+// collision was treating the environment as a bare zero-width centerline
+// while the ribbon was drawn extending a visible half-width above (and
+// below) that same centerline, so even mathematically exact contact at
+// the centerline still looked like sinking into the top half of the
+// rendered line. Now both sides ask this one function for the same
+// answer, so contact always looks flush right where the line's own drawn
+// surface actually is.
+//
+// robotLengthToEnvWorld(SIMULATION_ARC_COLLISION_THICKNESS) is the base
+// value (note: this ratio is independent of simCameraGetZoom() -- it
+// cancels out algebraically, by design, since neither collision nor this
+// line's "true" thickness should change just because the camera zoomed),
+// but that alone often comes out under a screen pixel wide, which flickers
+// in and out of visibility as sub-pixel rounding shifts with zoom/pan.
+// SIM_ENV_LINE_MIN_PIXELS (config.h) is a floor on top of it, converted
+// from on-screen pixels into world units at the CURRENT zoom (unlike the
+// base value, this floor DOES depend on zoom -- the whole point is a
+// constant apparent size on screen), so the line never thins down to an
+// invisible sliver at any zoom level.
+static float simEnvLineHalfWidthWorld(void)
+{
+    float fixedHalfWidth = robotLengthToEnvWorld(SIMULATION_ARC_COLLISION_THICKNESS);
+
+    float aspect = (float)glWindowWidth / (float)glWindowHeight;
+    float zoom = 1.0f / simCameraGetZoom();
+    float envHalfY = (aspect >= 1.0f) ? zoom : (zoom / aspect);
+    // glOrtho maps 2*envHalfY world units to glWindowHeight pixels
+    // (UpdateProjection) -- so this is world units per on-screen pixel,
+    // vertically.
+    float worldPerPixelY = (2.0f * envHalfY) / (float)glWindowHeight;
+    float minHalfWidth = (SIM_ENV_LINE_MIN_PIXELS * worldPerPixelY) * 0.5f;
+
+    return (fixedHalfWidth > minHalfWidth) ? fixedHalfWidth : minHalfWidth;
+}
+
 // TRUE if the env-world-space point (ecx, ecy) comes within eRadius of the
 // RECONSTRUCTED (arc-fitted) environment, not the raw hand-drawn strokes --
 // segmentPointsWorld/segmentStarts/segmentCounts (canvas_bridge.c's
@@ -385,24 +425,71 @@ static float robotLengthToEnvWorld(float rlen)
 // traceable, or tracing never ran), the loop below just does nothing and
 // this returns FALSE -- same as "no strokes" used to behave.
 //
-// Tests against each segment's own segmentThicknessWorld on top of eRadius
-// (the CALLER's own radius, e.g. the robot's body circle) -- segmentPointsWorld
-// is only the fitted arc's bare mathematical CENTERLINE, but the
-// reconstructed line is RENDERED with real thickness around that
-// centerline (canvas.c's ghost overlay, segmentAvgRadiusPx). Without
-// adding it in here too, the robot's contact point would track an
-// invisible line instead of the visible surface it's actually approaching
-// on screen -- sinking into it on one side, or stopping visibly short on
-// the other, depending on the local angle of approach.
+// Tests against a small FIXED epsilon on top of eRadius (the CALLER's own
+// radius, e.g. the robot's body circle) -- segmentPointsWorld is only the
+// fitted arc's bare mathematical CENTERLINE, so some padding is still
+// needed here (same reasoning the connecting fillet arcs have their own
+// SIMULATION_ARC_COLLISION_THICKNESS pad for: a contact test against a
+// bare curve with literally zero thickness would let the robot visibly
+// clip through it depending on the local angle of approach).
+//
+// Previously this added segmentThicknessWorld[s] instead -- the
+// RECONSTRUCTION's own measured stroke half-width (canvas_bridge.c's
+// avgRadiusPx-derived value, matching what the Comparison Mode ribbon
+// renders at). That seemed right at first (matching the VISIBLE line's
+// real surface instead of its invisible centerline), but it's actually
+// the wrong quantity for physics: it's just however wide the mouse
+// happened to be dragged while drawing that stroke, with zero relation to
+// the robot's own size. A big, deliberately-thick pen stroke is fine for
+// a large robot but reads as an oversized ledge for a small one (Rocky at
+// its default size sitting ~18% of its own body height above a normal
+// stroke, purely because the stroke was drawn thick relative to Rocky
+// specifically) -- and there's no stroke width a user could pick that
+// works uniformly across every robot size. Using the SAME small constant
+// the arcs already use makes the environment consistently near-centerline
+// for collision regardless of pen pressure or robot scale, matching how
+// the fillet arcs already treat their own bare curves.
+//
+// Debug: TRUE suppresses [COLLIDE]/[GRAVITY] prints for the CURRENT
+// applyGravityStep call -- set by applyGravityStep itself based on whether
+// the robot was already resting last tick, so the console doesn't scroll
+// forever while Shift+G keeps re-confirming a robot that already landed.
+static BOOL gSuppressGravityDebug = FALSE;
+
 static BOOL pointCollidesWithAnyEnvironmentStroke(float ecx, float ecy, float eRadius)
 {
+    // combinedRadius = eRadius + the environment line's OWN rendered
+    // half-width (simEnvLineHalfWidthWorld, defined just above). This
+    // used to be just eRadius alone, on the theory that adding anything
+    // else was double-counting the same "bare curve, no radius" padding
+    // arcs/edges already get from their caller -- but that reasoning
+    // missed that the environment's line is ALSO drawn with its own
+    // visible half-width (centerline +/- simEnvLineHalfWidthWorld, see
+    // the Comparison Mode ribbon), not as a bare zero-width centerline.
+    // Treating the environment as zero-width for collision while
+    // rendering it with real width meant a robot could settle exactly at
+    // the centerline -- mathematically flush contact -- while still
+    // visibly overlapping the top half of the drawn line, since the
+    // line's actual top surface sits a half-width ABOVE that centerline.
+    // Adding the same half-width back in here (now that render and
+    // collision both source it from the one shared function) fixes that:
+    // a real body circle passes its own true radius plus this env
+    // half-width, and an arc/edge sample adds SIMULATION_ARC_COLLISION_
+    // THICKNESS's own padding on top of that same env half-width -- which
+    // is correct, not double-counting, because those are two genuinely
+    // different drawn thicknesses (the robot's own curve stroke, and the
+    // environment's own line stroke) that both have to be accounted for
+    // to land contact exactly on the two visible surfaces meeting, not on
+    // either one's invisible centerline.
+    float envHalfWidth = simEnvLineHalfWidthWorld();
+
     for (int s = 0; s < canvas.segmentResultCount; s++)
     {
         int start = segmentStarts[s];
         int count = segmentCounts[s];
         if (count < 2) continue;
 
-        float combinedRadius = eRadius + segmentThicknessWorld[s];
+        float combinedRadius = eRadius + envHalfWidth;
 
         for (int i = 0; i < count - 1; i++)
         {
@@ -411,12 +498,58 @@ static BOOL pointCollidesWithAnyEnvironmentStroke(float ecx, float ecy, float eR
             float bx = segmentPointsWorld[(start + (i + 1)) * 2];
             float by = segmentPointsWorld[(start + (i + 1)) * 2 + 1];
 
-            if (distPointToSegment(ecx, ecy, ax, ay, bx, by) < combinedRadius)
+            float dist = distPointToSegment(ecx, ecy, ax, ay, bx, by);
+            if (dist < combinedRadius)
+            {
+                if (!gSuppressGravityDebug)
+                    printf("[COLLIDE] seg=%d line=(%.5f,%.5f)-(%.5f,%.5f) pt=(%.5f,%.5f) dist=%.5f eRadius=%.5f combined=%.5f\n",
+                           s, ax, ay, bx, by, ecx, ecy, dist, eRadius, combinedRadius);
                 return TRUE;
+            }
         }
     }
 
     return FALSE;
+}
+
+// Debug-only companion to pointCollidesWithAnyEnvironmentStroke: returns
+// the raw geometric distance from (ecx, ecy) to the NEAREST environment
+// segment's centerline, with no radius/padding applied at all -- unlike
+// the real collision check, this doesn't stop early and doesn't care
+// about any combinedRadius, it just answers "how far is this point from
+// the drawn line." Exists so the [GRAVITY] per-body-part dump below can
+// report an actual signed gap (dist - combinedRadius: positive = still
+// floating, negative = overlapping, ~0 = flush) for each part instead of
+// a bottom_y estimate that can silently go stale if the real collision
+// formula changes and this debug math doesn't get updated to match --
+// exactly what happened when simEnvLineHalfWidthWorld's env-side padding
+// was added to collision but the old bottom_y print was never updated to
+// include it, making logs look like there was a mystery gap that was
+// really just this print lagging behind the actual math.
+static float nearestEnvDistance(float ecx, float ecy)
+{
+    float best = -1.0f;
+
+    for (int s = 0; s < canvas.segmentResultCount; s++)
+    {
+        int start = segmentStarts[s];
+        int count = segmentCounts[s];
+        if (count < 2) continue;
+
+        for (int i = 0; i < count - 1; i++)
+        {
+            float ax = segmentPointsWorld[(start + i) * 2];
+            float ay = segmentPointsWorld[(start + i) * 2 + 1];
+            float bx = segmentPointsWorld[(start + (i + 1)) * 2];
+            float by = segmentPointsWorld[(start + (i + 1)) * 2 + 1];
+
+            float dist = distPointToSegment(ecx, ecy, ax, ay, bx, by);
+            if (best < 0.0f || dist < best)
+                best = dist;
+        }
+    }
+
+    return best; // -1.0f if there are no traced segments at all
 }
 
 // TRUE if any of the robot's 5 body circles (head/butt/hip/knee/foot --
@@ -429,40 +562,250 @@ static BOOL pointCollidesWithAnyEnvironmentStroke(float ecx, float ecy, float eR
 // renders, not the full untrimmed fillet circle -- that would be far too
 // generous) and tested with a fixed stand-in thickness, since -- unlike
 // the circles -- they're drawn as bare curves with no radius of their own.
-static BOOL robotCollidesWithEnvironment(Semni robot)
+// Generalized over all three robot kinds (see app.h's RobotKind) so
+// Simulation mode's gravity/collision/drag all act on whichever robot is
+// currently active (app.robotScene.activeKind), not just Semni. Every
+// call site below always passed app.robotScene.robot -- the live global
+// state, never a hypothetical detached copy -- so there was nothing lost
+// dropping the parameter and reading app.robotScene directly per kind.
+//
+// Semni's branch is untouched line-for-line from the original
+// single-robot version. Stilo (6 body circles + 6 fillet arcs, same
+// "circles + connecting curves" shape as Semni, just a different count)
+// follows the identical pattern. Rocky additionally has a rectangular
+// torso (no equivalent in Semni/Stilo) with no radius of its own, so its
+// 4 edges are sampled the same way the fillet arcs are -- bare outline
+// curves padded by SIMULATION_ARC_COLLISION_THICKNESS -- rather than left
+// untested, which would let the box visually sink through the ground
+// while only the leg's circles were ever checked.
+static BOOL robotCollidesWithEnvironment(void)
 {
-    CircleSegment bodyCircles[NUM_ROBOT_BODY_CIRCLES];
-    computeSemniBodyCircles(robot, bodyCircles);
-
-    for (int c = 0; c < NUM_ROBOT_BODY_CIRCLES; c++)
-    {
-        float ecx, ecy;
-        robotPointToEnvWorld(bodyCircles[c].center.x, bodyCircles[c].center.y, &ecx, &ecy);
-        float eRadius = robotLengthToEnvWorld(bodyCircles[c].radius);
-
-        if (pointCollidesWithAnyEnvironmentStroke(ecx, ecy, eRadius))
-            return TRUE;
-    }
-
-    PointF arcPts[NUM_ROBOT_CIRCLE_SEGMENTS][ARC_SAMPLE_COUNT];
-    int arcCounts[NUM_ROBOT_CIRCLE_SEGMENTS];
-    computeSemniArcPoints(robot, arcPts, arcCounts);
-
     float eArcThickness = robotLengthToEnvWorld(SIMULATION_ARC_COLLISION_THICKNESS);
 
-    for (int a = 0; a < NUM_ROBOT_CIRCLE_SEGMENTS; a++)
+    switch (app.robotScene.activeKind)
     {
-        for (int i = 0; i < arcCounts[a]; i++)
+        case ROBOT_KIND_ROCKY:
         {
-            float ecx, ecy;
-            robotPointToEnvWorld(arcPts[a][i].x, arcPts[a][i].y, &ecx, &ecy);
+            CircleSegment bodyCircles[NUM_ROCKY_BODY_CIRCLES];
+            computeRockyBodyCircles(app.robotScene.rocky, bodyCircles);
 
-            if (pointCollidesWithAnyEnvironmentStroke(ecx, ecy, eArcThickness))
-                return TRUE;
+            for (int c = 0; c < NUM_ROCKY_BODY_CIRCLES; c++)
+            {
+                float ecx, ecy;
+                robotPointToEnvWorld(bodyCircles[c].center.x, bodyCircles[c].center.y, &ecx, &ecy);
+                float eRadius = robotLengthToEnvWorld(bodyCircles[c].radius);
+
+                if (pointCollidesWithAnyEnvironmentStroke(ecx, ecy, eRadius))
+                    return TRUE;
+            }
+
+            PointF arcPts[NUM_ROCKY_CIRCLE_SEGMENTS][ARC_SAMPLE_COUNT];
+            int arcCounts[NUM_ROCKY_CIRCLE_SEGMENTS];
+            computeRockyArcPoints(app.robotScene.rocky, arcPts, arcCounts);
+
+            for (int a = 0; a < NUM_ROCKY_CIRCLE_SEGMENTS; a++)
+            {
+                for (int i = 0; i < arcCounts[a]; i++)
+                {
+                    float ecx, ecy;
+                    robotPointToEnvWorld(arcPts[a][i].x, arcPts[a][i].y, &ecx, &ecy);
+
+                    if (pointCollidesWithAnyEnvironmentStroke(ecx, ecy, eArcThickness))
+                        return TRUE;
+                }
+            }
+
+            // Unlike the fillet arcs just above -- bare 1D curves with no
+            // inherent thickness of their own, which is why they need
+            // eArcThickness as a stand-in -- these rectangle edges are the
+            // actual boundary of a real FILLED shape (the torso rect),
+            // rendered as literally these same corner points with nothing
+            // extra added around them (drawRockyBodyRect uses identical
+            // corner construction to computeRockyRectSegments). That
+            // makes a rectangle edge point exactly like a circle's own
+            // surface -- real geometry that already needs zero extra
+            // robot-side slop -- not like a bare curve that needs padding
+            // invented for it. Passing eArcThickness here was treating a
+            // real edge as if it were a bare curve, which meant collision
+            // stopped the rectangle eArcThickness (~0.0004 world units)
+            // above the environment's actual rendered surface -- a small
+            // but real, constant, structural gap, not a search-precision
+            // residual (see gap= in the [GRAVITY] debug dump: edges were
+            // converging to exactly eArcThickness above 0, every time).
+            // Passing 0.0f instead means combinedRadius inside
+            // pointCollidesWithAnyEnvironmentStroke reduces to just
+            // simEnvLineHalfWidthWorld() alone -- the same treatment
+            // circles already get -- so the rectangle's real edge now
+            // settles flush against the environment's real rendered
+            // surface, with nothing invented added on either side.
+            RockyEdgeSegment rectEdges[NUM_ROCKY_RECT_SEGMENTS];
+            computeRockyRectSegments(app.robotScene.rocky, rectEdges);
+
+            for (int e = 0; e < NUM_ROCKY_RECT_SEGMENTS; e++)
+            {
+                for (int i = 0; i < ARC_SAMPLE_COUNT; i++)
+                {
+                    float t = (float)i / (float)(ARC_SAMPLE_COUNT - 1);
+                    float lx = rectEdges[e].start.x + (rectEdges[e].end.x - rectEdges[e].start.x) * t;
+                    float ly = rectEdges[e].start.y + (rectEdges[e].end.y - rectEdges[e].start.y) * t;
+
+                    float ecx, ecy;
+                    robotPointToEnvWorld(lx, ly, &ecx, &ecy);
+
+                    if (pointCollidesWithAnyEnvironmentStroke(ecx, ecy, 0.0f))
+                        return TRUE;
+                }
+            }
+
+            return FALSE;
+        }
+
+        case ROBOT_KIND_STILO:
+        {
+            CircleSegment bodyCircles[NUM_STILO_BODY_CIRCLES];
+            computeStiloBodyCircles(app.robotScene.stilo, bodyCircles);
+
+            for (int c = 0; c < NUM_STILO_BODY_CIRCLES; c++)
+            {
+                float ecx, ecy;
+                robotPointToEnvWorld(bodyCircles[c].center.x, bodyCircles[c].center.y, &ecx, &ecy);
+                float eRadius = robotLengthToEnvWorld(bodyCircles[c].radius);
+
+                if (pointCollidesWithAnyEnvironmentStroke(ecx, ecy, eRadius))
+                    return TRUE;
+            }
+
+            PointF arcPts[NUM_STILO_CIRCLE_SEGMENTS][ARC_SAMPLE_COUNT];
+            int arcCounts[NUM_STILO_CIRCLE_SEGMENTS];
+            computeStiloArcPoints(app.robotScene.stilo, arcPts, arcCounts);
+
+            for (int a = 0; a < NUM_STILO_CIRCLE_SEGMENTS; a++)
+            {
+                for (int i = 0; i < arcCounts[a]; i++)
+                {
+                    float ecx, ecy;
+                    robotPointToEnvWorld(arcPts[a][i].x, arcPts[a][i].y, &ecx, &ecy);
+
+                    if (pointCollidesWithAnyEnvironmentStroke(ecx, ecy, eArcThickness))
+                        return TRUE;
+                }
+            }
+
+            return FALSE;
+        }
+
+        case ROBOT_KIND_SEMNI:
+        default:
+        {
+            CircleSegment bodyCircles[NUM_ROBOT_BODY_CIRCLES];
+            computeSemniBodyCircles(app.robotScene.robot, bodyCircles);
+
+            for (int c = 0; c < NUM_ROBOT_BODY_CIRCLES; c++)
+            {
+                float ecx, ecy;
+                robotPointToEnvWorld(bodyCircles[c].center.x, bodyCircles[c].center.y, &ecx, &ecy);
+                float eRadius = robotLengthToEnvWorld(bodyCircles[c].radius);
+
+                if (pointCollidesWithAnyEnvironmentStroke(ecx, ecy, eRadius))
+                    return TRUE;
+            }
+
+            PointF arcPts[NUM_ROBOT_CIRCLE_SEGMENTS][ARC_SAMPLE_COUNT];
+            int arcCounts[NUM_ROBOT_CIRCLE_SEGMENTS];
+            computeSemniArcPoints(app.robotScene.robot, arcPts, arcCounts);
+
+            for (int a = 0; a < NUM_ROBOT_CIRCLE_SEGMENTS; a++)
+            {
+                for (int i = 0; i < arcCounts[a]; i++)
+                {
+                    float ecx, ecy;
+                    robotPointToEnvWorld(arcPts[a][i].x, arcPts[a][i].y, &ecx, &ecy);
+
+                    if (pointCollidesWithAnyEnvironmentStroke(ecx, ecy, eArcThickness))
+                        return TRUE;
+                }
+            }
+
+            return FALSE;
         }
     }
+}
 
-    return FALSE;
+// Rigidly moves whichever robot is currently active (app.robotScene.
+// activeKind) by (dx, dy) -- dispatches to translateRobot/translateRocky/
+// translateStilo. Used by Simulation mode's gravity search and
+// whole-robot drag below, both of which need to move "the robot on
+// screen" without caring which kind that happens to be.
+static void translateActiveRobot(float dx, float dy)
+{
+    switch (app.robotScene.activeKind)
+    {
+        case ROBOT_KIND_ROCKY:
+            translateRocky(&app.robotScene.rocky, dx, dy);
+            break;
+
+        case ROBOT_KIND_STILO:
+            translateStilo(&app.robotScene.stilo, dx, dy);
+            break;
+
+        case ROBOT_KIND_SEMNI:
+        default:
+            translateRobot(&app.robotScene.robot, dx, dy);
+            break;
+    }
+}
+
+// TRUE if (wx, wy) falls inside whichever robot is currently active --
+// generalizes isPointInsideRobotBody (Semni-only, robot.c) to all three
+// kinds for Simulation mode's hover/drag-start hit-testing. Stilo is pure
+// circles + arcs like Semni, so it gets the identical circle-containment
+// test via computeStiloBodyCircles. Rocky's rectangular torso has no
+// interior-point hit-test anywhere else in this app either -- input.c's
+// own hoverRockyBody is a proximity check to the body's center handle
+// (HIP_HANDLE_RADIUS), not a true rectangle-interior test -- so this
+// matches that same established convention instead of inventing a
+// different one just for Simulation mode.
+static BOOL isPointInsideActiveRobotBody(float wx, float wy)
+{
+    switch (app.robotScene.activeKind)
+    {
+        case ROBOT_KIND_ROCKY:
+        {
+            PointF center = getRockyCenter(app.robotScene.rocky);
+            float cdx = wx - center.x, cdy = wy - center.y;
+            if (sqrtf(cdx * cdx + cdy * cdy) <= HIP_HANDLE_RADIUS)
+                return TRUE;
+
+            CircleSegment bodyCircles[NUM_ROCKY_BODY_CIRCLES];
+            computeRockyBodyCircles(app.robotScene.rocky, bodyCircles);
+            for (int i = 0; i < NUM_ROCKY_BODY_CIRCLES; i++)
+            {
+                float dx = wx - bodyCircles[i].center.x;
+                float dy = wy - bodyCircles[i].center.y;
+                if (sqrtf(dx * dx + dy * dy) <= bodyCircles[i].radius)
+                    return TRUE;
+            }
+            return FALSE;
+        }
+
+        case ROBOT_KIND_STILO:
+        {
+            CircleSegment bodyCircles[NUM_STILO_BODY_CIRCLES];
+            computeStiloBodyCircles(app.robotScene.stilo, bodyCircles);
+            for (int i = 0; i < NUM_STILO_BODY_CIRCLES; i++)
+            {
+                float dx = wx - bodyCircles[i].center.x;
+                float dy = wy - bodyCircles[i].center.y;
+                if (sqrtf(dx * dx + dy * dy) <= bodyCircles[i].radius)
+                    return TRUE;
+            }
+            return FALSE;
+        }
+
+        case ROBOT_KIND_SEMNI:
+        default:
+            return isPointInsideRobotBody(app.robotScene.robot, wx, wy);
+    }
 }
 
 // Simulation mode only: which of the robot's ROTATABLE joints (hip = body
@@ -491,85 +834,6 @@ static int findHoveredJointSim(Semni robot, float wx, float wy)
     return -1;
 }
 
-// Slope response: scans the robot's 5 body circles against every fitted
-// environment edge (same data pointCollidesWithAnyEnvironmentStroke reads)
-// and returns the tangent angle (in Semni.angle's own convention -- see
-// SIMULATION_SLOPE_ALIGN_RATE's comment in config.h) of whichever single
-// edge is the closest match to an actual resting contact, i.e. the smallest
-// (distance - combinedRadius) over every body-circle/edge pair. That's
-// normally a small negative number (a hair of overlap) right after
-// applyGravityStep's own binary search settles the robot onto something,
-// which is exactly the edge we want the whole body to lean flush against.
-//
-// Only tested against the body circles, not the connecting fillet arcs
-// (unlike robotCollidesWithEnvironment) -- the circles are where an actual
-// standing/lying rest contact happens in practice, and skipping the arcs
-// keeps this cheap enough to call every landed tick without a second
-// thought. Returns FALSE (leaving *outAngleDeg untouched) if there's no
-// environment to compare against at all (e.g. tracing never ran).
-static BOOL findGroundContactAngleDeg(Semni robot, float* outAngleDeg)
-{
-    CircleSegment bodyCircles[NUM_ROBOT_BODY_CIRCLES];
-    computeSemniBodyCircles(robot, bodyCircles);
-
-    BOOL found = FALSE;
-    float bestGap = 0.0f;
-    float bestAx = 0.0f, bestAy = 0.0f, bestBx = 0.0f, bestBy = 0.0f;
-
-    for (int c = 0; c < NUM_ROBOT_BODY_CIRCLES; c++)
-    {
-        float ecx, ecy;
-        robotPointToEnvWorld(bodyCircles[c].center.x, bodyCircles[c].center.y, &ecx, &ecy);
-        float eRadius = robotLengthToEnvWorld(bodyCircles[c].radius);
-
-        for (int s = 0; s < canvas.segmentResultCount; s++)
-        {
-            int start = segmentStarts[s];
-            int count = segmentCounts[s];
-            if (count < 2) continue;
-
-            float combinedRadius = eRadius + segmentThicknessWorld[s];
-
-            for (int i = 0; i < count - 1; i++)
-            {
-                float ax = segmentPointsWorld[(start + i) * 2];
-                float ay = segmentPointsWorld[(start + i) * 2 + 1];
-                float bx = segmentPointsWorld[(start + (i + 1)) * 2];
-                float by = segmentPointsWorld[(start + (i + 1)) * 2 + 1];
-
-                float gap = distPointToSegment(ecx, ecy, ax, ay, bx, by) - combinedRadius;
-
-                if (!found || gap < bestGap)
-                {
-                    found = TRUE;
-                    bestGap = gap;
-                    bestAx = ax; bestAy = ay; bestBx = bx; bestBy = by;
-                }
-            }
-        }
-    }
-
-    if (!found) return FALSE;
-
-    // robotPointToEnvWorld/robotLengthToEnvWorld map robot-world to
-    // env-world via a uniform scale + pan only (see their own comments --
-    // both axes always share the same scale factor), which preserves
-    // angles exactly, so this env-space tangent angle IS the robot-space
-    // angle already, no separate inverse transform needed.
-    float angleDeg = atan2f(bestBy - bestAy, bestBx - bestAx) * (180.0f / 3.14159265f);
-
-    // A line segment's tilt-from-horizontal only means anything mod 180
-    // (it has no inherent direction) -- wrap into (-90, 90] so an edge
-    // walked "backwards" (e.g. measuring ~178 degrees for a near-flat
-    // edge) reads as the equivalent near-level ~-2 degrees, not a target
-    // that reads as almost upside down.
-    while (angleDeg > 90.0f)  angleDeg -= 180.0f;
-    while (angleDeg <= -90.0f) angleDeg += 180.0f;
-
-    *outAngleDeg = angleDeg;
-    return TRUE;
-}
-
 // Companion to applyGravityStep's downward binary search below, but
 // searching UPWARD instead, within a small fixed budget
 // (SIMULATION_SLOPE_CORRECTION_MAX) rather than a whole gravity step --
@@ -579,7 +843,7 @@ static BOOL findGroundContactAngleDeg(Semni robot, float* outAngleDeg)
 // settled. No-ops if the robot isn't actually colliding right now.
 static void resolveUpwardIfPenetrating(HWND hWnd, float maxCorrection)
 {
-    if (!robotCollidesWithEnvironment(app.robotScene.robot)) return;
+    if (!robotCollidesWithEnvironment()) return;
 
     float safe = maxCorrection;    // largest offset assumed to clear
     float blocked = 0.0f;          // smallest offset confirmed NOT to clear
@@ -588,15 +852,15 @@ static void resolveUpwardIfPenetrating(HWND hWnd, float maxCorrection)
     {
         float mid = (safe + blocked) * 0.5f;
 
-        translateRobot(&app.robotScene.robot, 0.0f, mid);
-        BOOL hit = robotCollidesWithEnvironment(app.robotScene.robot);
-        translateRobot(&app.robotScene.robot, 0.0f, -mid);
+        translateActiveRobot(0.0f, mid);
+        BOOL hit = robotCollidesWithEnvironment();
+        translateActiveRobot(0.0f, -mid);
 
         if (hit) blocked = mid;
         else     safe = mid;
     }
 
-    translateRobot(&app.robotScene.robot, 0.0f, safe);
+    translateActiveRobot(0.0f, safe);
     InvalidateRect(hWnd, NULL, FALSE);
 }
 
@@ -614,18 +878,43 @@ static void resolveUpwardIfPenetrating(HWND hWnd, float maxCorrection)
 // WM_KEYDOWN/WM_TIMER below. Returns TRUE if the step was blocked (i.e. it
 // landed on something this tick), so auto-gravity's timer handler knows
 // when to reset its velocity back to 0.
+// Debug-print-only helper: whichever robot is active, some single "how
+// high up is it" number for the [GRAVITY] log lines below. Rocky's torso
+// position is bodyY rather than y (see app.h) -- Stilo happens to share
+// Semni's exact "y" field name/convention already, needing no branch.
+static float activeRobotDebugY(void)
+{
+    if (app.robotScene.activeKind == ROBOT_KIND_ROCKY)
+        return app.robotScene.rocky.bodyY;
+    if (app.robotScene.activeKind == ROBOT_KIND_STILO)
+        return app.robotScene.stilo.y;
+    return app.robotScene.robot.y;
+}
+
 static BOOL applyGravityStep(HWND hWnd, float step)
 {
-    translateRobot(&app.robotScene.robot, 0.0f, -step);
+    // wasLanded persists across calls (it's a local static): TRUE means the
+    // robot was already resting as of the last call, so this tick's prints
+    // (and any nested [COLLIDE] prints) are suppressed unless something
+    // actually changes -- see gSuppressGravityDebug's own comment above.
+    static BOOL wasLanded = FALSE;
+    BOOL suppressThisCall = wasLanded;
+    gSuppressGravityDebug = suppressThisCall;
 
-    BOOL landed = robotCollidesWithEnvironment(app.robotScene.robot);
+    float yBefore = activeRobotDebugY();
+    translateActiveRobot(0.0f, -step);
+
+    BOOL landed = robotCollidesWithEnvironment();
+    if (!suppressThisCall)
+        printf("[GRAVITY] step=%.6f y_before=%.6f y_after_step=%.6f landed=%d\n",
+               step, yBefore, activeRobotDebugY(), landed);
     if (landed)
     {
         // Back out to the last known-safe position (before this step), then
         // binary-search the largest downward offset within [0, step] that
         // doesn't collide, converging on the true contact point instead of
         // leaving a whole-step-sized gap above it.
-        translateRobot(&app.robotScene.robot, 0.0f, step);
+        translateActiveRobot(0.0f, step);
 
         float safe = 0.0f;      // largest offset confirmed NOT to collide
         float blocked = step;   // smallest offset confirmed TO collide
@@ -634,50 +923,144 @@ static BOOL applyGravityStep(HWND hWnd, float step)
         {
             float mid = (safe + blocked) * 0.5f;
 
-            translateRobot(&app.robotScene.robot, 0.0f, -mid);
-            BOOL hit = robotCollidesWithEnvironment(app.robotScene.robot);
-            translateRobot(&app.robotScene.robot, 0.0f, mid); // undo probe
+            translateActiveRobot(0.0f, -mid);
+            BOOL hit = robotCollidesWithEnvironment();
+            translateActiveRobot(0.0f, mid); // undo probe
 
             if (hit) blocked = mid;
             else     safe = mid;
         }
 
-        translateRobot(&app.robotScene.robot, 0.0f, -safe);
+        translateActiveRobot(0.0f, -safe);
 
-        // Slope response: lean the whole body a little further toward
-        // whatever edge it just settled onto (see config.h's
-        // SIMULATION_SLOPE_ALIGN_RATE comment for why this is a rigid
-        // whole-body rotation, not per-joint IK). Runs every landed tick,
-        // not just the first one that touches down, so a fall from a
-        // steep angle settles into the slope gradually across a few ticks
-        // instead of snapping straight to it.
-        float targetAngleDeg;
-        if (findGroundContactAngleDeg(app.robotScene.robot, &targetAngleDeg))
+        if (!suppressThisCall)
         {
-            float diff = targetAngleDeg - app.robotScene.robot.angle;
-            while (diff > 180.0f)  diff -= 360.0f;
-            while (diff < -180.0f) diff += 360.0f;
+            printf("[GRAVITY]   search: safe=%.6f blocked=%.6f y_final=%.6f\n",
+                   safe, blocked, activeRobotDebugY());
 
-            // Scaled by simTimeScale (Slow Motion, see its own comment
-            // above) so the settling lean slows down right along with the
-            // fall itself, instead of always snapping into its final tilt
-            // at the same real-world pace regardless of how slow gravity
-            // is currently running.
-            float maxStepDeg = SIMULATION_SLOPE_ALIGN_MAX_STEP_DEG * simTimeScale;
-            float step2 = diff * SIMULATION_SLOPE_ALIGN_RATE * simTimeScale;
-            if (step2 > maxStepDeg)       step2 = maxStepDeg;
-            else if (step2 < -maxStepDeg) step2 = -maxStepDeg;
+            // envHalfWidth: the SAME value simEnvLineHalfWidthWorld() gives
+            // collision (pointCollidesWithAnyEnvironmentStroke) and the
+            // renderer (the Comparison Mode ribbon) right now -- printed
+            // once here so it's visible per-run without having to
+            // reverse-engineer it from eRadius/combined below.
+            //
+            // Per-body-part breakdown -- generalized to all three kinds so
+            // a gap can be diagnosed no matter which robot is active.
+            // Reports dist/combined/gap instead of a bottom_y estimate:
+            // dist is the TRUE geometric distance to the nearest traced
+            // segment (nearestEnvDistance, no padding applied), combined
+            // is exactly the combinedRadius the real collision check used
+            // for that same part, and gap = dist - combined is the signed
+            // result -- positive means still floating by that many world
+            // units, negative means overlapping by that many, ~0.00000
+            // means flush. This replaces a bottom_y print that assumed a
+            // flat horizontal line and that went stale the moment
+            // simEnvLineHalfWidthWorld's env-side padding was added to
+            // collision without a matching update here -- gap is computed
+            // from the exact same inputs the real check uses, so it can't
+            // drift out of sync with the actual physics again the same
+            // way, and it works for a sloped or curved line just as well
+            // as a flat one.
+            float envHalfWidth = simEnvLineHalfWidthWorld();
+            printf("[GRAVITY]   envHalfWidth=%.5f\n", envHalfWidth);
 
-            app.robotScene.robot.angle += step2;
+            if (app.robotScene.activeKind == ROBOT_KIND_SEMNI)
+            {
+                CircleSegment dbgCircles[NUM_ROBOT_BODY_CIRCLES];
+                computeSemniBodyCircles(app.robotScene.robot, dbgCircles);
+                static const char* dbgNames[NUM_ROBOT_BODY_CIRCLES] = { "head", "butt", "hip", "knee", "foot" };
+                for (int c = 0; c < NUM_ROBOT_BODY_CIRCLES; c++)
+                {
+                    float ecx, ecy;
+                    robotPointToEnvWorld(dbgCircles[c].center.x, dbgCircles[c].center.y, &ecx, &ecy);
+                    float eRadius = robotLengthToEnvWorld(dbgCircles[c].radius);
+                    float combined = eRadius + envHalfWidth;
+                    float dist = nearestEnvDistance(ecx, ecy);
+                    printf("[GRAVITY]   circle=%-4s world=(%.5f,%.5f) radius=%.5f dist=%.5f combined=%.5f gap=%.5f\n",
+                           dbgNames[c], ecx, ecy, eRadius, dist, combined, dist - combined);
+                }
+            }
+            else if (app.robotScene.activeKind == ROBOT_KIND_ROCKY)
+            {
+                CircleSegment dbgCircles[NUM_ROCKY_BODY_CIRCLES];
+                computeRockyBodyCircles(app.robotScene.rocky, dbgCircles);
+                static const char* dbgNames[NUM_ROCKY_BODY_CIRCLES] = { "knee", "foot" };
+                for (int c = 0; c < NUM_ROCKY_BODY_CIRCLES; c++)
+                {
+                    float ecx, ecy;
+                    robotPointToEnvWorld(dbgCircles[c].center.x, dbgCircles[c].center.y, &ecx, &ecy);
+                    float eRadius = robotLengthToEnvWorld(dbgCircles[c].radius);
+                    float combined = eRadius + envHalfWidth;
+                    float dist = nearestEnvDistance(ecx, ecy);
+                    printf("[GRAVITY]   circle=%-4s world=(%.5f,%.5f) radius=%.5f dist=%.5f combined=%.5f gap=%.5f\n",
+                           dbgNames[c], ecx, ecy, eRadius, dist, combined, dist - combined);
+                }
 
-            // Rotating around getCenter() can push a limb a hair into the
-            // ground even though the body as a whole was already resting
-            // on it -- re-settle immediately so the lean can never read as
-            // sinking into the terrain.
-            resolveUpwardIfPenetrating(hWnd, SIMULATION_SLOPE_CORRECTION_MAX);
+                // No eArcThickness-style stand-in here anymore -- see
+                // the matching comment on the real check in
+                // robotCollidesWithEnvironment (Rocky branch) for why: a
+                // rectangle edge is a real filled boundary, not a bare
+                // curve, so it needs zero extra robot-side padding, same
+                // as a circle's own real radius.
+                float edgeCombined = envHalfWidth;
+                RockyEdgeSegment dbgEdges[NUM_ROCKY_RECT_SEGMENTS];
+                computeRockyRectSegments(app.robotScene.rocky, dbgEdges);
+                static const char* edgeNames[NUM_ROCKY_RECT_SEGMENTS] = { "top", "right", "bottom", "left" };
+                for (int e = 0; e < NUM_ROCKY_RECT_SEGMENTS; e++)
+                {
+                    float esx, esy, eex, eey;
+                    robotPointToEnvWorld(dbgEdges[e].start.x, dbgEdges[e].start.y, &esx, &esy);
+                    robotPointToEnvWorld(dbgEdges[e].end.x, dbgEdges[e].end.y, &eex, &eey);
+
+                    // Same per-sample walk robotCollidesWithEnvironment
+                    // actually does for this edge (ARC_SAMPLE_COUNT points
+                    // along it, not just the two endpoints) -- reports
+                    // whichever sample is closest, so a rotated/tilted
+                    // edge's true nearest point is what gets measured,
+                    // not just wherever its corners happen to land.
+                    float minDist = -1.0f;
+                    for (int i = 0; i < ARC_SAMPLE_COUNT; i++)
+                    {
+                        float t = (float)i / (float)(ARC_SAMPLE_COUNT - 1);
+                        float lx = dbgEdges[e].start.x + (dbgEdges[e].end.x - dbgEdges[e].start.x) * t;
+                        float ly = dbgEdges[e].start.y + (dbgEdges[e].end.y - dbgEdges[e].start.y) * t;
+                        float ecx, ecy;
+                        robotPointToEnvWorld(lx, ly, &ecx, &ecy);
+                        float d = nearestEnvDistance(ecx, ecy);
+                        if (minDist < 0.0f || d < minDist) minDist = d;
+                    }
+
+                    printf("[GRAVITY]   edge=%-6s world=(%.5f,%.5f)-(%.5f,%.5f) dist=%.5f combined=%.5f gap=%.5f\n",
+                           edgeNames[e], esx, esy, eex, eey, minDist, edgeCombined, minDist - edgeCombined);
+                }
+            }
+            else if (app.robotScene.activeKind == ROBOT_KIND_STILO)
+            {
+                CircleSegment dbgCircles[NUM_STILO_BODY_CIRCLES];
+                computeStiloBodyCircles(app.robotScene.stilo, dbgCircles);
+                static const char* dbgNames[NUM_STILO_BODY_CIRCLES] = { "butt", "head", "hip1", "feet1", "hip2", "feet2" };
+                for (int c = 0; c < NUM_STILO_BODY_CIRCLES; c++)
+                {
+                    float ecx, ecy;
+                    robotPointToEnvWorld(dbgCircles[c].center.x, dbgCircles[c].center.y, &ecx, &ecy);
+                    float eRadius = robotLengthToEnvWorld(dbgCircles[c].radius);
+                    float combined = eRadius + envHalfWidth;
+                    float dist = nearestEnvDistance(ecx, ecy);
+                    printf("[GRAVITY]   circle=%-5s world=(%.5f,%.5f) radius=%.5f dist=%.5f combined=%.5f gap=%.5f\n",
+                           dbgNames[c], ecx, ecy, eRadius, dist, combined, dist - combined);
+                }
+            }
         }
+
+        // Plain gravity + contact only: once the fall is stopped by the
+        // binary search above, the robot stays exactly where it landed.
+        // (Previously this also incrementally rotated the whole body to
+        // align with the ground slope every landed tick -- removed because
+        // that per-tick lean + re-settle read as a visible bounce/wobble
+        // instead of a clean stop.)
     }
 
+    wasLanded = landed;
     InvalidateRect(hWnd, NULL, FALSE);
     return landed;
 }
@@ -1182,7 +1565,27 @@ void canvasRenderFrame(float dimAmount)
 
             glColor4f(GetRValue(c)/255.0f, GetGValue(c)/255.0f, GetBValue(c)/255.0f, strokeAlpha * opacity);
 
-            float halfW = (strokeThickness[s] * canvas.zoom) / (float)glWindowWidth;
+            // Same sim_camera-vs-canvas.zoom fix as the Comparison Mode
+            // ribbon below (see its own comment) -- this loop is normally
+            // skipped during Simulation (isComparisonActive forces the
+            // reconstructed ribbon instead), but Comparison Mode can be
+            // unchecked manually while simulating, and canvas.zoom sits
+            // frozen the whole time Simulation is active either way, so
+            // this stayed wrong for the same reason if that ever happened.
+            // Same reasoning as the Comparison Mode ribbon's baseHalfW
+            // fix below: in Simulation mode, draw at the SAME half-width
+            // collision actually uses (simEnvLineHalfWidthWorld, shared
+            // with pointCollidesWithAnyEnvironmentStroke) instead of the
+            // stroke's real measured thickness, so a manually-unchecked
+            // Comparison Mode still shows contact as flush rather than
+            // sinking/floating relative to what collision treats as the
+            // surface.
+            float effectiveZoomForStroke = (appMode == APP_MODE_SIMULATION) ? (1.0f / simCameraGetZoom()) : canvas.zoom;
+            float halfW;
+            if (appMode == APP_MODE_SIMULATION)
+                halfW = simEnvLineHalfWidthWorld();
+            else
+                halfW = (strokeThickness[s] * effectiveZoomForStroke) / (float)glWindowWidth;
 
             glBegin(GL_TRIANGLE_STRIP);
             for (int i = 0; i < count; i++)
@@ -1318,7 +1721,45 @@ void canvasRenderFrame(float dimAmount)
 	        // untouched original-stroke render above) -- doubling it there
 	        // too made the reconstruction visibly thicker than the drawing
 	        // it's supposed to be compared against.
-	        float baseHalfW = (segmentAvgRadiusPx[s] * canvas.zoom) / (float)glWindowWidth;
+	        // In Simulation mode this ribbon is driven by sim_camera's own
+	        // independent zoom, not canvas.zoom (same reasoning as
+	        // UpdateProjection's own "bigger = zoomed OUT" vs "bigger =
+	        // zoomed IN" comment just above in this file) -- canvas.zoom is
+	        // deliberately left untouched while simulating (WM_MOUSEWHEEL),
+	        // so it just sits frozen at whatever Design > Environment last
+	        // left it at. Using it here unconditionally meant this ribbon's
+	        // drawn half-width never actually tracked sim_camera zooming in
+	        // Simulation mode: scrolling to zoom moved the projection (and
+	        // so the robot and the line's own CENTERLINE) correctly, but
+	        // this ribbon's thickness stayed anchored to the stale
+	        // canvas.zoom, making the line visibly thinner than its real
+	        // (correct, zoom-independent) collision half-width the more you
+	        // zoomed in -- exactly the "still a gap once I zoom in" symptom,
+	        // even after the environment segment data itself was already
+	        // correct and unaffected by zoom.
+	        // In Simulation mode the ribbon's thickness must match what
+	        // collision actually treats as the environment's half-width, or
+	        // contact looks wrong even when it's mathematically exact:
+	        // robotCollidesWithEnvironment() now pads every environment
+	        // surface with a single fixed epsilon (robotLengthToEnvWorld(
+	        // SIMULATION_ARC_COLLISION_THICKNESS), see eArcThickness/
+	        // eEdgeThickness) instead of the stroke's real measured
+	        // thickness (segmentAvgRadiusPx). If this ribbon kept drawing at
+	        // the real (usually much larger) measured thickness, a robot
+	        // settled flush at the collision centerline would visually sit
+	        // inside/under the top of the still-thick-looking line -- the
+	        // "went through the line" symptom. Drawing it at the same fixed
+	        // epsilon collision uses makes contact look flush instead of
+	        // floating or sinking, for any robot kind/size. Design mode is
+	        // unaffected: it keeps the original real-thickness look, since
+	        // nothing about the drawing there depends on this simulated
+	        // collision constant.
+	        float effectiveZoomForRender = (appMode == APP_MODE_SIMULATION) ? (1.0f / simCameraGetZoom()) : canvas.zoom;
+	        float baseHalfW;
+	        if (appMode == APP_MODE_SIMULATION)
+	            baseHalfW = simEnvLineHalfWidthWorld();
+	        else
+	            baseHalfW = (segmentAvgRadiusPx[s] * effectiveZoomForRender) / (float)glWindowWidth;
 	        float ghostHalfW = isComparisonActive ? baseHalfW : baseHalfW * 2.0f;
 	        float halfW = isHovered ? ghostHalfW * 1.5f : ghostHalfW;
 
@@ -2449,6 +2890,39 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         if (glWindowHeight == 0) glWindowHeight = 1;
         glViewport(0, 0, glWindowWidth, glWindowHeight);
         UpdateProjection();
+
+        // Simulation mode's ground-collision data (segmentPointsWorld/
+        // segmentThicknessWorld) is traced from a raster sized to
+        // glWindowWidth/glWindowHeight AT THE MOMENT Simulation was
+        // entered (see canvasToImage/canvas_bridge.c) -- resizing the
+        // window afterward (maximizing, going fullscreen, etc.) changes
+        // that same pixel<->world mapping for everything rendered live
+        // (including the environment stroke's own on-screen thickness),
+        // but does nothing to the already-traced data, which just sits
+        // there representing the OLD window size. The environment line
+        // then visibly drifts out of sync with what collision is still
+        // testing against -- exactly the "looks flush windowed, floats
+        // once maximized/zoomed" symptom this fixes. Re-tracing here is
+        // the other moment (besides ID_MODE_SIMULATION's own entry-point
+        // trace, see its comment) where the trace goes stale through no
+        // drawing action of the user's -- only through the window itself
+        // changing size while Simulation is already active.
+        //
+        // wParam == SIZE_MINIMIZED is excluded deliberately: Windows
+        // reports a minimized window's client area as 0x0, which the
+        // glWindowWidth/Height == 0 guards just above clamp to 1x1 purely
+        // so glViewport/UpdateProjection don't divide by zero -- tracing
+        // against that degenerate 1x1 raster would collapse the whole
+        // environment down to nothing, silently deleting every segment
+        // collision tests against (robot then free-falls forever, since
+        // nothing is left to land on). Minimizing never actually changes
+        // the size the user will resume looking at, so there's nothing
+        // real to re-trace here anyway -- the next genuine resize (e.g.
+        // restoring the window) retraces correctly on its own.
+        if (appMode == APP_MODE_SIMULATION && canvas.segmentResultCount > 0
+            && wParam != SIZE_MINIMIZED)
+            RunTracePipeline();
+
         InvalidateRect(hWnd, NULL, TRUE);
         return 0;
     }
@@ -2719,7 +3193,7 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         {
             float wx, wy;
             screenToGL(hWnd, LOWORD(lParam), HIWORD(lParam), &wx, &wy);
-            if (isPointInsideRobotBody(app.robotScene.robot, wx, wy))
+            if (isPointInsideActiveRobotBody(wx, wy))
             {
                 app.draggingRobotSim = TRUE;
                 dragRobotLastWX = wx;
@@ -2828,7 +3302,7 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	        float wx, wy;
 	        screenToGL(hWnd, LOWORD(lParam), HIWORD(lParam), &wx, &wy);
 
-	        translateRobot(&app.robotScene.robot, wx - dragRobotLastWX, wy - dragRobotLastWY);
+	        translateActiveRobot(wx - dragRobotLastWX, wy - dragRobotLastWY);
 
 	        dragRobotLastWX = wx;
 	        dragRobotLastWY = wy;
@@ -2846,7 +3320,7 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	    {
 	        float wx, wy;
 	        screenToGL(hWnd, LOWORD(lParam), HIWORD(lParam), &wx, &wy);
-	        app.hoveringRobotSim = isPointInsideRobotBody(app.robotScene.robot, wx, wy);
+	        app.hoveringRobotSim = isPointInsideActiveRobotBody(wx, wy);
 
 	        // Keep simHoveredJoint current too -- see its own comment and
 	        // findHoveredJointSim's, used by WM_MOUSEWHEEL below to decide
@@ -3135,6 +3609,20 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	            // is the one moment per Simulation session where re-tracing
 	            // actually needs to happen at all.
 	            RunTracePipeline();
+
+	            printf("[ENV] %d segment(s) traced:\n", canvas.segmentResultCount);
+	            for (int s = 0; s < canvas.segmentResultCount; s++)
+	            {
+	                int start = segmentStarts[s];
+	                int count = segmentCounts[s];
+	                if (count < 2) continue;
+	                float sax = segmentPointsWorld[start * 2];
+	                float say = segmentPointsWorld[start * 2 + 1];
+	                float sbx = segmentPointsWorld[(start + count - 1) * 2];
+	                float sby = segmentPointsWorld[(start + count - 1) * 2 + 1];
+	                printf("[ENV]   seg=%d start=(%.5f,%.5f) end=(%.5f,%.5f) thickness=%.5f\n",
+	                       s, sax, say, sbx, sby, segmentThicknessWorld[s]);
+	            }
 
 	            // Since the environment strokes shown on screen aren't what
 	            // collision actually tests against anymore, show the user

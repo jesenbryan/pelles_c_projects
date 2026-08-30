@@ -257,6 +257,24 @@ void printRockyAsInit(Rocky r)
     printf("----\n");
 }
 
+// Same rigid-translate idea as translateRobot above: bodyX/bodyY is
+// Rocky's own local torso center (rotated around by angle at render/
+// collision time, same convention as Semni's headX/buttX/y), and
+// kneeCircle/footCircle are local points hanging off it -- shifting all
+// three by (dx, dy) moves the whole robot without touching angle,
+// kneeAngle, or any radius.
+void translateRocky(Rocky* r, float dx, float dy)
+{
+    r->bodyX += dx;
+    r->bodyY += dy;
+
+    r->kneeCircle.x += dx;
+    r->kneeCircle.y += dy;
+
+    r->footCircle.x += dx;
+    r->footCircle.y += dy;
+}
+
 // ---- Stilo ----
 
 PointF getStiloCenter(Stilo s)
@@ -420,4 +438,26 @@ void printStiloAsInit(Stilo s)
     printf("app->robotScene.stilo.thigh2Arc2Angle = %.6ff;\n", s.thigh2Arc2Angle);
 
     printf("----\n");
+}
+
+// Same rigid-translate idea as translateRobot above. Stilo's torso is
+// built exactly like Semni's (headX/buttX/y -- see app.h's Stilo comment),
+// so the torso half is identical; hip1Circle/feet1Circle/hip2Circle/
+// feet2Circle are the local points for both independent legs, and all
+// four shift the same way innerCircle/kneeCircle/footCircle do for Semni.
+void translateStilo(Stilo* s, float dx, float dy)
+{
+    s->headX += dx;
+    s->buttX += dx;
+    s->y += dy;
+
+    s->hip1Circle.x += dx;
+    s->hip1Circle.y += dy;
+    s->feet1Circle.x += dx;
+    s->feet1Circle.y += dy;
+
+    s->hip2Circle.x += dx;
+    s->hip2Circle.y += dy;
+    s->feet2Circle.x += dx;
+    s->feet2Circle.y += dy;
 }

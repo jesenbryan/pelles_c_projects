@@ -56,6 +56,12 @@ void mirrorRockyLeg(Rocky* r);
 // Same idea as printRobotAsInit, for Rocky's own fields.
 void printRockyAsInit(Rocky r);
 
+// Same idea as translateRobot above, for Rocky: shifts bodyX/bodyY (the
+// rectangular torso's local center) plus kneeCircle/footCircle by (dx,
+// dy), leaving angle/kneeAngle/radii untouched. Used by Simulation mode's
+// gravity/drag code (canvas.c) whenever Rocky is the active robot.
+void translateRocky(Rocky* r, float dx, float dy);
+
 // ---- Stilo ----
 
 // Same torso as Semni, so the same head/butt-midpoint pivot.
@@ -79,3 +85,10 @@ void mirrorStiloLeg2(Stilo* s);
 
 // Same idea as printRobotAsInit, for Stilo's own fields.
 void printStiloAsInit(Stilo s);
+
+// Same idea as translateRobot above, for Stilo: Stilo's torso uses the
+// exact same headX/buttX/y convention as Semni's, so this shifts those
+// plus hip1Circle/feet1Circle/hip2Circle/feet2Circle by (dx, dy), leaving
+// every angle/radius untouched. Used by Simulation mode's gravity/drag
+// code (canvas.c) whenever Stilo is the active robot.
+void translateStilo(Stilo* s, float dx, float dy);
