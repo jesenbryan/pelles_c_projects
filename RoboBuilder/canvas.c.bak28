@@ -12,7 +12,6 @@
 #include "sim_camera.h"    // Simulation mode's own independent zoom/pan (see sim_camera.h)
 #include "save.h"          // For saveCanvasAsBMP/saveRockyAsEquations/saveRockyAsRobArm/saveSemniAsRobLeg/saveStiloAsRobLeg -- File > Save (ID_SAVE below) now dispatches to these directly, folded in from the old Robot editor Save button. saveRobotAsEquations/saveStiloAsEquations are declared here too but no longer called from this file -- they're still used by input.c's Standing/Home pose buttons (Poses\*.txt).
 #include "help_dialog.h"   // For showControlsHelpDialog -- Help > Controls Help... (ID_HELP below)
-#include "env_export.h"   // For saveEnvironmentSegmentsAsTxt (moved out of this file)
 #include <math.h>
 #include <string.h>
 #include <stdlib.h>        // For wcstod (Rocky's Body/Leg Weight edit boxes, read in ID_SAVE below)
@@ -2526,6 +2525,64 @@ static void updateDrawingPoint(HWND hWnd, int mx, int my, BOOL shiftHeld, BOOL c
         InvalidateRect(hWnd, NULL, FALSE);
     }
 }
+
+// Writes the Environment layer's currently fitted arc segments
+// (segmentPointsWorld/segmentStarts/segmentCounts, set by the last Trace/
+// Compare pass -- see canvas_bridge.c's setSegmentOverlay) to a plain-text
+// file, one line per segment: start.x start.y end.x end.y mid.x mid.y --
+// the exact same "start, end, a THIRD POINT THAT ACTUALLY LIES ON THE
+// ARC's curve between them" convention save.c's saveRockyAsRobArm uses for
+// Arm.txt, so an external consumer reading both files can rely on one
+// shared format. The "mid" point here is simply the segment's own
+// middle SAMPLED point (index count/2) rather than a freshly-computed
+// arc-midpoint angle like Arm.txt's -- segmentPointsWorld already IS a
+// dense poly-line sample of the fitted arc (or straight line -- see
+// canvas_bridge.c's comment on segmentCircleRadiusWorld == 0), so its own
+// middle sample is already a genuine point on the curve, no extra
+// geometry needed.
+//
+// If nothing has ever been traced (canvas.segmentResultCount == 0), still
+// writes a valid (empty) file rather than skipping it, so Env.txt always
+// exists alongside Env.bmp after a Save -- same "always produce every
+// promised file" spirit as saveRockyAsRobArm always writing both Rob.txt
+// and Arm.txt.
+static int saveEnvironmentSegmentsAsTxt(const char* filename)
+{
+    FILE* f = fopen(filename, "w");
+    if (!f)
+        return 0;
+
+    for (int s = 0; s < canvas.segmentResultCount; s++)
+    {
+        int start = segmentStarts[s];
+        int count = segmentCounts[s];
+        if (count < 2)
+            continue;
+
+        float startX = segmentPointsWorld[start * 2];
+        float startY = segmentPointsWorld[start * 2 + 1];
+        float endX   = segmentPointsWorld[(start + count - 1) * 2];
+        float endY   = segmentPointsWorld[(start + count - 1) * 2 + 1];
+        int midIdx   = start + count / 2;
+        float midX   = segmentPointsWorld[midIdx * 2];
+        float midY   = segmentPointsWorld[midIdx * 2 + 1];
+
+        // ENV_EXPORT_SCALE (config.h) applied right before writing, same
+        // convention save.c's saveRockyAsRobArm uses for Rob.txt/Arm.txt --
+        // converts our world units into "his program"'s own units so an
+        // environment traced to look right in OUR editor doesn't come out
+        // a fraction of the size once loaded there.
+        startX *= ENV_EXPORT_SCALE; startY *= ENV_EXPORT_SCALE;
+        endX   *= ENV_EXPORT_SCALE; endY   *= ENV_EXPORT_SCALE;
+        midX   *= ENV_EXPORT_SCALE; midY   *= ENV_EXPORT_SCALE;
+
+        fprintf(f, "%.6f %.6f %.6f %.6f %.6f %.6f\n", startX, startY, endX, endY, midX, midY);
+    }
+
+    fclose(f);
+    return 1;
+}
+
 LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
     switch(msg)

@@ -12,7 +12,6 @@
 #include "sim_camera.h"    // Simulation mode's own independent zoom/pan (see sim_camera.h)
 #include "save.h"          // For saveCanvasAsBMP/saveRockyAsEquations/saveRockyAsRobArm/saveSemniAsRobLeg/saveStiloAsRobLeg -- File > Save (ID_SAVE below) now dispatches to these directly, folded in from the old Robot editor Save button. saveRobotAsEquations/saveStiloAsEquations are declared here too but no longer called from this file -- they're still used by input.c's Standing/Home pose buttons (Poses\*.txt).
 #include "help_dialog.h"   // For showControlsHelpDialog -- Help > Controls Help... (ID_HELP below)
-#include "env_export.h"   // For saveEnvironmentSegmentsAsTxt (moved out of this file)
 #include <math.h>
 #include <string.h>
 #include <stdlib.h>        // For wcstod (Rocky's Body/Leg Weight edit boxes, read in ID_SAVE below)
@@ -387,9 +386,45 @@ static float robotLengthToEnvWorld(float rlen)
 // base value, this floor DOES depend on zoom -- the whole point is a
 // constant apparent size on screen), so the line never thins down to an
 // invisible sliver at any zoom level.
+// The COLLISION half-width, and ONLY this one -- pure
+// robotLengthToEnvWorld(SIMULATION_ARC_COLLISION_THICKNESS), no
+// zoom-dependent floor. Deliberately kept 100% independent of
+// simCameraGetZoom() (that ratio cancels out algebraically -- see
+// robotLengthToEnvWorld's own comment), because collision is only ever
+// re-evaluated at discrete moments (a gravity tick landing, a drag), not
+// every frame. If this floored the same way the render half-width below
+// does, a robot resting flush at whatever padding was current AT LANDING
+// TIME would silently go stale the instant the zoom crossed back over
+// the floor/fixed boundary afterward -- the render half-width (recomputed
+// fresh every frame) would keep tracking the new zoom while the robot's
+// actual settled position stayed fixed at the old one, and the two would
+// visibly drift apart (a floating gap opening up, or the robot appearing
+// to sink into the line) purely from zooming with nothing re-landing.
+// That mismatch is exactly the "goes through the line when I zoom in/out"
+// symptom -- fixed by making sure collision NEVER depends on zoom at all,
+// so a settled contact stays exactly as flush at any zoom level as it was
+// the instant it landed.
+static float simEnvCollisionHalfWidthWorld(void)
+{
+    return robotLengthToEnvWorld(SIMULATION_ARC_COLLISION_THICKNESS);
+}
+
+// The RENDER half-width -- what the Comparison Mode ribbon (and its
+// raw-stroke Simulation-mode fallback) actually draws. Uses the same
+// fixed value as simEnvCollisionHalfWidthWorld() above whenever that's
+// wide enough to stay visible, but floors it to SIM_ENV_LINE_MIN_PIXELS
+// on-screen pixels at very zoomed-out levels so the line doesn't thin
+// down to an invisible sub-pixel sliver. This floor is deliberately
+// zoom-dependent (unlike the collision half-width) -- but that's now
+// safe precisely because collision no longer reads it: a robot can only
+// ever be resting relative to simEnvCollisionHalfWidthWorld()'s fixed
+// value, so this function being allowed to render the line a little
+// thicker than that at extreme zoom-out is a purely cosmetic
+// approximation (the line may look very slightly thicker than the exact
+// physics surface at that one extreme), never a physics one.
 static float simEnvLineHalfWidthWorld(void)
 {
-    float fixedHalfWidth = robotLengthToEnvWorld(SIMULATION_ARC_COLLISION_THICKNESS);
+    float fixedHalfWidth = simEnvCollisionHalfWidthWorld();
 
     float aspect = (float)glWindowWidth / (float)glWindowHeight;
     float zoom = 1.0f / simCameraGetZoom();
@@ -482,7 +517,12 @@ static BOOL pointCollidesWithAnyEnvironmentStroke(float ecx, float ecy, float eR
     // environment's own line stroke) that both have to be accounted for
     // to land contact exactly on the two visible surfaces meeting, not on
     // either one's invisible centerline.
-    float envHalfWidth = simEnvLineHalfWidthWorld();
+    //
+    // Uses simEnvCollisionHalfWidthWorld() (the pure, zoom-invariant
+    // value), NOT simEnvLineHalfWidthWorld() (which floors for render
+    // visibility) -- see that function's own comment for why collision
+    // specifically must never depend on the current zoom.
+    float envHalfWidth = simEnvCollisionHalfWidthWorld();
 
     for (int s = 0; s < canvas.segmentResultCount; s++)
     {
@@ -962,7 +1002,12 @@ static BOOL applyGravityStep(HWND hWnd, float step)
             // drift out of sync with the actual physics again the same
             // way, and it works for a sloped or curved line just as well
             // as a flat one.
-            float envHalfWidth = simEnvLineHalfWidthWorld();
+            // Matches what the real check just used (simEnvCollisionHalfWidthWorld,
+            // the pure zoom-invariant value) -- not the floored render
+            // half-width, which can be slightly larger at extreme
+            // zoom-out and would make this dump's gap= numbers lie about
+            // what collision is actually doing.
+            float envHalfWidth = simEnvCollisionHalfWidthWorld();
             printf("[GRAVITY]   envHalfWidth=%.5f\n", envHalfWidth);
 
             if (app.robotScene.activeKind == ROBOT_KIND_SEMNI)
@@ -2526,6 +2571,64 @@ static void updateDrawingPoint(HWND hWnd, int mx, int my, BOOL shiftHeld, BOOL c
         InvalidateRect(hWnd, NULL, FALSE);
     }
 }
+
+// Writes the Environment layer's currently fitted arc segments
+// (segmentPointsWorld/segmentStarts/segmentCounts, set by the last Trace/
+// Compare pass -- see canvas_bridge.c's setSegmentOverlay) to a plain-text
+// file, one line per segment: start.x start.y end.x end.y mid.x mid.y --
+// the exact same "start, end, a THIRD POINT THAT ACTUALLY LIES ON THE
+// ARC's curve between them" convention save.c's saveRockyAsRobArm uses for
+// Arm.txt, so an external consumer reading both files can rely on one
+// shared format. The "mid" point here is simply the segment's own
+// middle SAMPLED point (index count/2) rather than a freshly-computed
+// arc-midpoint angle like Arm.txt's -- segmentPointsWorld already IS a
+// dense poly-line sample of the fitted arc (or straight line -- see
+// canvas_bridge.c's comment on segmentCircleRadiusWorld == 0), so its own
+// middle sample is already a genuine point on the curve, no extra
+// geometry needed.
+//
+// If nothing has ever been traced (canvas.segmentResultCount == 0), still
+// writes a valid (empty) file rather than skipping it, so Env.txt always
+// exists alongside Env.bmp after a Save -- same "always produce every
+// promised file" spirit as saveRockyAsRobArm always writing both Rob.txt
+// and Arm.txt.
+static int saveEnvironmentSegmentsAsTxt(const char* filename)
+{
+    FILE* f = fopen(filename, "w");
+    if (!f)
+        return 0;
+
+    for (int s = 0; s < canvas.segmentResultCount; s++)
+    {
+        int start = segmentStarts[s];
+        int count = segmentCounts[s];
+        if (count < 2)
+            continue;
+
+        float startX = segmentPointsWorld[start * 2];
+        float startY = segmentPointsWorld[start * 2 + 1];
+        float endX   = segmentPointsWorld[(start + count - 1) * 2];
+        float endY   = segmentPointsWorld[(start + count - 1) * 2 + 1];
+        int midIdx   = start + count / 2;
+        float midX   = segmentPointsWorld[midIdx * 2];
+        float midY   = segmentPointsWorld[midIdx * 2 + 1];
+
+        // ENV_EXPORT_SCALE (config.h) applied right before writing, same
+        // convention save.c's saveRockyAsRobArm uses for Rob.txt/Arm.txt --
+        // converts our world units into "his program"'s own units so an
+        // environment traced to look right in OUR editor doesn't come out
+        // a fraction of the size once loaded there.
+        startX *= ENV_EXPORT_SCALE; startY *= ENV_EXPORT_SCALE;
+        endX   *= ENV_EXPORT_SCALE; endY   *= ENV_EXPORT_SCALE;
+        midX   *= ENV_EXPORT_SCALE; midY   *= ENV_EXPORT_SCALE;
+
+        fprintf(f, "%.6f %.6f %.6f %.6f %.6f %.6f\n", startX, startY, endX, endY, midX, midY);
+    }
+
+    fclose(f);
+    return 1;
+}
+
 LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
     switch(msg)
