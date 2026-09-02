@@ -1479,15 +1479,29 @@ PointF computeRockyMassCenterWorld(Rocky b)
     PointF rectCentroidWorld, legCentroidWorld;
     computeRockyMassCenterEndpointsWorld(b, &rectCentroidWorld, &legCentroidWorld);
 
-    // same "falls back to the rectangle's own centroid if both weights
-    // happen to be 0" guard save.c's own massCenter computation uses.
-    float totalWeight = b.bodyWeight + b.legWeight;
+    // Falls back to an even 50/50 split (not a pure rectangle-only
+    // point) whenever both weights are ~0 -- same guard save.c's own
+    // massCenter computation uses. Previously this fell back to
+    // rectCentroidWorld outright, which put the dot exactly on top of
+    // the Body handle instead of the intended default halfway point
+    // whenever bodyWeight/legWeight ever read as 0/0 (reported: the dot
+    // sitting on the body handle at "startup" even though the boxes
+    // showed 0.5/0.5) -- this guarantees the ON-SCREEN default always
+    // matches the documented 0.5/0.5 starting point regardless of
+    // whatever left the underlying fields at 0.
+    float bw = b.bodyWeight;
+    float lw = b.legWeight;
+    float totalWeight = bw + lw;
     if (totalWeight <= 1e-6f)
-        return rectCentroidWorld;
+    {
+        bw = 0.5f;
+        lw = 0.5f;
+        totalWeight = 1.0f;
+    }
 
     PointF massCenter;
-    massCenter.x = (b.bodyWeight * rectCentroidWorld.x + b.legWeight * legCentroidWorld.x) / totalWeight;
-    massCenter.y = (b.bodyWeight * rectCentroidWorld.y + b.legWeight * legCentroidWorld.y) / totalWeight;
+    massCenter.x = (bw * rectCentroidWorld.x + lw * legCentroidWorld.x) / totalWeight;
+    massCenter.y = (bw * rectCentroidWorld.y + lw * legCentroidWorld.y) / totalWeight;
     return massCenter;
 }
 

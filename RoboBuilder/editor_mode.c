@@ -85,9 +85,10 @@ void applyEditorModeVisibility(EditorModeState* modeState)
     if (app.ui.hHoverLabel)
         ShowWindow(app.ui.hHoverLabel, semniActive ? SW_SHOW : SW_HIDE);
 
-    // Rocky's Body/Leg Weight edit boxes + the live "Size: W x H mm"
+    // Rocky's Body/Leg Weight + Weight edit boxes + the live "Size: W x H mm"
     // readout (see app.h's hBodyWeightLabel/hBodyWeightEdit/hLegWeightLabel/
-    // hLegWeightEdit/hRobotSizeLabel) -- these were missing from this
+    // hLegWeightEdit/hActualWeightLabel/hActualWeightEdit/hRobotSizeLabel) --
+    // these were missing from this
     // function entirely, so once created (input.c's WM_CREATE) they stayed
     // visible in EVERY mode, including the ArcSpline ("Environment")
     // canvas. Gated the same as the rest of Semni's own child controls
@@ -100,6 +101,10 @@ void applyEditorModeVisibility(EditorModeState* modeState)
         ShowWindow(app.ui.hLegWeightLabel, semniActive ? SW_SHOW : SW_HIDE);
     if (app.ui.hLegWeightEdit)
         ShowWindow(app.ui.hLegWeightEdit, semniActive ? SW_SHOW : SW_HIDE);
+    if (app.ui.hActualWeightLabel)
+        ShowWindow(app.ui.hActualWeightLabel, semniActive ? SW_SHOW : SW_HIDE);
+    if (app.ui.hActualWeightEdit)
+        ShowWindow(app.ui.hActualWeightEdit, semniActive ? SW_SHOW : SW_HIDE);
     if (app.ui.hRobotSizeLabel)
         ShowWindow(app.ui.hRobotSizeLabel, semniActive ? SW_SHOW : SW_HIDE);
 

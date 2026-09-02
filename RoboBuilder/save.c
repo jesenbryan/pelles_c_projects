@@ -637,6 +637,25 @@ int saveRockyAsRobArm(AppState* app)
 {
     Rocky* r = &app->robotScene.rocky;
 
+    // Effective Body Wt/Leg Wt, shared by BOTH files below -- Rob.txt's
+    // own combined mass-center blend AND (new) Arm.txt's own leg-only
+    // mass share both need "what fraction of the total is the leg,"
+    // computed the exact same way, so it's done once here instead of
+    // twice. Falls back to an even 50/50 split (never a pure-rectangle
+    // point, never a divide-by-zero) whenever both weights are ~0 --
+    // same fallback renderer.c's computeRockyMassCenterWorld uses, so an
+    // export taken while the fields happen to read 0/0 still matches
+    // what's drawn on screen.
+    float rockyBw = r->bodyWeight;
+    float rockyLw = r->legWeight;
+    float rockyTotalWeight = rockyBw + rockyLw;
+    if (rockyTotalWeight <= 1e-6f)
+    {
+        rockyBw = 0.5f;
+        rockyLw = 0.5f;
+        rockyTotalWeight = 1.0f;
+    }
+
     // Both files go in one RockyExport folder alongside rocky.bmp/
     // rocky.txt (see canvas.c's File > Save handler (ID_SAVE), which
     // creates this same folder before calling this function) -- also created here so this
@@ -710,24 +729,26 @@ int saveRockyAsRobArm(AppState* app)
         PointF jointInRob = { r->kneeCircle.x - corner.x, r->kneeCircle.y - corner.y };
 
         // rectangle's own centroid (uniform density assumed) -- exactly
-        // its own center
+        // its own center. (This function used to also translate the
+        // leg's own centroid into this corner-relative frame here, to
+        // blend it with rectCentroid into a combined body+leg system
+        // mass center -- Rob.txt now writes rectCentroid alone, see the
+        // comment below, so that leg-translation step is gone; the
+        // on-screen mass-center dot still does that same blend itself,
+        // see renderer.c's computeRockyMassCenterWorld.)
         PointF rectCentroid = { r->bodyHalfWidth, r->bodyHalfHeight };
 
-        // the leg's centroid, translated from Arm.txt's joint-relative
-        // frame into this same corner-relative frame, by adding the
-        // joint's own corner-relative offset computed just above
-        PointF legCentroidInRob = { legCentroidRelJoint.x + jointInRob.x, legCentroidRelJoint.y + jointInRob.y };
-
-        // weighted combination -- falls back to the rectangle's own
-        // centroid if both weights happen to be 0 (would otherwise divide
-        // by zero)
-        float totalWeight = r->bodyWeight + r->legWeight;
-        PointF massCenter = rectCentroid;
-        if (totalWeight > 1e-6f)
-        {
-            massCenter.x = (r->bodyWeight * rectCentroid.x + r->legWeight * legCentroidInRob.x) / totalWeight;
-            massCenter.y = (r->bodyWeight * rectCentroid.y + r->legWeight * legCentroidInRob.y) / totalWeight;
-        }
+        // Rob.txt now writes its OWN geometric centroid (rectCentroid)
+        // rather than the combined body+leg system's center of mass --
+        // Rob.txt describes the rectangle body alone, so its own
+        // centroid should stay fixed regardless of the Body Wt/Leg Wt
+        // ratio (the on-screen mass-center dot, computeRockyMassCenterWorld,
+        // still IS the combined blend -- that's unchanged and still
+        // draggable -- it just no longer has a slot of its own to be
+        // written into either export file). rockyBw/rockyLw/
+        // rockyTotalWeight (computed once at the top of this function)
+        // are still used below, just for bodyMassShare's split of
+        // actualWeight, not for this position anymore.
 
         // ROCKY_EXPORT_SCALE (config.h) applied here, right before writing
         // -- everything above this point stays in plain world units so the
@@ -739,13 +760,30 @@ int saveRockyAsRobArm(AppState* app)
         tr.x *= ROCKY_EXPORT_SCALE; tr.y *= ROCKY_EXPORT_SCALE;
         br.x *= ROCKY_EXPORT_SCALE; br.y *= ROCKY_EXPORT_SCALE;
         jointInRob.x *= ROCKY_EXPORT_SCALE; jointInRob.y *= ROCKY_EXPORT_SCALE;
-        massCenter.x *= ROCKY_EXPORT_SCALE; massCenter.y *= ROCKY_EXPORT_SCALE;
+        rectCentroid.x *= ROCKY_EXPORT_SCALE; rectCentroid.y *= ROCKY_EXPORT_SCALE;
 
         FILE* f = fopen("RockyExport\\Rob.txt", "w");
         if (!f)
             return 0;
 
-        fprintf(f, "%.6f %.6f %.6f\n", massCenter.x, massCenter.y, r->bodyWeight);
+        // First line format: "x y weight" -- massen mittelpunkt's x/y,
+        // then this file's own SHARE of the real total mass (Rocky's own
+        // actualWeight field, input.c's hActualWeightEdit). Rob.txt
+        // describes the rectangle body, Arm.txt (below) describes the
+        // leg -- each should carry only ITS OWN portion of actualWeight,
+        // split by the same Body Wt/Leg Wt ratio that already positions
+        // the mass-center dot (rockyBw/rockyTotalWeight, computed once at
+        // the top of this function), not the full total in both places:
+        // writing the whole actualWeight here AND a nonzero leg share in
+        // Arm.txt would double-count the leg's mass for any consumer
+        // that adds the two files' weights together. bodyMassShare +
+        // Arm.txt's own legMassShare always sum back to exactly
+        // actualWeight, whatever the ratio is set to.
+        // Plain space-separated floats, no parentheses -- matches every
+        // other line in this file (the joint line and the 4 edge lines
+        // right below).
+        float bodyMassShare = r->actualWeight * (rockyBw / rockyTotalWeight);
+        fprintf(f, "%.6f %.6f %.6f\n", rectCentroid.x, rectCentroid.y, bodyMassShare);
         fprintf(f, "%.6f %.6f\n", jointInRob.x, jointInRob.y);
 
         // left, top, right, bottom -- each one's end matches the next
@@ -842,10 +880,24 @@ int saveRockyAsRobArm(AppState* app)
         if (!f)
             return 0;
 
+        // Third number here used to be r->legWeight directly -- but
+        // that field is only ever a RATIO knob against bodyWeight (see
+        // this function's own rockyBw/rockyLw comment; Body Wt=2/Leg
+        // Wt=1 means the exact same thing as 200/100), never a real
+        // mass, so Arm.txt was exporting a meaningless number as if it
+        // were the leg's actual weight. Now uses the leg's real SHARE of
+        // the one real total mass (actualWeight, input.c's
+        // hActualWeightEdit -- the same number Rob.txt's own weight
+        // field is) -- i.e. actualWeight split by the same Body Wt/Leg
+        // Wt ratio that already positions the mass-center dot, so typing
+        // a bigger Leg Wt to nudge that dot now also, correctly, shifts
+        // more of the real total mass onto the leg here.
+        float legMassShare = r->actualWeight * (rockyLw / rockyTotalWeight);
+
         fprintf(f, "%.6f %.6f %.6f\n",
             legCentroidRelJoint.x * ROCKY_EXPORT_SCALE,
             legCentroidRelJoint.y * ROCKY_EXPORT_SCALE,
-            r->legWeight);
+            legMassShare);
         fprintf(f, "%.6f %.6f\n", 0.0f, 0.0f);
 
         fprintf(f, "%.6f %.6f %.6f %.6f %.6f %.6f\n", kneeP1.x, kneeP1.y, kneeP2.x, kneeP2.y, kneeM1.x, kneeM1.y);
