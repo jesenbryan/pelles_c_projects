@@ -43,7 +43,7 @@ int loadStiloPoseFromFile(const char* filename, Stilo* out);
 // for an external mass/joint/geometry consumer -- see save.c's own
 // comment just above the implementation for the full format. Reads
 // app->robotScene.rocky, including its user-entered bodyWeight/legWeight
-// (see input.c's hBodyWeightEdit/hLegWeightEdit). Returns 0 if either
+// (see input.c's hWeightRatioSlider). Returns 0 if either
 // file can't be opened for writing, 1 on success.
 int saveRockyAsRobArm(AppState* app);
 
@@ -58,15 +58,54 @@ int robArmSampleArcThroughMid(PointF center, PointF start, PointF mid, PointF en
 int robArmSampleArcAwayFrom(PointF center, PointF start, PointF end, PointF otherCenter, int steps, PointF* out);
 PointF robArmPolygonCentroid(PointF* pts, int n);
 
+// The two tangent points + genuine on-curve midpoint for each of a pair of
+// connecting arcs between two circles, plus each arc's own fillet -- see
+// save.c's own comment above computeSeamStyleTangents/
+// computeLimbStyleTangents for the exact convex/concave construction each
+// one uses. Exposed (not static) for the same reason robArmSampleArc*/
+// robArmPolygonCentroid are above: renderer.c's Semni/Stilo mass-center
+// markers (computeSemniMassCenterWorld/computeStiloMassCenterWorld) reuse
+// this exact math against the robot's CURRENT pose instead of duplicating
+// the fillet/tangent construction a second time.
+typedef struct { PointF c1Tan1, c2Tan1, mid1, c1Tan2, c2Tan2, mid2; Fillet fillet1, fillet2; } ChainTangents;
+
+// Torso seam-arc style (both connecting arcs convex) vs limb (thigh/shin)
+// style (arc1 convex, arc2 concave) -- see save.c's own comment above each
+// implementation. minR/maxR(1/2) are the same clamp constants each
+// caller's own drawXxx function already uses for that pair of arcs
+// (MIN_ARC_R/MAX_ARC_R for a torso seam, MIN_THIGH_ARC_R/
+// MAX_SEMNI_THIGH_ARC_R/MAX_THIGH_ARC2_CONCAVE_R for a thigh stage,
+// MIN_SHIN_ARC_R/MAX_SHIN_ARC_R/MAX_SHIN_ARC2_CONCAVE_R for a shin stage).
+ChainTangents computeSeamStyleTangents(PointF c1, float r1, PointF c2, float r2,
+                                        float arc1AngleDeg, float arc2AngleDeg,
+                                        float minR, float maxR);
+ChainTangents computeLimbStyleTangents(PointF c1, float r1, PointF c2, float r2,
+                                        float arc1AngleDeg, float arc2AngleDeg,
+                                        float minR, float maxR1, float maxR2);
+
+// Fine polygon approximation of a two-circle-plus-two-fillets stage's
+// outline (torso seam stage, a Semni thigh/shin stage, or a Stilo leg
+// stage) -- see save.c's own comment above the implementation. "out" must
+// have room for 4 * (ROB_ARM_ARC_SAMPLES + 1) points when called from
+// save.c itself; renderer.c's own mass-center markers use a coarser
+// sample count (ROCKY_MASS_CENTER_ARC_SAMPLES) for their array sizing
+// instead, same "good enough for an informational dot every frame"
+// reasoning as Rocky's own version.
+int sampleLimbStageOutline(PointF c1, float r1, PointF c2, float r2, ChainTangents t, int steps, PointF* out);
+
 // Same Rob.txt/Leg.txt-style export as saveRockyAsRobArm above, generalized
 // to Semni's arc-based (head/butt/seam-arc) torso and its two-stage
 // (hip->knee->foot) leg -- see save.c's own comment above each
 // implementation for the exact file format and joint/origin conventions.
 // Writes SemniExport\Rob.txt (torso) and SemniExport\Leg.txt (leg).
-// Semni has no bodyWeight/legWeight fields (unlike Rocky) -- both are
-// written as a flat 1.0, and each half's own geometric centroid is used
-// in place of a mass-weighted combined center. Returns 0 if either file
-// can't be opened for writing, 1 on success.
+// Semni now has its own bodyWeight/legWeight/actualWeight fields (same
+// idea as Rocky's own, see app.h's Semni comment) -- each file's weight
+// number is actualWeight split by the bodyWeight/legWeight ratio, same
+// "real, ratio-derived, no double-counting" design as Rocky's own
+// Rob.txt/Arm.txt (saveRockyAsRobArm). Each half's own geometric centroid
+// (unaffected by that ratio) is still what's written as the x/y position,
+// same as Rocky's own Rob.txt. Returns 0 if either file can't be opened
+// for writing, 1 on success.
 //
 // Unlike Rocky's own Rob.txt/Arm.txt (plain 6-float lines, no flag), every
 // shape line here leads with a type flag: "0 ..." for a 6-float arc line
@@ -82,7 +121,10 @@ int saveSemniAsRobLeg(AppState* app);
 // torso shape (so StiloExport\Rob.txt lists both legs' hip joints), but
 // has TWO independent single-stage legs instead of Semni's one two-stage
 // leg, so it writes StiloExport\Leg1.txt and StiloExport\Leg2.txt (one
-// per leg) rather than a single Leg.txt. Same weight=1.0/geometric-
-// centroid simplification as saveSemniAsRobLeg. Returns 0 if any of the
-// three files can't be opened for writing, 1 on success.
+// per leg) rather than a single Leg.txt. Same real, ratio-derived weight
+// design as saveSemniAsRobLeg, except Stilo's legWeight is ONE combined
+// value for both legs together (see app.h's own comment on Stilo's
+// legWeight) -- the leg's own share of actualWeight is split evenly
+// (50/50) between Leg1.txt and Leg2.txt. Returns 0 if any of the three
+// files can't be opened for writing, 1 on success.
 int saveStiloAsRobLeg(AppState* app);

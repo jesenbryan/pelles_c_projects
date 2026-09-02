@@ -57,6 +57,15 @@ typedef struct {
     int hoverRockyMassCenter;
     int draggingRockyMassCenter;
 
+    // Semni's and Stilo's own draggable mass-center dots -- mirrors app->
+    // hoverSemniMassCenter/draggingSemniMassCenter and app->
+    // hoverStiloMassCenter/draggingStiloMassCenter (see app.h's own
+    // comment on those).
+    int hoverSemniMassCenter;
+    int draggingSemniMassCenter;
+    int hoverStiloMassCenter;
+    int draggingStiloMassCenter;
+
     // Rocky's 2 shin connector-arc handles -- mirrors app->
     // draggingRockyShin1/draggingRockyShin2, same role as Semni's own
     // draggingShin1/draggingShin2 above.
@@ -443,6 +452,22 @@ void computeRockyMassCenterEndpointsWorld(Rocky b, PointF* outRectCentroidWorld,
 // now. Deliberately NOT static: input.c's WM_LBUTTONDOWN/WM_MOUSEMOVE need
 // this same position for the dot's own hover/drag-start hit-test.
 PointF computeRockyMassCenterWorld(Rocky b);
+
+// Same idea as computeRockyMassCenterEndpointsWorld/
+// computeRockyMassCenterWorld above, generalized to Semni's arc-based
+// head/butt torso ("body") + hip->knee->foot leg, and to Stilo's own
+// head/butt torso + two independent hip->feet legs (combined into ONE
+// leg centroid, per explicit user decision -- see app.h's own comment on
+// Stilo's legWeight). Both reuse save.h's ChainTangents/
+// computeSeamStyleTangents/computeLimbStyleTangents/
+// sampleLimbStageOutline/robArmPolygonCentroid helpers, same "not a
+// separate, potentially-diverging formula" reasoning as Rocky's own
+// version -- see renderer.c's own comment above each implementation.
+void computeSemniMassCenterEndpointsWorld(Semni b, PointF* outBodyCentroidWorld, PointF* outLegCentroidWorld);
+PointF computeSemniMassCenterWorld(Semni b);
+
+void computeStiloMassCenterEndpointsWorld(Stilo b, PointF* outBodyCentroidWorld, PointF* outLegCentroidWorld);
+PointF computeStiloMassCenterWorld(Stilo b);
 
 // Bright/solid hover ring on whichever of Rocky's 2 body circles is
 // currently hovered, same idea as drawSemniBodyCircleHover.

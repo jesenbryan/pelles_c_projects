@@ -295,11 +295,8 @@ static void updateRobotSizeLabel(AppState* app)
 // Formats a non-negative float as "%.2f" into "out" (must hold at least 16
 // wchar_ts) -- same hand-split-for-wsprintf pattern as updateRobotSizeLabel's
 // mm rounding and WM_HSCROLL's own Scale label ("wsprintf has no floating-
-// point conversion at all"). Used by WM_MOUSEMOVE's draggingRockyMassCenter
-// branch to keep hBodyWeightEdit/hLegWeightEdit's text in sync with the
-// dot's drag position. Only ever called with bodyWeight/legWeight, which
-// are always >= 0 (see app.h's rockyMassCenterDragTotal comment) -- doesn't
-// handle negative values.
+// point conversion at all"). Only ever called with a non-negative weight
+// value (bodyWeight/legWeight/actualWeight) -- doesn't handle negatives.
 static void formatNonNegativeFloat2dp(float value, wchar_t* out)
 {
     int whole = (int)value;
@@ -310,6 +307,39 @@ static void formatNonNegativeFloat2dp(float value, wchar_t* out)
         whole += 1;
     }
     wsprintf(out, L"%d.%02d", whole, hundredths);
+}
+
+// Moves hWeightRatioSlider (and refreshes hWeightRatioLabel) to match
+// whatever bodyWeight/legWeight currently are -- called from every place
+// that changes them without going through the slider's own WM_HSCROLL
+// handler (the on-canvas mass-center drag, ID_ROBOT_SELECTOR's
+// CBN_SELCHANGE) so the slider is never the odd one out. TBM_SETPOS
+// doesn't raise WM_HSCROLL, so this can't recursively
+// re-trigger the slider's own handler. Guards the same <=1e-6f
+// "meaningless ratio" case computeRockyMassCenterWorld/
+// computeSemniMassCenterWorld/computeStiloMassCenterWorld already guard
+// with an even 50/50 split, so the slider doesn't snap to either extreme
+// just because both weights happen to be ~0.
+static void syncWeightRatioSlider(AppState* app, float bodyWeight, float legWeight)
+{
+    float total = bodyWeight + legWeight;
+    int bodyPct;
+    if (total <= 1e-6f)
+    {
+        bodyPct = 50;
+    }
+    else
+    {
+        bodyPct = (int)(bodyWeight / total * 100.0f + 0.5f);
+        if (bodyPct < 0) bodyPct = 0;
+        if (bodyPct > 100) bodyPct = 100;
+    }
+
+    SendMessage(app->ui.hWeightRatioSlider, TBM_SETPOS, TRUE, bodyPct);
+
+    wchar_t ratioBuf[32];
+    wsprintf(ratioBuf, L"Body/Leg Ratio: %d / %d", bodyPct, 100 - bodyPct);
+    SetWindowText(app->ui.hWeightRatioLabel, ratioBuf);
 }
 
 // Keeps the knee handle honest whenever the rectangle's own size changes
@@ -561,7 +591,7 @@ static void ensureSemniPanelClassRegistered(void)
     g_semniPanelClassRegistered = TRUE;
 }
 
-// Subclass for hBodyWeightEdit/hLegWeightEdit/hActualWeightEdit ONLY -- a plain WS_CHILD EDIT
+// Subclass for hActualWeightEdit ONLY -- a plain WS_CHILD EDIT
 // control (this isn't a dialog, so there's no IDOK default-button/Enter
 // handling to piggyback on) otherwise just beeps on Enter and leaves focus
 // sitting in the box, silently swallowing every keyboard shortcut this
@@ -636,6 +666,8 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             app->draggingRockyKnee = 0;
             app->draggingRockyFoot = 0;
             app->draggingRockyMassCenter = 0;
+            app->draggingSemniMassCenter = 0;
+            app->draggingStiloMassCenter = 0;
             app->draggingRockyShin1 = 0;
             app->draggingRockyShin2 = 0;
             app->draggingStiloSeamArc1 = 0;
@@ -914,7 +946,23 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
 
                 PointF stiloLeg2LocalMouseDown = inverseRotate(inverseRotate(stiloMouse, stiloCenter, app->robotScene.stilo.angle), stiloHip2Pivot, stiloHip2Angle);
 
-                if (isNear(stiloMouse, stiloSeamArc1HandleWorld, ARC_HANDLE_RADIUS))
+                // Body/Leg Weight mass-center dot -- same idea as Semni's
+                // own version above, just against Stilo's bodyWeight/
+                // legWeight and computeStiloMassCenterWorld (which blends
+                // the body centroid against a single COMBINED centroid of
+                // both legs -- see app.h's own comment on Stilo's
+                // legWeight). Same "no closest-wins tie-break needed"
+                // reasoning as Semni's version.
+                PointF stiloMassCenterWorld = computeStiloMassCenterWorld(app->robotScene.stilo);
+
+                if ((LOWORD(wParam) & MK_SHIFT) && isNear(stiloMouse, stiloMassCenterWorld, MASS_CENTER_HANDLE_RADIUS))
+                {
+                    app->draggingStiloMassCenter = 1;
+
+                    float stiloTotal = app->robotScene.stilo.bodyWeight + app->robotScene.stilo.legWeight;
+                    app->stiloMassCenterDragTotal = (stiloTotal > 1e-6f) ? stiloTotal : 1.0f;
+                }
+                else if (isNear(stiloMouse, stiloSeamArc1HandleWorld, ARC_HANDLE_RADIUS))
                 {
                     app->draggingStiloSeamArc1 = 1;
                     app->stiloArcDragStartMouseY = inverseRotate(stiloMouse, stiloCenter, app->robotScene.stilo.angle).y;
@@ -1094,7 +1142,24 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             // the knee->foot axis) at the moment the drag starts
             PointF shinLocalMouseDown = inverseRotate(legLocalMouseDown, kneePivot, kneeAngle);
 
-            if (isNear(mouse, seamArc1HandleWorld, ARC_HANDLE_RADIUS))
+            // Body/Leg Weight mass-center dot -- same idea as Rocky's own
+            // (see that block's comment further up), just against Semni's
+            // bodyWeight/legWeight and computeSemniMassCenterWorld. Checked
+            // first, gated on Shift like Rocky's own version, but WITHOUT
+            // Rocky's closest-wins tie-break: Semni's body/leg centroids
+            // don't algebraically coincide with any single existing handle
+            // the way Rocky's rect-centroid-equals-body-handle case does,
+            // so a plain Shift+proximity check is enough here.
+            PointF semniMassCenterWorld = computeSemniMassCenterWorld(app->robotScene.robot);
+
+            if ((LOWORD(wParam) & MK_SHIFT) && isNear(mouse, semniMassCenterWorld, MASS_CENTER_HANDLE_RADIUS))
+            {
+                app->draggingSemniMassCenter = 1;
+
+                float semniTotal = app->robotScene.robot.bodyWeight + app->robotScene.robot.legWeight;
+                app->semniMassCenterDragTotal = (semniTotal > 1e-6f) ? semniTotal : 1.0f;
+            }
+            else if (isNear(mouse, seamArc1HandleWorld, ARC_HANDLE_RADIUS))
             {
                 app->draggingSeamArc1 = 1;
                 app->activeHandle = 1;
@@ -1218,6 +1283,8 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             app->draggingRockyKnee = 0;
             app->draggingRockyFoot = 0;
             app->draggingRockyMassCenter = 0;
+            app->draggingSemniMassCenter = 0;
+            app->draggingStiloMassCenter = 0;
             app->draggingRockyShin1 = 0;
             app->draggingRockyShin2 = 0;
             app->draggingStiloSeamArc1 = 0;
@@ -1594,16 +1661,11 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                         app->robotScene.rocky.bodyWeight = (1.0f - t) * total;
                         app->robotScene.rocky.legWeight = t * total;
 
-                        // Keep hBodyWeightEdit/hLegWeightEdit showing the
-                        // same numbers the drag just derived -- SetWindowText
-                        // does NOT raise EN_CHANGE (unlike the user actually
-                        // typing), so this can't recursively re-trigger its
-                        // own EN_CHANGE handler and fight with the drag.
-                        wchar_t weightBuf[32];
-                        formatNonNegativeFloat2dp(app->robotScene.rocky.bodyWeight, weightBuf);
-                        SetWindowText(app->ui.hBodyWeightEdit, weightBuf);
-                        formatNonNegativeFloat2dp(app->robotScene.rocky.legWeight, weightBuf);
-                        SetWindowText(app->ui.hLegWeightEdit, weightBuf);
+                        // Keep hWeightRatioSlider showing the same split
+                        // the drag just derived -- TBM_SETPOS doesn't raise
+                        // WM_HSCROLL, so this can't recursively re-trigger
+                        // its own handler and fight with the drag.
+                        syncWeightRatioSlider(app, app->robotScene.rocky.bodyWeight, app->robotScene.rocky.legWeight);
                     }
                 }
                 else if (app->draggingRockyShin1)
@@ -1753,6 +1815,13 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 app->hoverStiloHip2  = isNear(stiloMouse, stiloHip2World, HIP_HANDLE_RADIUS);
                 app->hoverStiloFeet2 = isNear(stiloMouse, stiloFeet2World, KNEE_HANDLE_RADIUS);
 
+                // Body/Leg Weight mass-center dot -- same Shift-gated
+                // proximity hover as Semni's own hoverSemniMassCenter (see
+                // that check's comment on why no closest-wins tie-break is
+                // needed here, unlike Rocky's version).
+                app->hoverStiloMassCenter = (LOWORD(wParam) & MK_SHIFT) &&
+                    isNear(stiloMouse, computeStiloMassCenterWorld(app->robotScene.stilo), MASS_CENTER_HANDLE_RADIUS);
+
                 // hover label -- same construction/priority order as
                 // Semni's own hover label block below
                 {
@@ -1835,7 +1904,9 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     // see Semni's identical hoverHead/hoverButt swap above
                     // for why (avoids re-interpreting seamArc1Angle/
                     // seamArc2Angle around a different physical circle).
-                    if (app->hoverStiloButt)
+                    if (app->hoverStiloMassCenter)
+                        stiloHoverLabel = L"Weight Balance";
+                    else if (app->hoverStiloButt)
                         stiloHoverLabel = L"Head";
                     else if (app->hoverStiloHead)
                         stiloHoverLabel = L"Butt";
@@ -1937,13 +2008,43 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     !app->draggingStiloHip1 && !app->draggingStiloFeet1 &&
                     !app->draggingStiloThigh1Arc1 && !app->draggingStiloThigh1Arc2 &&
                     !app->draggingStiloHip2 && !app->draggingStiloFeet2 &&
-                    !app->draggingStiloThigh2Arc1 && !app->draggingStiloThigh2Arc2)
+                    !app->draggingStiloThigh2Arc1 && !app->draggingStiloThigh2Arc2 &&
+                    !app->draggingStiloMassCenter)
                     break;
 
                 PointF stiloLocalMouse = inverseRotate(stiloMouse, stiloCenter, stiloAngle);
 
                 PointF stiloHeadLocal = { app->robotScene.stilo.headX, app->robotScene.stilo.y };
                 PointF stiloButtLocal = { app->robotScene.stilo.buttX, app->robotScene.stilo.y };
+
+                // Body/Leg Weight mass-center dot -- same idea as Semni's
+                // own draggingSemniMassCenter drag math above, just against
+                // Stilo's bodyWeight/legWeight and
+                // computeStiloMassCenterEndpointsWorld's body/combined-leg
+                // endpoints (see app.h's own comment on Stilo's legWeight
+                // covering both legs together).
+                if (app->draggingStiloMassCenter)
+                {
+                    PointF stiloBodyCentroidWorld, stiloLegCentroidWorld;
+                    computeStiloMassCenterEndpointsWorld(app->robotScene.stilo, &stiloBodyCentroidWorld, &stiloLegCentroidWorld);
+
+                    float stiloSegX = stiloLegCentroidWorld.x - stiloBodyCentroidWorld.x;
+                    float stiloSegY = stiloLegCentroidWorld.y - stiloBodyCentroidWorld.y;
+                    float stiloSegLenSq = stiloSegX * stiloSegX + stiloSegY * stiloSegY;
+
+                    if (stiloSegLenSq > 1e-9f)
+                    {
+                        float stiloT = ((stiloMouse.x - stiloBodyCentroidWorld.x) * stiloSegX + (stiloMouse.y - stiloBodyCentroidWorld.y) * stiloSegY) / stiloSegLenSq;
+                        if (stiloT < 0.0f) stiloT = 0.0f;
+                        if (stiloT > 1.0f) stiloT = 1.0f;
+
+                        float stiloTotal = app->stiloMassCenterDragTotal;
+                        app->robotScene.stilo.bodyWeight = (1.0f - stiloT) * stiloTotal;
+                        app->robotScene.stilo.legWeight = stiloT * stiloTotal;
+
+                        syncWeightRatioSlider(app, app->robotScene.stilo.bodyWeight, app->robotScene.stilo.legWeight);
+                    }
+                }
 
                 if (app->draggingStiloSeamArc1)
                 {
@@ -2204,6 +2305,13 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             app->hoverHead  = isNear(mouse, headWorld, HEAD_BUTT_HANDLE_RADIUS);
             app->hoverButt  = isNear(mouse, buttWorld, HEAD_BUTT_HANDLE_RADIUS);
 
+            // Body/Leg Weight mass-center dot -- same Shift-gated
+            // proximity hover as WM_LBUTTONDOWN's own check (see that
+            // block's comment on why no closest-wins tie-break is needed
+            // here, unlike Rocky's version).
+            app->hoverSemniMassCenter = (LOWORD(wParam) & MK_SHIFT) &&
+                isNear(mouse, computeSemniMassCenterWorld(app->robotScene.robot), MASS_CENTER_HANDLE_RADIUS);
+
             // View Segments hover: which SINGLE thing -- out of both the
             // 6 fillet ARCS (computeSemniArcPoints' actual trimmed curve,
             // NOT the full circle each one was cut from) and the 5
@@ -2399,7 +2507,9 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 // re-interpret those tuned angles around a different
                 // circle entirely -- not just relabel them, which is what
                 // caused the seam handle drag to look broken/inverted.
-                if (app->hoverButt)
+                if (app->hoverSemniMassCenter)
+                    hoverLabel = L"Weight Balance";
+                else if (app->hoverButt)
                     hoverLabel = L"Head";
                 else if (app->hoverHead)
                     hoverLabel = L"Butt";
@@ -2462,6 +2572,33 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             // radii, not on which handle is being dragged), the mirrored
             // delta is automatically valid for the other arc too -- no
             // extra clamping needed.
+            // Body/Leg Weight mass-center dot -- same idea as Rocky's own
+            // draggingRockyMassCenter drag math (see that block's
+            // comment), just against Semni's bodyWeight/legWeight and
+            // computeSemniMassCenterEndpointsWorld's body/leg endpoints.
+            if (app->draggingSemniMassCenter)
+            {
+                PointF semniBodyCentroidWorld, semniLegCentroidWorld;
+                computeSemniMassCenterEndpointsWorld(app->robotScene.robot, &semniBodyCentroidWorld, &semniLegCentroidWorld);
+
+                float semniSegX = semniLegCentroidWorld.x - semniBodyCentroidWorld.x;
+                float semniSegY = semniLegCentroidWorld.y - semniBodyCentroidWorld.y;
+                float semniSegLenSq = semniSegX * semniSegX + semniSegY * semniSegY;
+
+                if (semniSegLenSq > 1e-9f)
+                {
+                    float semniT = ((mouse.x - semniBodyCentroidWorld.x) * semniSegX + (mouse.y - semniBodyCentroidWorld.y) * semniSegY) / semniSegLenSq;
+                    if (semniT < 0.0f) semniT = 0.0f;
+                    if (semniT > 1.0f) semniT = 1.0f;
+
+                    float semniTotal = app->semniMassCenterDragTotal;
+                    app->robotScene.robot.bodyWeight = (1.0f - semniT) * semniTotal;
+                    app->robotScene.robot.legWeight = semniT * semniTotal;
+
+                    syncWeightRatioSlider(app, app->robotScene.robot.bodyWeight, app->robotScene.robot.legWeight);
+                }
+            }
+
             if (app->draggingSeamArc1)
             {
                 SafeAngleRange range = filletSafeAngleRange(headLocal, app->robotScene.robot.headRadius, buttLocal, app->robotScene.robot.buttRadius, MAX_ARC_R);
@@ -3276,6 +3413,48 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
 
                 InvalidateRect(hwnd, NULL, FALSE);
             }
+
+            // Body<->Leg ratio slider -- see ID_WEIGHT_RATIO_SLIDER's own
+            // comment. pos is 0-100, read directly as the body share
+            // percentage; the leg share is just 100-pos. Written straight
+            // into bodyWeight/legWeight as 0..1 fractions summing to
+            // exactly 1.0 -- fine since only their RATIO to each other is
+            // ever used (see every computeXMassCenterWorld's <=1e-6f
+            // guard comment), so the actual magnitude resetting on every
+            // slider move changes nothing downstream.
+            else if ((HWND)lParam == app->ui.hWeightRatioSlider)
+            {
+                int pos = (int)SendMessage(app->ui.hWeightRatioSlider, TBM_GETPOS, 0, 0);
+                float bodyShare = pos / 100.0f;
+                float legShare = 1.0f - bodyShare;
+
+                switch (app->robotScene.activeKind)
+                {
+                    case ROBOT_KIND_ROCKY:
+                        app->robotScene.rocky.bodyWeight = bodyShare;
+                        app->robotScene.rocky.legWeight = legShare;
+                        break;
+                    case ROBOT_KIND_STILO:
+                        app->robotScene.stilo.bodyWeight = bodyShare;
+                        app->robotScene.stilo.legWeight = legShare;
+                        break;
+                    case ROBOT_KIND_SEMNI:
+                    default:
+                        app->robotScene.robot.bodyWeight = bodyShare;
+                        app->robotScene.robot.legWeight = legShare;
+                        break;
+                }
+
+                wchar_t ratioBuf[32];
+                wsprintf(ratioBuf, L"Body/Leg Ratio: %d / %d", pos, 100 - pos);
+                SetWindowText(app->ui.hWeightRatioLabel, ratioBuf);
+
+                // Same keyboard-focus handoff as hScaleSlider above, same
+                // reasoning.
+                SetFocus(hwnd);
+
+                InvalidateRect(hwnd, NULL, FALSE);
+            }
         }
         break;
 
@@ -3488,8 +3667,8 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             int relYRow1     = relYSelector + comboRowH + rowGap;  // Home | Standing
             int relYRow1b    = relYRow1     + btnH      + rowGap;  // Set Home | Set Standing
             int relYRow2     = relYRow1b    + btnH      + rowGap;  // Mirror Leg | Mirror Leg 2 (leg 2 only meaningful for Stilo, inert otherwise -- see canvas.c's ID_SAVE for where the old Save button that used to share this row moved to)
-            int relYWeight   = relYRow2     + btnH      + rowGap;  // Body Wt | Leg Wt (Rocky only, inert otherwise)
-            int relYActualWeight = relYWeight + btnH    + rowGap;  // Weight (Rocky only, inert otherwise) -- separate real mass, written as Rob.txt's own weight value
+            int relYWeightRatio = relYRow2   + btnH      + rowGap;  // Body<->Leg ratio label+slider stack (see hWeightRatioLabel/hWeightRatioSlider) -- replaces the old separate Body Wt | Leg Wt edit-box row, removed per explicit user request
+            int relYActualWeight = relYWeightRatio + 20 + 2 + sliderH + rowGap;  // label (20px) + 2px gap + full-width slider, then Weight (Rocky only, inert otherwise) -- separate real mass, written as Rob.txt's own weight value
             int relYSize     = relYActualWeight + btnH  + rowGap;  // Size: W x H mm (live readout, all robot kinds)
             int relYScale    = relYSize     + btnH       + rowGap; // Scale label + slider
             int relYSeg      = relYScale    + sliderH    + rowGap; // View Segments
@@ -3556,34 +3735,30 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                  col2X, panelY + relYRow2, colW, btnH,
                  SWP_NOZORDER);
 
-            // Body Wt | Leg Wt -- each column holds its own short label +
-            // edit box pair (label width picked just wide enough for
-            // "Body Wt"/"Leg Wt" at this font, edit box takes the rest of
-            // the column), same two-column row as Home/Standing etc. above.
-            // 50px was too narrow for "Body Wt" at g_semniUIFont's -15
-            // Segoe UI -- SS_LEFT statics clip silently rather than
-            // shrinking the text or ellipsizing, so it was rendering as a
-            // truncated "Body" with " Wt" simply cut off (reported by the
-            // user actually looking at this panel once it started driving
-            // the on-canvas mass-center marker). 66 leaves a comfortable
-            // margin over "Body Wt"'s measured width at this font/size.
+            // weightLabelW/weightEditW: sized for the "Weight" row below
+            // (Actual Weight) -- this used to also lay out a Body Wt |
+            // Leg Wt two-column edit-box pair here, replaced by the
+            // hWeightRatioLabel/hWeightRatioSlider row just below per
+            // explicit user request (a slider instead of two boxes).
             int weightLabelW = 66;
             int weightEditW = colW - weightLabelW - colGap;
 
-            SetWindowPos(app->ui.hBodyWeightLabel, NULL,
-                 col1X, panelY + relYWeight + (btnH - 20) / 2, weightLabelW, 20,
+            // Body<->Leg ratio slider -- more discoverable alternative to
+            // the two edit boxes this replaced (a slider reads immediately
+            // as "one ratio, two ends"). Label stacked directly ABOVE a
+            // FULL-WIDTH slider (rather than label-left/slider-right like
+            // hScaleLabel/hScaleSlider below) per explicit user request --
+            // the slider reads as the main control here, wide enough to
+            // drag precisely, with the label just narrating its value.
+            int weightRatioLabelH = 20;
+            int weightRatioStackGap = 2;
+
+            SetWindowPos(app->ui.hWeightRatioLabel, NULL,
+                 col1X, panelY + relYWeightRatio, contentW, weightRatioLabelH,
                  SWP_NOZORDER);
 
-            SetWindowPos(app->ui.hBodyWeightEdit, NULL,
-                 col1X + weightLabelW + colGap, panelY + relYWeight + (btnH - 22) / 2, weightEditW, 22,
-                 SWP_NOZORDER);
-
-            SetWindowPos(app->ui.hLegWeightLabel, NULL,
-                 col2X, panelY + relYWeight + (btnH - 20) / 2, weightLabelW, 20,
-                 SWP_NOZORDER);
-
-            SetWindowPos(app->ui.hLegWeightEdit, NULL,
-                 col2X + weightLabelW + colGap, panelY + relYWeight + (btnH - 22) / 2, weightEditW, 22,
+            SetWindowPos(app->ui.hWeightRatioSlider, NULL,
+                 col1X, panelY + relYWeightRatio + weightRatioLabelH + weightRatioStackGap, contentW, sliderH,
                  SWP_NOZORDER);
 
             // Weight -- own row, but sized like Body Wt/Leg Wt's own
@@ -3673,10 +3848,8 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 app->ui.hSetHomeButton,
                 app->ui.hMirrorButton,
                 app->ui.hMirrorButton2,
-                app->ui.hBodyWeightLabel,
-                app->ui.hBodyWeightEdit,
-                app->ui.hLegWeightLabel,
-                app->ui.hLegWeightEdit,
+                app->ui.hWeightRatioLabel,
+                app->ui.hWeightRatioSlider,
                 app->ui.hActualWeightLabel,
                 app->ui.hActualWeightEdit,
                 app->ui.hRobotSizeLabel,
@@ -3852,23 +4025,23 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             );
              SendMessage(app->ui.hMirrorButton2, WM_SETFONT, (WPARAM)g_semniUIFont, TRUE);
 
-             // Body/Leg Weight: plain text entry boxes feeding Rocky's own
-             // bodyWeight/legWeight fields (see app.h's Rocky comment).
-             // Still re-read via GetWindowText from the File > Save handler
-             // (canvas.c) right before saveRockyAsRobArm (save.c) writes
-             // Rob.txt/Arm.txt, so Save always reflects whatever's
-             // currently typed even if focus never left the box -- but ALSO
-             // now wired to an EN_CHANGE handler below (WM_COMMAND's
-             // ID_BODY_WEIGHT_EDIT/ID_LEG_WEIGHT_EDIT cases) that updates
-             // app->robotScene.rocky.bodyWeight/legWeight live as the user
-             // types, so renderer.c's on-canvas mass-center marker
-             // (drawRockyMassCenterMarker) tracks the two numbers in real
-             // time instead of only jumping on Save. Harmlessly inert for
-             // Semni/Stilo, same "always created, only meaningful for one
-             // robot kind" convention as hMirrorButton2/hViewSegmentsButton.
-             app->ui.hBodyWeightLabel = CreateWindow(
+             // Body<->Leg ratio: a single trackbar feeding whichever robot
+             // kind is active's own bodyWeight/legWeight fields (see app.h's
+             // Rocky comment) -- replaces the separate Body Wt/Leg Wt plain
+             // text entry boxes this panel used to have (removed per
+             // explicit user request: a slider reads as "one ratio, two
+             // ends" where two independent-looking numbers didn't). See
+             // ID_WEIGHT_RATIO_SLIDER's own
+             // comment. Range 0-100 (body share as a percentage, leg share
+             // is just 100 minus that), starts at 50/50 matching the 0.5/
+             // 0.5 defaults every kind's bodyWeight/legWeight starts at
+             // (see app_init.c's initAppState). Label's initial text
+             // matches that same starting split so it doesn't briefly show
+             // a stale value before the user's first slider move (same
+             // reasoning as hScaleLabel's initial "Scale: 1.00" text).
+             app->ui.hWeightRatioLabel = CreateWindow(
                 L"STATIC",
-                L"Body Wt",
+                L"Body/Leg Ratio: 50 / 50",
                 WS_VISIBLE | WS_CHILD | SS_LEFT,
                 0, 0, 10, 10,
                 hwnd,
@@ -3876,51 +4049,21 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 NULL,
                 NULL
             );
-             SendMessage(app->ui.hBodyWeightLabel, WM_SETFONT, (WPARAM)g_semniUIFont, TRUE);
+             SendMessage(app->ui.hWeightRatioLabel, WM_SETFONT, (WPARAM)g_semniUIFont, TRUE);
 
-             app->ui.hBodyWeightEdit = CreateWindowEx(
-                WS_EX_CLIENTEDGE,
-                L"EDIT",
-                L"0.5",
-                WS_VISIBLE | WS_CHILD | ES_AUTOHSCROLL,
+             app->ui.hWeightRatioSlider = CreateWindow(
+                TRACKBAR_CLASS,
+                L"",
+                WS_VISIBLE | WS_CHILD | TBS_HORZ | TBS_NOTICKS,
                 0, 0, 10, 10,
                 hwnd,
-                (HMENU)ID_BODY_WEIGHT_EDIT,
+                (HMENU)ID_WEIGHT_RATIO_SLIDER,
                 NULL,
                 NULL
             );
-             SendMessage(app->ui.hBodyWeightEdit, WM_SETFONT, (WPARAM)g_semniUIFont, TRUE);
-             // see weightEditSubclassProc's own comment -- Enter returns
-             // focus to the main window instead of beeping/staying put.
-             SetWindowSubclass(app->ui.hBodyWeightEdit, weightEditSubclassProc, 0, (DWORD_PTR)hwnd);
 
-             app->ui.hLegWeightLabel = CreateWindow(
-                L"STATIC",
-                L"Leg Wt",
-                WS_VISIBLE | WS_CHILD | SS_LEFT,
-                0, 0, 10, 10,
-                hwnd,
-                NULL,
-                NULL,
-                NULL
-            );
-             SendMessage(app->ui.hLegWeightLabel, WM_SETFONT, (WPARAM)g_semniUIFont, TRUE);
-
-             app->ui.hLegWeightEdit = CreateWindowEx(
-                WS_EX_CLIENTEDGE,
-                L"EDIT",
-                L"0.5",
-                WS_VISIBLE | WS_CHILD | ES_AUTOHSCROLL,
-                0, 0, 10, 10,
-                hwnd,
-                (HMENU)ID_LEG_WEIGHT_EDIT,
-                NULL,
-                NULL
-            );
-             SendMessage(app->ui.hLegWeightEdit, WM_SETFONT, (WPARAM)g_semniUIFont, TRUE);
-             // see weightEditSubclassProc's own comment -- Enter returns
-             // focus to the main window instead of beeping/staying put.
-             SetWindowSubclass(app->ui.hLegWeightEdit, weightEditSubclassProc, 0, (DWORD_PTR)hwnd);
+             SendMessage(app->ui.hWeightRatioSlider, TBM_SETRANGE, TRUE, MAKELONG(0, 100));
+             SendMessage(app->ui.hWeightRatioSlider, TBM_SETPOS, TRUE, 50);
 
              // Separate real total-mass input -- own row, own field
              // (Rocky.actualWeight), NOT part of the Body Wt/Leg Wt
@@ -4172,11 +4315,49 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                         app->hoverRockyFoot = 0;
                         app->draggingRockyMassCenter = 0;
                         app->hoverRockyMassCenter = 0;
+                        app->draggingSemniMassCenter = 0;
+                        app->hoverSemniMassCenter = 0;
+                        app->draggingStiloMassCenter = 0;
+                        app->hoverStiloMassCenter = 0;
                         app->activeHandle = 0;
                         app->hoveredCircleSegment = -1;
                         app->hoveredBodyCircle = -1;
                         app->hoveredRectSegment = -1;
                         SetWindowText(app->ui.hHoverLabel, L"");
+
+                        // The ratio slider and Weight box are shared across
+                        // all three kinds (see ID_WEIGHT_RATIO_SLIDER's own
+                        // comment) -- refresh them to whichever kind just
+                        // became active's OWN bodyWeight/legWeight/
+                        // actualWeight, so switching kinds doesn't leave
+                        // another robot's numbers showing.
+                        {
+                            float bw = 0.5f, lw = 0.5f, aw = 1.0f;
+                            switch (app->robotScene.activeKind)
+                            {
+                                case ROBOT_KIND_ROCKY:
+                                    bw = app->robotScene.rocky.bodyWeight;
+                                    lw = app->robotScene.rocky.legWeight;
+                                    aw = app->robotScene.rocky.actualWeight;
+                                    break;
+                                case ROBOT_KIND_STILO:
+                                    bw = app->robotScene.stilo.bodyWeight;
+                                    lw = app->robotScene.stilo.legWeight;
+                                    aw = app->robotScene.stilo.actualWeight;
+                                    break;
+                                case ROBOT_KIND_SEMNI:
+                                default:
+                                    bw = app->robotScene.robot.bodyWeight;
+                                    lw = app->robotScene.robot.legWeight;
+                                    aw = app->robotScene.robot.actualWeight;
+                                    break;
+                            }
+
+                            wchar_t weightBuf[32];
+                            formatNonNegativeFloat2dp(aw, weightBuf);
+                            SetWindowText(app->ui.hActualWeightEdit, weightBuf);
+                            syncWeightRatioSlider(app, bw, lw);
+                        }
 
                         // Switching kind swaps in a differently-sized
                         // robot entirely -- refresh the mm readout to match.
@@ -4207,41 +4388,11 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     SetFocus(app->hwndMain);  // return focus for keyboard input
                     break;
 
-                // Body/Leg Weight edit boxes -- live EN_CHANGE mirror of
-                // app->robotScene.rocky.bodyWeight/legWeight (see this
-                // file's own comment above hBodyWeightEdit/hLegWeightEdit's
-                // creation) so renderer.c's mass-center marker
-                // (drawRockyMassCenterMarker) updates as the user types
-                // instead of only on Save. Reads/writes Rocky's fields
-                // unconditionally regardless of activeKind, same
-                // "harmlessly inert outside Rocky" convention as
-                // ID_MIRROR_LEG2_BUTTON just below -- there's simply
-                // nothing else it could mean while these boxes are hidden
-                // (see editor_mode.c's semniActive gating on
-                // hBodyWeightEdit/hLegWeightEdit).
-                case ID_BODY_WEIGHT_EDIT:
-                    if (HIWORD(wParam) == EN_CHANGE)
-                    {
-                        wchar_t weightBuf[64];
-                        GetWindowText(app->ui.hBodyWeightEdit, weightBuf, 64);
-                        app->robotScene.rocky.bodyWeight = (float)wcstod(weightBuf, NULL);
-                        InvalidateRect(hwnd, NULL, FALSE);
-                    }
-                    break;
-
-                case ID_LEG_WEIGHT_EDIT:
-                    if (HIWORD(wParam) == EN_CHANGE)
-                    {
-                        wchar_t weightBuf[64];
-                        GetWindowText(app->ui.hLegWeightEdit, weightBuf, 64);
-                        app->robotScene.rocky.legWeight = (float)wcstod(weightBuf, NULL);
-                        InvalidateRect(hwnd, NULL, FALSE);
-                    }
-                    break;
-
                 // Separate real total-mass input -- live EN_CHANGE mirror
-                // of Rocky.actualWeight, same pattern as ID_BODY_WEIGHT_
-                // EDIT/ID_LEG_WEIGHT_EDIT above, except this one doesn't
+                // of the active kind's own actualWeight (the Body Wt/Leg Wt
+                // edit boxes this used to sit alongside are gone -- see
+                // ID_WEIGHT_RATIO_SLIDER's own comment -- so this is the
+                // panel's only remaining plain-text weight field). Doesn't
                 // move the on-canvas mass-center marker (it isn't part of
                 // that ratio) -- it's just kept in sync so File > Save
                 // (canvas.c) always reads back out whatever's currently
@@ -4252,7 +4403,20 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     {
                         wchar_t weightBuf[64];
                         GetWindowText(app->ui.hActualWeightEdit, weightBuf, 64);
-                        app->robotScene.rocky.actualWeight = (float)wcstod(weightBuf, NULL);
+                        float actualWeightVal = (float)wcstod(weightBuf, NULL);
+                        switch (app->robotScene.activeKind)
+                        {
+                            case ROBOT_KIND_ROCKY:
+                                app->robotScene.rocky.actualWeight = actualWeightVal;
+                                break;
+                            case ROBOT_KIND_STILO:
+                                app->robotScene.stilo.actualWeight = actualWeightVal;
+                                break;
+                            case ROBOT_KIND_SEMNI:
+                            default:
+                                app->robotScene.robot.actualWeight = actualWeightVal;
+                                break;
+                        }
                     }
                     break;
 

@@ -217,7 +217,7 @@ void initAppState(AppState* app)
 	app->robotScene.activeKind = ROBOT_KIND_SEMNI;
 
 	// Rob.txt/Arm.txt export weights (see app.h's Rocky.bodyWeight/
-	// legWeight and input.c's hBodyWeightEdit/hLegWeightEdit) -- deliberately
+	// legWeight and input.c's hWeightRatioSlider) -- deliberately
 	// set here ONCE rather than inside initRockyStandingPosition/
 	// initRockyHomePosition above, since those two also get re-run every
 	// time the Standing/Home buttons are clicked (see input.c's
@@ -238,4 +238,21 @@ void initAppState(AppState* app)
 	// input.c's hActualWeightEdit) -- same one-time-default reasoning as
 	// bodyWeight/legWeight just above.
 	app->robotScene.rocky.actualWeight = 1.0f;
+
+	// Same bodyWeight/legWeight/actualWeight defaults for Semni and Stilo
+	// now that they have their own SemniExport/StiloExport weight-share
+	// export (see save.c's saveSemniAsRobLeg/saveStiloAsRobLeg) and their
+	// own draggable mass-center dot (renderer.c's
+	// computeSemniMassCenterWorld/computeStiloMassCenterWorld) -- same
+	// one-time-only placement (not inside any Standing/Home pose init) and
+	// same 0.5/0.5/1.0 reasoning as Rocky's own version just above. Stilo's
+	// legWeight is the one COMBINED value for both legs together (see
+	// app.h's own comment on Stilo's legWeight).
+	app->robotScene.robot.bodyWeight = 0.5f;
+	app->robotScene.robot.legWeight = 0.5f;
+	app->robotScene.robot.actualWeight = 1.0f;
+
+	app->robotScene.stilo.bodyWeight = 0.5f;
+	app->robotScene.stilo.legWeight = 0.5f;
+	app->robotScene.stilo.actualWeight = 1.0f;
 }

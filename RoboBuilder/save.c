@@ -927,31 +927,36 @@ int saveRockyAsRobArm(AppState* app)
 // Semni's two-stage hip->knee->foot leg / Stilo's two independent
 // single-stage hip->feet legs.
 //
-// Neither Semni nor Stilo has Rocky's own bodyWeight/legWeight fields, so
-// every mass line below writes a flat 1.0 instead of a user-set value, and
-// every "mass center" is that one piece's own plain geometric centroid
-// (no weighted combination across pieces the way Rob.txt's rectangle+leg
-// combination is for Rocky) -- callers wanting a true combined-system mass
-// center will need to combine these themselves once real per-part weights
-// exist.
+// Semni and Stilo now have their own bodyWeight/legWeight/actualWeight
+// fields too (same idea as Rocky's own, see app.h's Semni/Stilo comments)
+// -- every mass line below is actualWeight split by the bodyWeight/
+// legWeight ratio (Stilo's legWeight covers both legs combined, split
+// evenly between Leg1.txt/Leg2.txt), same "real, ratio-derived, no
+// double-counting" design as Rocky's own Rob.txt/Arm.txt. Each piece's
+// own x/y position is still that piece's plain geometric centroid, NOT a
+// mass-weighted combination across pieces -- same deliberate choice
+// Rocky's own Rob.txt makes (see saveRockyAsRobArm's own comment): the
+// combined-system center of mass is what the ON-SCREEN draggable dot
+// shows (renderer.c's computeSemniMassCenterWorld/
+// computeStiloMassCenterWorld), not what gets written to either file.
 //
 // ROBOT_LEG_EXPORT_SCALE reuses ROCKY_EXPORT_SCALE (config.h) -- there's
 // no independent calibration for Semni/Stilo's own export, so this is a
 // reasonable placeholder rather than a verified value.
 #define ROBOT_LEG_EXPORT_SCALE ROCKY_EXPORT_SCALE
 
-// The two tangent points + genuine on-curve midpoint for each of a pair of
-// connecting arcs between two circles (c1/r1 and c2/r2), plus each arc's
-// own fillet -- shared scratch result type for the two tangent-computing
-// helpers just below.
-typedef struct { PointF c1Tan1, c2Tan1, mid1, c1Tan2, c2Tan2, mid2; Fillet fillet1, fillet2; } ChainTangents;
+// ChainTangents itself (the scratch result type for the two
+// tangent-computing helpers just below) now lives in save.h -- moved
+// there, along with these two functions and sampleLimbStageOutline just
+// further down, so renderer.c's Semni/Stilo mass-center markers can reuse
+// them (see save.h's own comment on each).
 
 // Torso seam-arc style: BOTH connecting arcs are convex (filletFromAttachAngle)
 // and BOTH use internalTangentPoint for their far tangent -- matches
 // drawSemniBody's/drawStiloBody's own seamArc1/seamArc2 construction
 // exactly (unlike the thigh/shin-style pairing below, where the second
 // arc bulges the other way).
-static ChainTangents computeSeamStyleTangents(PointF c1, float r1, PointF c2, float r2,
+ChainTangents computeSeamStyleTangents(PointF c1, float r1, PointF c2, float r2,
                                                float arc1AngleDeg, float arc2AngleDeg,
                                                float minR, float maxR)
 {
@@ -976,7 +981,7 @@ static ChainTangents computeSeamStyleTangents(PointF c1, float r1, PointF c2, fl
 // tangent found via circleTowardPoint(fillet2, c2) instead -- matches
 // drawThigh/drawShin/drawRockyLeg/drawStiloThigh1's own construction
 // (same pattern saveRockyAsRobArm's shin1/shin2 already uses above).
-static ChainTangents computeLimbStyleTangents(PointF c1, float r1, PointF c2, float r2,
+ChainTangents computeLimbStyleTangents(PointF c1, float r1, PointF c2, float r2,
                                                float arc1AngleDeg, float arc2AngleDeg,
                                                float minR, float maxR1, float maxR2)
 {
@@ -1038,14 +1043,25 @@ static void writeFullCircleLine(FILE* f, PointF center, float radius, PointF ori
 // uses (connector1, c2's own boundary arc, connector2, c1's own boundary
 // arc), reused here for the centroid of any such stage. Purely for the
 // approximate centroid below -- doesn't affect the exact arc endpoints
-// written to file.
-static int sampleLimbStageOutline(PointF c1, float r1, PointF c2, float r2, ChainTangents t, PointF* out)
+// written to file. "steps" is the per-arc sample count (each of the 4
+// pieces gets "steps+1" points, so "out" must have room for
+// 4*(steps+1)) -- CALLER-SUPPLIED, not hardcoded, specifically so
+// renderer.c's own mass-center markers can pass a coarser count
+// (ROCKY_MASS_CENTER_ARC_SAMPLES) against their own smaller stack
+// buffers than save.c's own ROB_ARM_ARC_SAMPLES-sized ones use. This
+// used to hardcode ROB_ARM_ARC_SAMPLES internally regardless of what the
+// caller's buffer was actually sized for, which silently overflowed
+// renderer.c's smaller buffers by nearly 3x (crashing as soon as Semni's
+// mass-center dot was computed) the moment this got reused outside
+// save.c -- steps is now REQUIRED to match the buffer "out" actually
+// points at.
+int sampleLimbStageOutline(PointF c1, float r1, PointF c2, float r2, ChainTangents t, int steps, PointF* out)
 {
     int n = 0;
-    n += robArmSampleArcThroughMid(t.fillet1.center, t.c1Tan1, t.mid1, t.c2Tan1, ROB_ARM_ARC_SAMPLES, out + n);
-    n += robArmSampleArcAwayFrom(c2, t.c2Tan1, t.c2Tan2, c1, ROB_ARM_ARC_SAMPLES, out + n);
-    n += robArmSampleArcThroughMid(t.fillet2.center, t.c2Tan2, t.mid2, t.c1Tan2, ROB_ARM_ARC_SAMPLES, out + n);
-    n += robArmSampleArcAwayFrom(c1, t.c1Tan2, t.c1Tan1, c2, ROB_ARM_ARC_SAMPLES, out + n);
+    n += robArmSampleArcThroughMid(t.fillet1.center, t.c1Tan1, t.mid1, t.c2Tan1, steps, out + n);
+    n += robArmSampleArcAwayFrom(c2, t.c2Tan1, t.c2Tan2, c1, steps, out + n);
+    n += robArmSampleArcThroughMid(t.fillet2.center, t.c2Tan2, t.mid2, t.c1Tan2, steps, out + n);
+    n += robArmSampleArcAwayFrom(c1, t.c1Tan2, t.c1Tan1, c2, steps, out + n);
     return n;
 }
 
@@ -1054,6 +1070,24 @@ int saveSemniAsRobLeg(AppState* app)
     Semni* s = &app->robotScene.robot;
 
     CreateDirectoryA("SemniExport", NULL);
+
+    // Real, ratio-derived mass shares -- same "bodyWeight/legWeight are
+    // ONLY ever meaningful as a ratio against each other, actualWeight is
+    // the one real total mass, split by that ratio with no double-
+    // counting" design as Rocky's own saveRockyAsRobArm (see that
+    // function's own bodyMassShare/legMassShare). Floors the ratio at an
+    // even 50/50 if both weights are ~0, same guard Rocky's version uses.
+    float semniBw = s->bodyWeight;
+    float semniLw = s->legWeight;
+    float semniTotalWeight = semniBw + semniLw;
+    if (semniTotalWeight <= 1e-6f)
+    {
+        semniBw = 0.5f;
+        semniLw = 0.5f;
+        semniTotalWeight = 1.0f;
+    }
+    float semniBodyMassShare = s->actualWeight * (semniBw / semniTotalWeight);
+    float semniLegMassShare = s->actualWeight * (semniLw / semniTotalWeight);
 
     // ---- Rob.txt: arc-based torso (head circle, butt circle, 2 seam arcs) ----
     //
@@ -1073,7 +1107,7 @@ int saveSemniAsRobLeg(AppState* app)
                                                         MIN_ARC_R, MAX_ARC_R);
 
         PointF poly[4 * (ROB_ARM_ARC_SAMPLES + 1)];
-        int polyN = sampleLimbStageOutline(headC, s->headRadius, buttC, s->buttRadius, seam, poly);
+        int polyN = sampleLimbStageOutline(headC, s->headRadius, buttC, s->buttRadius, seam, ROB_ARM_ARC_SAMPLES, poly);
         PointF centroidWorld = robArmPolygonCentroid(poly, polyN);
         PointF centroid = { (centroidWorld.x - headC.x) * ROBOT_LEG_EXPORT_SCALE, (centroidWorld.y - headC.y) * ROBOT_LEG_EXPORT_SCALE };
 
@@ -1083,7 +1117,7 @@ int saveSemniAsRobLeg(AppState* app)
         if (!f)
             return 0;
 
-        fprintf(f, "%.6f %.6f %.6f\n", centroid.x, centroid.y, 1.0f);
+        fprintf(f, "%.6f %.6f %.6f\n", centroid.x, centroid.y, semniBodyMassShare);
         fprintf(f, "%.6f %.6f\n", jointRel.x, jointRel.y);
 
         writeFullCircleLine(f, headC, s->headRadius, headC, ROBOT_LEG_EXPORT_SCALE);
@@ -1119,11 +1153,11 @@ int saveSemniAsRobLeg(AppState* app)
         // weight), consistent with this whole export already hardcoding
         // weight=1.0 rather than modeling real per-part mass.
         PointF thighPoly[4 * (ROB_ARM_ARC_SAMPLES + 1)];
-        int thighN = sampleLimbStageOutline(hipC, s->innerRadius, kneeC, s->kneeRadius, thigh, thighPoly);
+        int thighN = sampleLimbStageOutline(hipC, s->innerRadius, kneeC, s->kneeRadius, thigh, ROB_ARM_ARC_SAMPLES, thighPoly);
         PointF thighCentroid = robArmPolygonCentroid(thighPoly, thighN);
 
         PointF shinPoly[4 * (ROB_ARM_ARC_SAMPLES + 1)];
-        int shinN = sampleLimbStageOutline(kneeC, s->kneeRadius, footC, s->footRadius, shin, shinPoly);
+        int shinN = sampleLimbStageOutline(kneeC, s->kneeRadius, footC, s->footRadius, shin, ROB_ARM_ARC_SAMPLES, shinPoly);
         PointF shinCentroid = robArmPolygonCentroid(shinPoly, shinN);
 
         PointF legCentroidWorld = { (thighCentroid.x + shinCentroid.x) * 0.5f, (thighCentroid.y + shinCentroid.y) * 0.5f };
@@ -1133,7 +1167,7 @@ int saveSemniAsRobLeg(AppState* app)
         if (!f)
             return 0;
 
-        fprintf(f, "%.6f %.6f %.6f\n", legCentroid.x, legCentroid.y, 1.0f);
+        fprintf(f, "%.6f %.6f %.6f\n", legCentroid.x, legCentroid.y, semniLegMassShare);
         fprintf(f, "%.6f %.6f\n", 0.0f, 0.0f);
 
         writeFullCircleLine(f, hipC, s->innerRadius, hipC, ROBOT_LEG_EXPORT_SCALE);
@@ -1163,16 +1197,19 @@ int saveSemniAsRobLeg(AppState* app)
 // hip circle split into 2 halves, thigh arc 1, thigh arc 2, feet circle
 // split into 2 halves), just under Stilo's own hipCircle/feetCircle/
 // thighArc1Angle/thighArc2Angle field names. Shared by both of Stilo's
-// legs -- caller passes leg 1's or leg 2's own fields/filename.
+// legs -- caller passes leg 1's or leg 2's own fields/filename, plus that
+// leg's own share of the combined leg mass (massShare) -- see
+// saveStiloAsRobLeg's own comment on how that combined leg share gets
+// split evenly between the two physical legs.
 static int writeStiloLegFile(const char* filename, PointF hipC, float hipR, PointF feetC, float feetR,
-                              float thighArc1AngleDeg, float thighArc2AngleDeg)
+                              float thighArc1AngleDeg, float thighArc2AngleDeg, float massShare)
 {
     ChainTangents thigh = computeLimbStyleTangents(hipC, hipR, feetC, feetR,
                                                      thighArc1AngleDeg, thighArc2AngleDeg,
                                                      MIN_THIGH_ARC_R, MAX_SEMNI_THIGH_ARC_R, MAX_THIGH_ARC2_CONCAVE_R);
 
     PointF poly[4 * (ROB_ARM_ARC_SAMPLES + 1)];
-    int polyN = sampleLimbStageOutline(hipC, hipR, feetC, feetR, thigh, poly);
+    int polyN = sampleLimbStageOutline(hipC, hipR, feetC, feetR, thigh, ROB_ARM_ARC_SAMPLES, poly);
     PointF centroidWorld = robArmPolygonCentroid(poly, polyN);
     PointF centroid = { (centroidWorld.x - hipC.x) * ROBOT_LEG_EXPORT_SCALE, (centroidWorld.y - hipC.y) * ROBOT_LEG_EXPORT_SCALE };
 
@@ -1180,7 +1217,7 @@ static int writeStiloLegFile(const char* filename, PointF hipC, float hipR, Poin
     if (!f)
         return 0;
 
-    fprintf(f, "%.6f %.6f %.6f\n", centroid.x, centroid.y, 1.0f);
+    fprintf(f, "%.6f %.6f %.6f\n", centroid.x, centroid.y, massShare);
     fprintf(f, "%.6f %.6f\n", 0.0f, 0.0f);
 
     writeFullCircleLine(f, hipC, hipR, hipC, ROBOT_LEG_EXPORT_SCALE);
@@ -1200,6 +1237,25 @@ int saveStiloAsRobLeg(AppState* app)
 
     CreateDirectoryA("StiloExport", NULL);
 
+    // Real, ratio-derived mass shares -- same design as Semni's own
+    // saveSemniAsRobLeg (see that function's own comment). Stilo's
+    // legWeight is the one COMBINED value for both legs together (see
+    // app.h's own comment on Stilo's legWeight), so the leg's own share of
+    // actualWeight is split evenly (50/50) between Leg1.txt and Leg2.txt --
+    // there's no per-leg weight to split it by any other ratio.
+    float stiloBw = s->bodyWeight;
+    float stiloLw = s->legWeight;
+    float stiloTotalWeight = stiloBw + stiloLw;
+    if (stiloTotalWeight <= 1e-6f)
+    {
+        stiloBw = 0.5f;
+        stiloLw = 0.5f;
+        stiloTotalWeight = 1.0f;
+    }
+    float stiloBodyMassShare = s->actualWeight * (stiloBw / stiloTotalWeight);
+    float stiloLegMassShare = s->actualWeight * (stiloLw / stiloTotalWeight);
+    float stiloPerLegMassShare = stiloLegMassShare * 0.5f;
+
     // ---- Rob.txt: same arc-based torso shape as Semni's own, plus TWO
     // joint lines (one per leg) instead of Semni's one ----
     {
@@ -1211,7 +1267,7 @@ int saveStiloAsRobLeg(AppState* app)
                                                         MIN_ARC_R, MAX_ARC_R);
 
         PointF poly[4 * (ROB_ARM_ARC_SAMPLES + 1)];
-        int polyN = sampleLimbStageOutline(headC, s->headRadius, buttC, s->buttRadius, seam, poly);
+        int polyN = sampleLimbStageOutline(headC, s->headRadius, buttC, s->buttRadius, seam, ROB_ARM_ARC_SAMPLES, poly);
         PointF centroidWorld = robArmPolygonCentroid(poly, polyN);
         PointF centroid = { (centroidWorld.x - headC.x) * ROBOT_LEG_EXPORT_SCALE, (centroidWorld.y - headC.y) * ROBOT_LEG_EXPORT_SCALE };
 
@@ -1222,7 +1278,7 @@ int saveStiloAsRobLeg(AppState* app)
         if (!f)
             return 0;
 
-        fprintf(f, "%.6f %.6f %.6f\n", centroid.x, centroid.y, 1.0f);
+        fprintf(f, "%.6f %.6f %.6f\n", centroid.x, centroid.y, stiloBodyMassShare);
         fprintf(f, "%.6f %.6f\n", joint1Rel.x, joint1Rel.y);
         fprintf(f, "%.6f %.6f\n", joint2Rel.x, joint2Rel.y);
 
@@ -1238,11 +1294,11 @@ int saveStiloAsRobLeg(AppState* app)
 
     // ---- Leg1.txt / Leg2.txt: each leg's own single-stage hip -> feet ----
     if (!writeStiloLegFile("StiloExport\\Leg1.txt", s->hip1Circle, s->hip1Radius, s->feet1Circle, s->feet1Radius,
-                            s->thigh1Arc1Angle, s->thigh1Arc2Angle))
+                            s->thigh1Arc1Angle, s->thigh1Arc2Angle, stiloPerLegMassShare))
         return 0;
 
     if (!writeStiloLegFile("StiloExport\\Leg2.txt", s->hip2Circle, s->hip2Radius, s->feet2Circle, s->feet2Radius,
-                            s->thigh2Arc1Angle, s->thigh2Arc2Angle))
+                            s->thigh2Arc1Angle, s->thigh2Arc2Angle, stiloPerLegMassShare))
         return 0;
 
     char path[MAX_PATH];

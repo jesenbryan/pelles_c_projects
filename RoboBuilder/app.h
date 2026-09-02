@@ -25,19 +25,18 @@
 // above now only ever mirrors leg 1 (or Semni/Rocky's own single leg).
 #define ID_MIRROR_LEG2_BUTTON 1011
 
-// Body/Leg Weight edit boxes (see hBodyWeightEdit/hLegWeightEdit below) --
-// read via GetWindowText from the File > Save handler (canvas.c) rather
-// than driven by a WM_COMMAND notification, so these don't strictly need
-// control IDs the
-// way the buttons/combobox above do, but every other control here has one
-// for consistency and in case EN_CHANGE handling is ever added.
-#define ID_BODY_WEIGHT_EDIT 1012
-#define ID_LEG_WEIGHT_EDIT 1013
-
 // Separate real total-mass input (see hActualWeightEdit, Rocky's own
 // actualWeight field) -- same "no WM_COMMAND needed, just an ID for
-// consistency" reasoning as the two above.
+// consistency" reasoning as ID_WEIGHT_RATIO_SLIDER below.
 #define ID_ACTUAL_WEIGHT_EDIT 1014
+
+// Body<->Leg ratio slider -- the ONLY control for bodyWeight/legWeight's
+// ratio now (the separate Body Wt/Leg Wt edit boxes this replaced were
+// removed per explicit user request -- a slider reads immediately as
+// "one ratio, two ends" where two independent-looking numbers didn't).
+// Kept fully in sync with the on-canvas mass-center drag (see input.c's
+// syncWeightRatioSlider).
+#define ID_WEIGHT_RATIO_SLIDER 1015
 
 // dropdown at the top of the control panel that picks which of the three
 // robots (Semni/Rocky/Stilo) the Standing/Home/Mirror/Debug Log buttons
@@ -149,6 +148,22 @@ typedef struct {
     // knee joint rotation: rotates just the shin (footCircle) around
     // kneeCircle, independent of hipAngle/angle
     float kneeAngle;
+
+    // User-entered mass values for the SemniExport\Rob.txt/Leg.txt export
+    // -- same idea as Rocky's own bodyWeight/legWeight/actualWeight (see
+    // Rocky's own comment above), generalized to Semni's arc-based
+    // head/butt torso ("body") and its hip->knee->foot leg ("leg").
+    // bodyWeight/legWeight ONLY control the on-canvas mass-center dot's
+    // position (their ratio, weighted against the body-capsule vs
+    // leg-chain centroids, see renderer.c's computeSemniMassCenterWorld)
+    // -- they are NOT the number written to Rob.txt's own weight field.
+    // actualWeight is the separate, real total-mass value that IS split
+    // (by this same ratio) between Rob.txt and Leg.txt (see save.c's
+    // saveSemniAsRobLeg). Defaulted to 0.5f/0.5f/1.0f in app_init.c, same
+    // as Rocky's own fields.
+    float bodyWeight;
+    float legWeight;
+    float actualWeight;
 } Semni;
 
 // ---- robot model ("Rocky") ----
@@ -183,10 +198,10 @@ typedef struct {
     float kneeAngle;  // swings the leg (footCircle) around kneeCircle
 
     // User-entered mass values for the Rob.txt/Arm.txt export (see
-    // save.c's saveRockyAsRobArm and input.c's hBodyWeightEdit/
-    // hLegWeightEdit) -- typed into the control panel rather than derived
-    // from geometry, since there's no material/density model here to
-    // compute a real mass from. Defaulted to 1.0f in app_init.c's
+    // save.c's saveRockyAsRobArm and input.c's hWeightRatioSlider) --
+    // typed/dragged into the control panel rather than derived from
+    // geometry, since there's no material/density model here to compute a
+    // real mass from. Defaulted to 1.0f in app_init.c's
     // initRockyStandingPosition/initRockyHomePosition.
     //
     // bodyWeight/legWeight ONLY control the mass-center dot's position
@@ -254,6 +269,23 @@ typedef struct {
 
     float thigh2Arc1Angle;   // leg 2's hip-to-feet arc 1 (convex)
     float thigh2Arc2Angle;   // leg 2's hip-to-feet arc 2 (concave)
+
+    // User-entered mass values for the StiloExport\Rob.txt/Leg1.txt/
+    // Leg2.txt export -- same idea as Rocky's/Semni's own bodyWeight/
+    // legWeight/actualWeight (see Rocky's own comment above). Unlike
+    // Rocky/Semni's single leg, Stilo has TWO independent legs -- per
+    // explicit user decision, legWeight is ONE combined value covering
+    // both legs together (the mass-center dot blends the body centroid
+    // against a single combined centroid averaging leg1's and leg2's own
+    // centroids, see renderer.c's computeStiloMassCenterWorld), not a
+    // separate weight per leg. actualWeight is the real total mass,
+    // split by this same body/leg ratio between Rob.txt and Leg1.txt/
+    // Leg2.txt (the leg's own share split evenly between the two
+    // physical legs -- see save.c's saveStiloAsRobLeg). Defaulted to
+    // 0.5f/0.5f/1.0f in app_init.c, same as Rocky's/Semni's own fields.
+    float bodyWeight;
+    float legWeight;
+    float actualWeight;
 } Stilo;
 
 // Which of the three robot models the Robot editor (input.c) is currently
@@ -305,17 +337,21 @@ typedef struct {
     HWND hSetStandingButton;
     HWND hSetHomeButton;
 
-    // Body/Leg Weight input boxes -- only meaningful for Rocky (see
-    // Rocky's own bodyWeight/legWeight fields and save.c's
-    // saveRockyAsRobArm, which reads them via canvas.c's File > Save
-    // handler), same
-    // "harmlessly inert for other robot kinds" convention as
-    // hMirrorButton2/hViewSegmentsButton. Label + edit box per weight,
-    // same pairing as hScaleLabel/hScaleSlider above.
-    HWND hBodyWeightLabel;
-    HWND hBodyWeightEdit;
-    HWND hLegWeightLabel;
-    HWND hLegWeightEdit;
+    // Body<->Leg mass-center ratio -- shared across all three robot
+    // kinds (each has its own bodyWeight/legWeight/actualWeight fields --
+    // see Rocky's/Semni's/Stilo's own struct comments and save.c's
+    // saveRockyAsRobArm/saveSemniAsRobLeg/saveStiloAsRobLeg). input.c's
+    // ID_WEIGHT_RATIO_SLIDER/ID_ACTUAL_WEIGHT_EDIT handlers read/write
+    // whichever kind is currently active (app->robotScene.activeKind),
+    // and ID_ROBOT_SELECTOR's CBN_SELCHANGE refreshes the slider/label to
+    // match on every switch. See ID_WEIGHT_RATIO_SLIDER's own
+    // comment. Label shows the live "Body/Leg Ratio: N / M" split, same
+    // pairing as hScaleLabel/hScaleSlider below. The separate Body Wt/
+    // Leg Wt edit boxes this replaced are gone -- this slider is now the
+    // only control for that ratio (still kept in sync with the on-canvas
+    // mass-center drag).
+    HWND hWeightRatioLabel;
+    HWND hWeightRatioSlider;
 
     // Separate real total-mass input, next to Body Wt/Leg Wt above but
     // NOT part of the mass-center ratio -- this is the actual number
@@ -444,7 +480,7 @@ typedef struct {
     // other one above: dragging it doesn't move a geometric field
     // (kneeCircle, footCircle, etc) at all, it moves bodyWeight/legWeight
     // (see this struct's own comment on those two fields, and input.c's
-    // hBodyWeightEdit/hLegWeightEdit) by re-deriving them from wherever the
+    // hWeightRatioSlider) by re-deriving them from wherever the
     // dot lands along the rect-centroid<->leg-centroid segment (the only
     // positions reachable by a non-negative weight ratio -- see renderer.c's
     // computeRockyMassCenterEndpointsWorld/computeRockyMassCenterWorld and
@@ -462,6 +498,22 @@ typedef struct {
     // frame (e.g. always resetting it to 1.0) would quietly overwrite
     // whatever absolute mass the user had actually typed in.
     float rockyMassCenterDragTotal;
+
+    // Semni's and Stilo's own mass-center dots -- same third-kind-of-
+    // handle idea as hoverRockyMassCenter/draggingRockyMassCenter/
+    // rockyMassCenterDragTotal above, just against Semni's/Stilo's own
+    // bodyWeight/legWeight/actualWeight fields (see each struct's own
+    // comment in app.h) instead of Rocky's. Kept as separate fields
+    // rather than reused, same "separate struct being edited" reasoning
+    // as hoverRockyBody/draggingRockyBody -- only one of the three is
+    // ever active at once, but each needs its own state.
+    int hoverSemniMassCenter;
+    int draggingSemniMassCenter;
+    float semniMassCenterDragTotal;
+
+    int hoverStiloMassCenter;
+    int draggingStiloMassCenter;
+    float stiloMassCenterDragTotal;
 
     // Rocky's 2 shin connector-arc handles (the fillets between kneeCircle
     // and footCircle, shinArc1Angle/shinArc2Angle) -- mirrors Semni's own

@@ -1,0 +1,491 @@
+﻿#pragma once
+
+#include <windows.h>
+#include "app.h"
+
+typedef struct {
+    int activeHandle;
+    int draggingSeamArc1;
+    int draggingSeamArc2;
+    int draggingInner;
+    int draggingKnee;
+    int draggingThigh1;
+    int draggingThigh2;
+    int draggingFoot;
+    int draggingShin1;
+    int draggingShin2;
+
+    // hover-only companions to draggingSeamArc1/draggingSeamArc2/
+    // draggingThigh1/draggingThigh2/draggingShin1/draggingShin2 above --
+    // mirrors app->hoverSeamArc1/hoverSeamArc2/hoverThigh1/hoverThigh2/
+    // hoverShin1/hoverShin2, so drawSemniHandles/drawThighHandles/
+    // drawShinHandles can turn these handles yellow on a plain hover, not
+    // just while actively dragging.
+    int hoverSeamArc1;
+    int hoverSeamArc2;
+    int hoverThigh1;
+    int hoverThigh2;
+    int hoverShin1;
+    int hoverShin2;
+
+    // Rocky's rectangular torso handle -- see app.h's hoverRockyBody/
+    // draggingRockyBody, mirrored here the same way the Semni-specific
+    // fields above are, so drawRocky can highlight it the same way
+    // drawSemniBody highlights the hip circle.
+    int hoverRockyBody;
+    int draggingRockyBody;
+
+    // Which edge of Rocky's rectangle (see app.h's ROCKY_EDGE_* constants)
+    // is hovered/being dragged for a resize -- mirrors app->hoverRockyEdge/
+    // draggingRockyEdge.
+    int hoverRockyEdge;
+    int draggingRockyEdge;
+
+    // Rocky's knee handle -- mirrors app->hoverRockyKnee/draggingRockyKnee,
+    // same role as Semni's own hoverKnee/draggingKnee below.
+    int hoverRockyKnee;
+    int draggingRockyKnee;
+
+    // Rocky's foot handle -- mirrors app->hoverRockyFoot/draggingRockyFoot,
+    // same role as Semni's own hoverFoot/draggingFoot below.
+    int hoverRockyFoot;
+    int draggingRockyFoot;
+
+    // Rocky's draggable mass-center dot -- mirrors app->
+    // hoverRockyMassCenter/draggingRockyMassCenter (see app.h's own
+    // comment on those two).
+    int hoverRockyMassCenter;
+    int draggingRockyMassCenter;
+
+    // Rocky's 2 shin connector-arc handles -- mirrors app->
+    // draggingRockyShin1/draggingRockyShin2, same role as Semni's own
+    // draggingShin1/draggingShin2 above.
+    int draggingRockyShin1;
+    int draggingRockyShin2;
+
+    // hover-only companions -- mirrors app->hoverRockyShin1/
+    // hoverRockyShin2, same "yellow on hover too" treatment as
+    // hoverSeamArc1/hoverThigh1/etc. above.
+    int hoverRockyShin1;
+    int hoverRockyShin2;
+
+    // hover-only state for the joint circle handles (hip/knee/foot/
+    // head/butt), so they can highlight from a hover, not just a drag
+    int hoverHip;
+    int hoverKnee;
+    int hoverFoot;
+    int hoverHead;
+    int hoverButt;
+
+    // Stilo's own per-joint dragging/hover state -- mirrors app.h's
+    // draggingStilo*/hoverStilo* fields the same way the Semni fields
+    // above mirror app's own draggingSeamArc1/draggingInner/etc., so
+    // drawStilo can highlight its handles independently of Semni's. One
+    // hip and one feet handle per leg, plus that leg's own two thigh arcs
+    // -- no knee/shin/foot sub-stage any more (see app.h's Stilo comment).
+    int draggingStiloSeamArc1;
+    int draggingStiloSeamArc2;
+
+    int draggingStiloHip1;
+    int draggingStiloFeet1;
+    int draggingStiloThigh1Arc1;
+    int draggingStiloThigh1Arc2;
+
+    int hoverStiloHip1;
+    int hoverStiloFeet1;
+    int hoverStiloHead;
+    int hoverStiloButt;
+
+    // hover-only companions to draggingStiloSeamArc1/draggingStiloSeamArc2/
+    // draggingStiloThigh1Arc1/draggingStiloThigh1Arc2 above -- mirrors
+    // app->hoverStiloSeamArc1/hoverStiloSeamArc2/hoverStiloThigh1Arc1/
+    // hoverStiloThigh1Arc2, same "yellow on hover too" treatment as Semni's
+    // own arc-handle hover fields above.
+    int hoverStiloSeamArc1;
+    int hoverStiloSeamArc2;
+    int hoverStiloThigh1Arc1;
+    int hoverStiloThigh1Arc2;
+
+    // Stilo's SECOND leg -- mirrors app.h's draggingStiloHip2/Feet2/
+    // Thigh2Arc1/Thigh2Arc2 and hoverStiloHip2/hoverStiloFeet2 fields the
+    // same way the fields above mirror its first leg's, so
+    // drawStiloThigh2 (renderer.c) can highlight leg 2's handles
+    // independently of leg 1's. No seam-arc or head/butt hover equivalent
+    // here -- those are torso-level, shared between both legs.
+    int draggingStiloHip2;
+    int draggingStiloFeet2;
+    int draggingStiloThigh2Arc1;
+    int draggingStiloThigh2Arc2;
+
+    int hoverStiloHip2;
+    int hoverStiloFeet2;
+
+    // hover-only companions to draggingStiloThigh2Arc1/
+    // draggingStiloThigh2Arc2 above -- mirrors app->hoverStiloThigh2Arc1/
+    // hoverStiloThigh2Arc2. No leg-2 seam-arc equivalent -- both legs share
+    // the one torso's hoverStiloSeamArc1/hoverStiloSeamArc2 above.
+    int hoverStiloThigh2Arc1;
+    int hoverStiloThigh2Arc2;
+
+    // Shift held during the most recent mouse move -- combined with
+    // hoverHip/hoverKnee to preview the shift+scroll joint rotation's
+    // reach (thigh/knee, or shin/foot) in blue before any rotation
+    // actually happens. Sampled live every frame (see renderRobot), not
+    // cached from a mouse message, so pressing/releasing Shift while the
+    // cursor sits still over a joint toggles the preview immediately.
+    // Used identically in both Design > Robot mode and Simulation mode --
+    // canvas.c's WM_MOUSEWHEEL Shift-gates the Simulation-mode joint
+    // rotate the same way input.c's own version does, so this same field
+    // means the same thing in both places.
+    int shiftHeld;
+
+    // "View Segments" toggle (app->showCircleSegments) -- when set,
+    // drawSemni/drawRocky/drawStilo each overlay the full circle each of
+    // their own fillet arcs was trimmed from. See drawSemniCircleSegments
+    // below and its Rocky/Stilo counterparts (drawRockyCircleSegments/
+    // drawStiloCircleSegments).
+    int showSegments;
+
+    // Index of the circle segment currently under the mouse
+    // (app->hoveredCircleSegment), or -1 if none -- highlights that one
+    // solid/bright instead of dashed, same idea as the ArcSpline canvas's
+    // hoveredSegment. Range depends on which robot kind is active: 0-5 for
+    // Semni/Stilo (NUM_ROBOT_CIRCLE_SEGMENTS/NUM_STILO_CIRCLE_SEGMENTS,
+    // both 6) or 0-1 for Rocky (NUM_ROCKY_CIRCLE_SEGMENTS, 2) -- only one
+    // kind's compute/draw functions ever read this at a time (see
+    // renderRobot's activeKind switch), so there's no ambiguity despite
+    // the field itself being generic across all three.
+    int hoveredCircleSegment;
+
+    // Index of the always-visible body circle whose CIRCUMFERENCE the
+    // mouse is currently near (app->hoveredBodyCircle), or -1 if none.
+    // Separate from hoverHip/hoverKnee/etc above, which only fire near the
+    // center-point handle for dragging -- this fires anywhere along the
+    // circle's edge, purely as hover feedback (see
+    // drawSemniBodyCircleHover/drawRockyBodyCircleHover/
+    // drawStiloBodyCircleHover). Range depends on active kind, same
+    // reasoning as hoveredCircleSegment above: 0-4 for Semni
+    // (NUM_ROBOT_BODY_CIRCLES), 0-1 for Rocky (NUM_ROCKY_BODY_CIRCLES), or
+    // 0-5 for Stilo (NUM_STILO_BODY_CIRCLES).
+    int hoveredBodyCircle;
+
+    // Index of Rocky's rectangular body edge currently under the mouse
+    // (app->hoveredRectSegment), or -1 if none -- mirrors hoveredCircleSegment/
+    // hoveredBodyCircle above, but for Rocky's straight-edged body (see
+    // app.h's own comment on hoveredRectSegment for why it's a separate
+    // field). Only ever meaningful while Rocky is active -- harmlessly -1
+    // for Semni/Stilo.
+    int hoveredRectSegment;
+
+    // TRUE while the user is actively dragging the whole robot in
+    // Simulation mode (app->draggingRobotSim, set by canvas.c's
+    // WM_LBUTTONDOWN/WM_MOUSEMOVE) -- setColor (renderer.c) checks this
+    // first, before hoveringWhole/active below, so every line of the
+    // robot's own outline renders blue for as long as a drag is in
+    // progress, reverting to normal per-part coloring the instant it's
+    // released, as feedback that it's being moved.
+    int draggingWhole;
+
+    // TRUE while the cursor is over the robot's body in Simulation mode,
+    // whether or not a drag is actually in progress (app->hoveringRobotSim,
+    // kept current by canvas.c's WM_MOUSEMOVE) -- setColor renders the
+    // robot's outline yellow while this is true, UNLESS draggingWhole above
+    // is also true, in which case dragging wins and it stays blue (this
+    // flag is deliberately left stale/TRUE for the whole duration of a drag
+    // -- see app.h's comment on hoveringRobotSim -- so draggingWhole taking
+    // priority is what keeps the color from flickering between blue and
+    // yellow mid-drag).
+    int hoveringWhole;
+} RenderState;
+
+void renderApp(AppState* app, HDC hdc);
+
+// Same scene, minus the draggable handles, and without swapping buffers --
+// for exporting a frame without the editor's UI overlay. See definition
+// in renderer.c for details.
+void renderAppForSave(AppState* app);
+
+// Draws the robot scene (with handles) without clearing the color buffer
+// or swapping buffers, so it can be composited into a single shared frame
+// alongside the ArcSpline canvas -- see main.c/canvas.c's renderCombinedFrame.
+// Assumes the caller has already set Semni's own projection (graphicsOnResize)
+// and enabled GL_BLEND. dimAmount scales every draw call's own alpha (0 =
+// full opacity, up to 1 = heavily dimmed) so this scene can be shown as
+// dimmed background context when Semni isn't the currently active editor
+// mode, without a full-screen overlay that would also darken the shared
+// white canvas background underneath it.
+void renderRobotScene(AppState* app, float dimAmount);
+
+void drawSemni(Semni b, RenderState* rs, int includeHandles, float opacity);
+
+// Rocky/Stilo (see app.h). Rocky's rectangular torso IS draggable/
+// resizable (rs->hoverRockyBody/draggingRockyBody, same hip-like handle
+// interaction as Semni's own hip circle), and Stilo has two independent
+// two-joint legs (hip circle + feet circle, connected by a pair of thigh
+// arcs -- rs->hoverStiloHip1/draggingStiloHip1/etc. for leg 1, the
+// Hip2/Feet2/Thigh2 fields for leg 2, see app.h's Stilo comment).
+// includeHandles gates both. Both also now draw their own View Segments
+// overlay when rs->showSegments is set, same as Semni -- see
+// computeRockyCircleSegments/computeStiloCircleSegments and friends below.
+void drawRocky(Rocky b, RenderState* rs, int includeHandles, float opacity);
+void drawStilo(Stilo b, RenderState* rs, int includeHandles, float opacity);
+
+// The 6 fillet circles View Segments reveals: seam1/2 (head-butt),
+// thigh1/2 (hip-knee), shin1/2 (knee-foot), in that fixed order --
+// indices into computeSemniCircleSegments' output and into
+// app->hoveredCircleSegment.
+#define NUM_ROBOT_CIRCLE_SEGMENTS 6
+
+typedef struct {
+    PointF center; // world space
+    float radius;
+} CircleSegment;
+
+// Computes the 6 fillet circles' world-space center + radius for the
+// robot's CURRENT pose. Shared by drawSemniCircleSegments (rendering) and
+// input.c's hover hit-test, so the two can never disagree about where
+// these circles actually are -- same reasoning as reusing jointToWorld/
+// rotatePoint for both drawing and hit-testing elsewhere in this codebase.
+void computeSemniCircleSegments(Semni b, CircleSegment out[NUM_ROBOT_CIRCLE_SEGMENTS]);
+
+// Matches drawArc's own 40-segment sweep sampling (renderer.c) -- 41
+// points covering both endpoints. Also large enough to hold its 3-point
+// straight-line fallback (nearly-collinear p0/p1/p2), which uses far fewer.
+#define ARC_SAMPLE_COUNT 41
+
+// Computes the same circumcircle + sweep-direction curve drawArc renders
+// between p0 and p2 (sweeping the short way around, through p1 -- p1 is
+// the "bulge" handle), as a poly-line written into out (up to
+// ARC_SAMPLE_COUNT points). Returns how many points were written: 3 if
+// p0/p1/p2 are (nearly) collinear (out just holds p0, p1, p2 directly), or
+// ARC_SAMPLE_COUNT otherwise. See renderer.c's own comment on its
+// definition for the full derivation -- exposed here (rather than kept
+// static) so input.c's robotBoundingBoxLocal can bound the exact trimmed
+// arc actually drawn: a fillet's full circle can be far bigger than what's
+// visible (see MAX_ARC_R etc. in config.h), so sampling the real trimmed
+// curve, the same points drawArc itself walks, is what keeps the box
+// tight instead of wildly overshooting.
+int computeArcPoints(PointF p0, PointF p1, PointF p2, PointF out[ARC_SAMPLE_COUNT]);
+
+// Axis-aligned bounding box (raw local coordinates, pre-rotation/pre-
+// joint-angle) enclosing whichever robot kind is currently active's BODY
+// ONLY -- head/butt circles + their 2 seam arcs for Semni/Stilo (legs
+// excluded), or just the rectangle for Rocky (with its width/height
+// swapped from how it's actually rendered -- see input.c's own comment,
+// both deliberate). Defined in input.c (used there for the "Size: W x H
+// mm" side-panel label), declared here too so renderer.c's drawRobotSizeBox
+// can draw the exact same box into the GL scene instead of a second,
+// possibly-drifting copy of the same per-kind math. See input.c's own
+// comment on this function for why the head/butt circles are approximated
+// as full circles (a deliberate, small overestimate) while the connecting
+// seam ARCS use computeArcPoints above instead (their full circles are NOT
+// a safe overestimate -- see that function's own comment), and why the
+// whole thing reflects the DESIGNED pose rather than a live joint-angle
+// bend.
+void robotBoundingBoxLocal(AppState* app, float* minX, float* maxX, float* minY, float* maxY);
+
+// Computes a world-space poly-line approximation of each of the 6 fillet
+// ARCS -- the actual TRIMMED curve drawSemniBody/drawThigh/drawShin render
+// via drawArc, not the full circle computeSemniCircleSegments above
+// returns -- in the same seam1/seam2/thigh1/thigh2/shin1/shin2 order.
+// outCounts[i] is how many of out[i]'s ARC_SAMPLE_COUNT slots are actually
+// filled (3 in the rare nearly-collinear fallback case, ARC_SAMPLE_COUNT
+// otherwise). Used by canvas.c's ground-collision check so gravity can
+// stop the robot's LIMBS (not just its 5 base circles) from sinking into
+// drawn ground -- the full-circle version would be far too generous, since
+// a fillet's own circle is often much bigger than the trimmed arc actually
+// visible on screen.
+void computeSemniArcPoints(Semni b, PointF out[NUM_ROBOT_CIRCLE_SEGMENTS][ARC_SAMPLE_COUNT], int outCounts[NUM_ROBOT_CIRCLE_SEGMENTS]);
+
+// Overlays the full circle behind each fillet arc (seam1/2, thigh1/2,
+// shin1/2) -- every curve on Semni is genuinely just an arc trimmed from
+// some circle (see app.h's seamArc1Angle comment), so this makes that
+// literally visible, the same idea as the ArcSpline canvas's own View
+// Segments overlay (canvas.c). The five body circles (head, butt, hip,
+// knee, foot) aren't included here since drawSemniBody/drawThigh/drawShin
+// already draw those in full unconditionally. hoveredIndex (see
+// app->hoveredCircleSegment) draws that one circle solid/bright/thicker
+// instead of dashed -- same idea as the ArcSpline canvas's hoveredSegment.
+void drawSemniCircleSegments(Semni b, int hoveredIndex, float opacity);
+
+// One distinguishable color per fillet index (see NUM_ROBOT_CIRCLE_SEGMENTS'
+// seam1/seam2/thigh1/thigh2/shin1/shin2 ordering above), same palette
+// drawSemniCircleSegments itself renders with. Exposed so canvas.c's
+// hover-tooltip HUD can color the "Segment N/M" label to match whichever
+// fillet is currently hovered (app->hoveredCircleSegment) -- caller must
+// only pass a valid 0..NUM_ROBOT_CIRCLE_SEGMENTS-1 index.
+void circleSegmentColor(int index, float* r, float* g, float* b);
+
+// The 5 always-visible body circles, in a fixed order: head, butt,
+// hip (innerCircle), knee, foot -- indices into computeSemniBodyCircles'
+// output and into app->hoveredBodyCircle.
+#define NUM_ROBOT_BODY_CIRCLES 5
+
+// Computes the 5 body circles' world-space center + radius for the
+// robot's CURRENT pose. Same sharing rationale as
+// computeSemniCircleSegments -- used by both the hover ghost-highlight
+// below and input.c's hover hit-test.
+void computeSemniBodyCircles(Semni b, CircleSegment out[NUM_ROBOT_BODY_CIRCLES]);
+
+// Draws a bright/solid "ghost circle" highlight ring on top of whichever
+// body circle (see computeSemniBodyCircles) is currently hovered near its
+// circumference, or does nothing if hoveredIndex is -1. Part of the same
+// View Segments feature as drawSemniCircleSegments' fillet ghosts (the
+// caller gates both on the same toggle) -- the body circles are already
+// drawn in full unconditionally (drawSemniBody/drawThigh/drawShin), so
+// this only adds hover feedback confirming "this outline is genuinely a
+// full circle," once View Segments is turned on.
+void drawSemniBodyCircleHover(Semni b, int hoveredIndex, float opacity);
+
+// One distinguishable color per body circle index (head/butt/hip/knee/foot,
+// see NUM_ROBOT_BODY_CIRCLES's ordering above), same palette
+// drawSemniBodyCircleHover itself renders with. Exposed for the same reason
+// as circleSegmentColor above -- caller must only pass a valid
+// 0..NUM_ROBOT_BODY_CIRCLES-1 index. NOTE: the palette itself has 6
+// entries (see bodyCircleColor's own comment, renderer.c) since it's
+// shared by Stilo's 6 body circles too, not just Semni's 5 -- any index
+// 0-5 is valid regardless of which kind is asking.
+void bodyCircleColor(int index, float* r, float* g, float* b);
+
+// ---- Rocky's own View Segments overlay ----
+//
+// Rocky has no hip/thigh stage at all (see app.h) -- just the one
+// knee->foot leg, identical construction to Semni's own shin1/shin2 --
+// so it only ever has 2 fillets and 2 body circles, a small subset of
+// Semni's full set rather than a parallel structure of its own size.
+
+// Rocky's 2 shin fillet circles: shin1, shin2 -- indices into
+// computeRockyCircleSegments' output and into app->hoveredCircleSegment.
+#define NUM_ROCKY_CIRCLE_SEGMENTS 2
+
+// Computes Rocky's 2 shin fillet circles' world-space center + radius for
+// its CURRENT pose. Same sharing rationale as computeSemniCircleSegments.
+void computeRockyCircleSegments(Rocky b, CircleSegment out[NUM_ROCKY_CIRCLE_SEGMENTS]);
+
+// Computes Rocky's 2 shin fillet ARCS' actual TRIMMED curve (not the full
+// circle computeRockyCircleSegments above returns), same idea as
+// computeSemniArcPoints.
+void computeRockyArcPoints(Rocky b, PointF out[NUM_ROCKY_CIRCLE_SEGMENTS][ARC_SAMPLE_COUNT], int outCounts[NUM_ROCKY_CIRCLE_SEGMENTS]);
+
+// Overlays the full circle behind each of Rocky's 2 shin fillet arcs, same
+// idea as drawSemniCircleSegments.
+void drawRockyCircleSegments(Rocky b, int hoveredIndex, float opacity);
+
+// Rocky's 2 always-visible body circles: knee, foot -- indices into
+// computeRockyBodyCircles' output and into app->hoveredBodyCircle. Rocky's
+// rectangular torso has no circle at all, so it's not included here.
+#define NUM_ROCKY_BODY_CIRCLES 2
+
+// Computes Rocky's 2 body circles' world-space center + radius for its
+// CURRENT pose. Same sharing rationale as computeSemniBodyCircles.
+void computeRockyBodyCircles(Rocky b, CircleSegment out[NUM_ROCKY_BODY_CIRCLES]);
+
+// Rocky's rectangular body has no circle of its own (see above) but View
+// Segments should still be able to point at it -- as 4 straight edges
+// instead. A simple start/end pair (no "radius"/"center" the CircleSegment
+// struct above assumes) -- deliberately its own small struct rather than
+// reusing save.c's RobArmSegment (that one's tied to the export's own
+// straight-edge-as-a-degenerate-circle convention, a different concern from
+// this live on-screen hover/ghost-overlay feature).
+typedef struct { PointF start, end; } RockyEdgeSegment;
+
+// Rocky's 4 rectangle edges -- indices into computeRockyRectSegments'
+// output and into app->hoveredRectSegment. Order: top (Body Height 1),
+// right (Body Width 1), bottom (Body Height 2), left (Body Width 2) --
+// requested directly, NOT the c0->c1->c2->c3->c0 traversal
+// drawRockyBodyRect (renderer.c) draws the rectangle in (that one still
+// draws bottom/right/top/left, since it colors each edge independently
+// and has no shared numbering to keep in sync -- see its own per-edge
+// setColor calls), and NOT Rob.txt's own left/top/right/bottom
+// export-frame order (save.c) either -- a different concern, same
+// "deliberately different frame" reasoning as
+// computeRockyMassCenterEndpointsWorld's own comment just below.
+#define NUM_ROCKY_RECT_SEGMENTS 4
+
+// Computes Rocky's 4 rectangle edges' world-space endpoints for its CURRENT
+// pose (rotated by angle, same as drawRockyBodyRect's own c0..c3). Shared
+// by drawRockyRectSegments (rendering) and input.c's hover hit-test, same
+// reasoning as computeRockyCircleSegments/computeRockyBodyCircles above.
+void computeRockyRectSegments(Rocky b, RockyEdgeSegment out[NUM_ROCKY_RECT_SEGMENTS]);
+
+// Overlays a distinctly-colored, individually-hoverable line over each of
+// Rocky's 4 rectangle edges, same ghost-highlight idea as
+// drawRockyCircleSegments (dashed/dim normally, solid/bright/thicker on
+// hoveredIndex) -- NOT drawRockyBodyCircleHover's "only draw when hovered"
+// treatment, even though the rectangle (unlike the shin fillets) is already
+// fully visible on its own: View Segments still needs all 4 edges
+// individually colored/numbered at once so their "Segment N/M" identity is
+// discoverable by hovering around, not just guessable.
+void drawRockyRectSegments(Rocky b, int hoveredIndex, float opacity);
+
+// One distinguishable color per rectangle edge -- a THIRD palette,
+// deliberately different from both circleSegmentColor's and
+// bodyCircleColor's, same "never reads as one of the other categories even
+// when all are on-screen at once" reasoning as bodyCircleColor's own
+// comment (renderer.c). Non-static for the same reason as those two --
+// canvas.c's hover-tooltip HUD needs it.
+void rectSegmentColor(int index, float* r, float* g, float* b);
+
+// The two fixed endpoints of the segment Rocky's draggable mass-center dot
+// can ever sit on: the rectangle's own centroid (outRectCentroidWorld --
+// reached when legWeight is 0) and the leg's approximate silhouette
+// centroid (outLegCentroidWorld -- reached when bodyWeight is 0), both in
+// WORLD space (rotated by the robot's current angle/kneeAngle, matching
+// what's actually on screen right now). Pure geometry -- doesn't touch
+// bodyWeight/legWeight at all. Deliberately NOT static: input.c's
+// WM_MOUSEMOVE draggingRockyMassCenter branch needs these same two points
+// to project the mouse onto that segment and re-derive bodyWeight/legWeight
+// from where it lands (see app.h's own comment on those two fields).
+void computeRockyMassCenterEndpointsWorld(Rocky b, PointF* outRectCentroidWorld, PointF* outLegCentroidWorld);
+
+// Blends computeRockyMassCenterEndpointsWorld's two endpoints by Rocky's
+// CURRENT bodyWeight/legWeight -- the dot's actual on-screen position right
+// now. Deliberately NOT static: input.c's WM_LBUTTONDOWN/WM_MOUSEMOVE need
+// this same position for the dot's own hover/drag-start hit-test.
+PointF computeRockyMassCenterWorld(Rocky b);
+
+// Bright/solid hover ring on whichever of Rocky's 2 body circles is
+// currently hovered, same idea as drawSemniBodyCircleHover.
+void drawRockyBodyCircleHover(Rocky b, int hoveredIndex, float opacity);
+
+// ---- Stilo's own View Segments overlay ----
+//
+// Stilo shares Semni's torso (head/butt + 2 seam arcs) but replaces the
+// single hip->knee->foot leg with two independent hip->feet legs, each
+// with its own thigh fillet pair and no knee/shin stage -- see app.h's
+// Stilo comment. 6 fillets total (2 seam + 2 thigh1 + 2 thigh2) and 6
+// body circles (head, butt, hip1, feet1, hip2, feet2) -- same COUNT as
+// Semni's 6 fillets, but one more body circle (Stilo has two hips/feet
+// pairs where Semni has one hip/knee/foot chain), and different field
+// names/joint topology throughout.
+
+// Stilo's 6 fillet circles, in a fixed seam1/seam2/thigh1Arc1/thigh1Arc2/
+// thigh2Arc1/thigh2Arc2 order -- indices into computeStiloCircleSegments'
+// output and into app->hoveredCircleSegment.
+#define NUM_STILO_CIRCLE_SEGMENTS 6
+
+// Computes Stilo's 6 fillet circles' world-space center + radius for its
+// CURRENT pose. Same sharing rationale as computeSemniCircleSegments.
+void computeStiloCircleSegments(Stilo b, CircleSegment out[NUM_STILO_CIRCLE_SEGMENTS]);
+
+// Computes Stilo's 6 fillet ARCS' actual TRIMMED curve (not the full circle
+// computeStiloCircleSegments above returns), same idea as
+// computeSemniArcPoints.
+void computeStiloArcPoints(Stilo b, PointF out[NUM_STILO_CIRCLE_SEGMENTS][ARC_SAMPLE_COUNT], int outCounts[NUM_STILO_CIRCLE_SEGMENTS]);
+
+// Overlays the full circle behind each of Stilo's 6 fillet arcs, same idea
+// as drawSemniCircleSegments.
+void drawStiloCircleSegments(Stilo b, int hoveredIndex, float opacity);
+
+// Stilo's 6 always-visible body circles, in a fixed order: head, butt,
+// hip1, feet1, hip2, feet2 -- indices into computeStiloBodyCircles' output
+// and into app->hoveredBodyCircle.
+#define NUM_STILO_BODY_CIRCLES 6
+
+// Computes Stilo's 6 body circles' world-space center + radius for its
+// CURRENT pose. Same sharing rationale as computeSemniBodyCircles.
+void computeStiloBodyCircles(Stilo b, CircleSegment out[NUM_STILO_BODY_CIRCLES]);
+
+// Bright/solid hover ring on whichever of Stilo's 6 body circles is
+// currently hovered, same idea as drawSemniBodyCircleHover.
+void drawStiloBodyCircleHover(Stilo b, int hoveredIndex, float opacity);

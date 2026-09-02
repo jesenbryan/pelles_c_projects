@@ -896,19 +896,30 @@ static float activeRobotDebugY(void)
 // mass is -- multiplies straight into both gravity paths below (the plain
 // G nudge's step size, and auto-gravity's acceleration + terminal-velocity
 // cap) so a heavier robot actually falls faster, not just exports a bigger
-// number. Only Rocky has a real total-mass field right now (actualWeight,
-// input.c's hActualWeightEdit -- see save.c's saveRockyAsRobArm for the
-// other place this same field is read); Semni/Stilo have no weight concept
-// of their own yet, so they fall back to 1.0f (Rocky's own actualWeight
-// default), meaning THIS change is a no-op for them and for a fresh Rocky
-// still sitting at its default weight. Clamped away from 0/negative so a
-// blank or garbage Weight box (wcstod returns 0.0f for that) can't freeze
-// or reverse the fall instead of just falling slowly.
+// number. All three kinds now have their own real total-mass field
+// (actualWeight -- Rocky's own SemniExport/StiloExport-flavored siblings,
+// see save.c's saveSemniAsRobLeg/saveStiloAsRobLeg for the other place
+// each one is read), each defaulted to 1.0f (app_init.c), so a fresh
+// robot of any kind still sitting at its default weight is a no-op here,
+// same as before this was extended past Rocky. Clamped away from 0/
+// negative so a blank or garbage Weight box (wcstod returns 0.0f for
+// that) can't freeze or reverse the fall instead of just falling slowly.
 static float activeRobotWeightFactor(void)
 {
     float w = 1.0f;
-    if (app.robotScene.activeKind == ROBOT_KIND_ROCKY)
-        w = app.robotScene.rocky.actualWeight;
+    switch (app.robotScene.activeKind)
+    {
+        case ROBOT_KIND_ROCKY:
+            w = app.robotScene.rocky.actualWeight;
+            break;
+        case ROBOT_KIND_STILO:
+            w = app.robotScene.stilo.actualWeight;
+            break;
+        case ROBOT_KIND_SEMNI:
+        default:
+            w = app.robotScene.robot.actualWeight;
+            break;
+    }
 
     if (w < 0.05f)
         w = 0.05f;
@@ -3839,17 +3850,17 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	                // Poses\rocky_standing.txt / Poses\rocky_home.txt).
 
 	                // Rob.txt/Arm.txt export (see save.c's
-	                // saveRockyAsRobArm) -- reads the Body/Leg Weight
-	                // edit boxes (mass-center ratio only) AND the separate
-	                // Weight edit box (the real mass actually written as
-	                // Rob.txt's own weight value -- see Rocky's own
-	                // actualWeight field) right before saving so whatever's
-	                // currently typed into each is what gets written.
+	                // saveRockyAsRobArm) -- bodyWeight/legWeight (the
+	                // mass-center ratio) are already live in the struct
+	                // (the ratio slider and on-canvas drag both write
+	                // straight into it, no edit box to re-read anymore --
+	                // see ID_WEIGHT_RATIO_SLIDER's own comment), so only
+	                // the separate Weight edit box (the real mass actually
+	                // written as Rob.txt's own weight value) needs a
+	                // GetWindowText here, same as Stilo/Semni's own cases
+	                // below already just trust the live struct for the
+	                // ratio.
 	                wchar_t weightBuf[64];
-	                GetWindowText(app.ui.hBodyWeightEdit, weightBuf, 64);
-	                app.robotScene.rocky.bodyWeight = (float)wcstod(weightBuf, NULL);
-	                GetWindowText(app.ui.hLegWeightEdit, weightBuf, 64);
-	                app.robotScene.rocky.legWeight = (float)wcstod(weightBuf, NULL);
 	                GetWindowText(app.ui.hActualWeightEdit, weightBuf, 64);
 	                app.robotScene.rocky.actualWeight = (float)wcstod(weightBuf, NULL);
 

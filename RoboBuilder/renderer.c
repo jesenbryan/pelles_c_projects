@@ -11,6 +11,16 @@
 #include <stdio.h>
 #include <string.h>     // for strlen -- drawRobotSizeBox's mm label
 
+// Forward declaration -- drawRockyMassCenterMarker is defined much further
+// down (right where Rocky's own drawRocky needs it), but drawSemni/
+// drawStilo above that point now also call it (it's a generic colored-dot
+// drawer, nothing Rocky-specific about it -- see its own comment at the
+// definition) for their own mass-center dots. Without this, a compiler
+// that reads top-to-bottom sees the call before ever seeing the (static)
+// definition, assumes an implicit int-returning extern, and then errors
+// on the real definition further down as a conflicting redeclaration.
+static void drawRockyMassCenterMarker(PointF p, int active, float radius, float opacity);
+
 // opacity multiplies every color's alpha (1.0 = fully opaque, down toward
 // 0.0 = nearly invisible) -- this is how the whole Semni scene gets
 // "dimmed" when it isn't the currently active editor mode (see
@@ -1059,6 +1069,13 @@ void drawSemni(Semni b, RenderState* rs, int includeHandles, float opacity)
         drawSemniHandles(b, rs, opacity);
         drawThighHandles(b, rs, opacity);
         drawShinHandles(b, rs, opacity);
+
+        // Body/Leg Weight mass-center dot -- same draggable-alternative-
+        // to-typing-into-the-edit-boxes idea as Rocky's own version (see
+        // drawRocky's own comment on drawRockyMassCenterMarker), reusing
+        // that exact same marker-drawing helper (it's generic -- just a
+        // colored dot at a point -- nothing Rocky-specific about it).
+        drawRockyMassCenterMarker(computeSemniMassCenterWorld(b), rs->draggingSemniMassCenter || rs->hoverSemniMassCenter, MASS_CENTER_HANDLE_RADIUS, opacity);
     }
 }
 
@@ -1531,9 +1548,177 @@ PointF computeRockyMassCenterWorld(Rocky b)
     massCenter.y = (bw * rectCentroidWorld.y + lw * legCentroidWorld.y) / totalWeight;
     return massCenter;
 }
+// ---- Semni's mass-center marker ----
+//
+// Same idea as computeRockyMassCenterEndpointsWorld above, generalized to
+// Semni's arc-based head/butt torso ("body") and its two-stage
+// (hip->knee->foot) leg. Reuses save.h's ChainTangents/
+// computeSeamStyleTangents/computeLimbStyleTangents/
+// sampleLimbStageOutline/robArmPolygonCentroid -- the exact same
+// tangent-fillet construction drawSemniBody/drawThigh/drawShin already use
+// to actually draw this robot, and the exact same "leg centroid = average
+// of the thigh stage's and shin stage's own centroids" simplification
+// save.c's own saveSemniAsRobLeg uses for Leg.txt -- not a separate,
+// potentially-diverging formula.
+//
+// Computes each stage's centroid in its own LOCAL (pre-joint-rotation)
+// frame first, then rotates just that one point into world space via
+// jointToWorld/nestedJointToWorld -- mathematically identical to
+// transforming every polygon vertex first and then taking the centroid
+// (the way Rocky's own version above does it), since all of these are
+// rigid transforms and polygon-centroid computation commutes with any of
+// them; doing it this way here just avoids needing a second, WORLD-space
+// copy of the tangent-point construction. Deliberately DOES apply the
+// robot's current angle/hipAngle/kneeAngle (unlike save.c's own flat,
+// pre-rotation export) so the dot sits visibly on the actual on-screen
+// leg, wherever it's currently bent -- same deliberate divergence Rocky's
+// own version documents.
+void computeSemniMassCenterEndpointsWorld(Semni b, PointF* outBodyCentroidWorld, PointF* outLegCentroidWorld)
+{
+    PointF center = getCenter(b);
+    float angle = b.angle;
 
-// Small on-canvas indicator for the Body Wt / Leg Wt panel (input.c's
-// hBodyWeightEdit/hLegWeightEdit) -- a plain filled dot at wherever
+    // ---- body: head/butt capsule + 2 seam arcs ----
+    PointF headC = { b.headX, b.y };
+    PointF buttC = { b.buttX, b.y };
+    ChainTangents seam = computeSeamStyleTangents(headC, b.headRadius, buttC, b.buttRadius,
+                                                    b.seamArc1Angle, b.seamArc2Angle,
+                                                    MIN_ARC_R, MAX_ARC_R);
+    PointF bodyPoly[4 * (ROCKY_MASS_CENTER_ARC_SAMPLES + 1)];
+    int bodyPolyN = sampleLimbStageOutline(headC, b.headRadius, buttC, b.buttRadius, seam, ROCKY_MASS_CENTER_ARC_SAMPLES, bodyPoly);
+    PointF bodyCentroidLocal = robArmPolygonCentroid(bodyPoly, bodyPolyN);
+    *outBodyCentroidWorld = rotatePoint(bodyCentroidLocal, center, angle);
+
+    // ---- leg: hip -> knee -> foot, two stages ----
+    PointF hipC = b.innerCircle;
+    PointF kneeC = b.kneeCircle;
+    PointF footC = b.footCircle;
+
+    ChainTangents thigh = computeLimbStyleTangents(hipC, b.innerRadius, kneeC, b.kneeRadius,
+                                                      b.thighArc1Angle, b.thighArc2Angle,
+                                                      MIN_THIGH_ARC_R, MAX_SEMNI_THIGH_ARC_R, MAX_THIGH_ARC2_CONCAVE_R);
+    ChainTangents shin = computeLimbStyleTangents(kneeC, b.kneeRadius, footC, b.footRadius,
+                                                     b.shinArc1Angle, b.shinArc2Angle,
+                                                     MIN_SHIN_ARC_R, MAX_SHIN_ARC_R, MAX_SHIN_ARC2_CONCAVE_R);
+
+    PointF thighPoly[4 * (ROCKY_MASS_CENTER_ARC_SAMPLES + 1)];
+    int thighN = sampleLimbStageOutline(hipC, b.innerRadius, kneeC, b.kneeRadius, thigh, ROCKY_MASS_CENTER_ARC_SAMPLES, thighPoly);
+    PointF thighCentroidLocal = robArmPolygonCentroid(thighPoly, thighN);
+
+    PointF shinPoly[4 * (ROCKY_MASS_CENTER_ARC_SAMPLES + 1)];
+    int shinN = sampleLimbStageOutline(kneeC, b.kneeRadius, footC, b.footRadius, shin, ROCKY_MASS_CENTER_ARC_SAMPLES, shinPoly);
+    PointF shinCentroidLocal = robArmPolygonCentroid(shinPoly, shinN);
+
+    // thigh stage rotates by hipAngle around hipC (innerCircle); shin
+    // stage additionally rotates by kneeAngle around kneeC, nested inside
+    // that -- same joint chain drawThigh/drawShin use.
+    PointF thighCentroidWorld = jointToWorld(thighCentroidLocal, hipC, b.hipAngle, center, angle);
+    PointF shinCentroidWorld = nestedJointToWorld(shinCentroidLocal, kneeC, b.kneeAngle, hipC, b.hipAngle, center, angle);
+
+    outLegCentroidWorld->x = (thighCentroidWorld.x + shinCentroidWorld.x) * 0.5f;
+    outLegCentroidWorld->y = (thighCentroidWorld.y + shinCentroidWorld.y) * 0.5f;
+}
+
+// Blends computeSemniMassCenterEndpointsWorld's two endpoints by Semni's
+// CURRENT bodyWeight/legWeight -- same 50/50 zero-guard as Rocky's own
+// computeRockyMassCenterWorld.
+PointF computeSemniMassCenterWorld(Semni b)
+{
+    PointF bodyCentroidWorld, legCentroidWorld;
+    computeSemniMassCenterEndpointsWorld(b, &bodyCentroidWorld, &legCentroidWorld);
+
+    float bw = b.bodyWeight;
+    float lw = b.legWeight;
+    float totalWeight = bw + lw;
+    if (totalWeight <= 1e-6f)
+    {
+        bw = 0.5f;
+        lw = 0.5f;
+        totalWeight = 1.0f;
+    }
+
+    PointF massCenter;
+    massCenter.x = (bw * bodyCentroidWorld.x + lw * legCentroidWorld.x) / totalWeight;
+    massCenter.y = (bw * bodyCentroidWorld.y + lw * legCentroidWorld.y) / totalWeight;
+    return massCenter;
+}
+
+// ---- Stilo's mass-center marker ----
+//
+// Same idea as computeSemniMassCenterEndpointsWorld above -- Stilo shares
+// Semni's own head/butt torso shape (rotated by just the whole-body angle,
+// no separate hip stage for the TORSO itself, see drawStiloBody), but has
+// TWO independent single-stage legs (hip1->feet1, hip2->feet2) instead of
+// Semni's one two-stage leg. Per explicit user decision, legWeight is ONE
+// combined value covering both legs together, so outLegCentroidWorld here
+// is the plain, equally-weighted average of leg1's and leg2's own
+// centroids -- not a 3-way body/leg1/leg2 blend.
+void computeStiloMassCenterEndpointsWorld(Stilo b, PointF* outBodyCentroidWorld, PointF* outLegCentroidWorld)
+{
+    PointF center = getStiloCenter(b);
+    float angle = b.angle;
+
+    // ---- body: same head/butt capsule shape as Semni's own ----
+    PointF headC = { b.headX, b.y };
+    PointF buttC = { b.buttX, b.y };
+    ChainTangents seam = computeSeamStyleTangents(headC, b.headRadius, buttC, b.buttRadius,
+                                                    b.seamArc1Angle, b.seamArc2Angle,
+                                                    MIN_ARC_R, MAX_ARC_R);
+    PointF bodyPoly[4 * (ROCKY_MASS_CENTER_ARC_SAMPLES + 1)];
+    int bodyPolyN = sampleLimbStageOutline(headC, b.headRadius, buttC, b.buttRadius, seam, ROCKY_MASS_CENTER_ARC_SAMPLES, bodyPoly);
+    PointF bodyCentroidLocal = robArmPolygonCentroid(bodyPoly, bodyPolyN);
+    *outBodyCentroidWorld = rotatePoint(bodyCentroidLocal, center, angle);
+
+    // ---- leg 1: hip1 -> feet1, single stage ----
+    ChainTangents thigh1 = computeLimbStyleTangents(b.hip1Circle, b.hip1Radius, b.feet1Circle, b.feet1Radius,
+                                                      b.thigh1Arc1Angle, b.thigh1Arc2Angle,
+                                                      MIN_THIGH_ARC_R, MAX_SEMNI_THIGH_ARC_R, MAX_THIGH_ARC2_CONCAVE_R);
+    PointF leg1Poly[4 * (ROCKY_MASS_CENTER_ARC_SAMPLES + 1)];
+    int leg1N = sampleLimbStageOutline(b.hip1Circle, b.hip1Radius, b.feet1Circle, b.feet1Radius, thigh1, ROCKY_MASS_CENTER_ARC_SAMPLES, leg1Poly);
+    PointF leg1CentroidLocal = robArmPolygonCentroid(leg1Poly, leg1N);
+    PointF leg1CentroidWorld = jointToWorld(leg1CentroidLocal, b.hip1Circle, b.hip1Angle, center, angle);
+
+    // ---- leg 2: hip2 -> feet2, single stage, fully independent ----
+    ChainTangents thigh2 = computeLimbStyleTangents(b.hip2Circle, b.hip2Radius, b.feet2Circle, b.feet2Radius,
+                                                      b.thigh2Arc1Angle, b.thigh2Arc2Angle,
+                                                      MIN_THIGH_ARC_R, MAX_SEMNI_THIGH_ARC_R, MAX_THIGH_ARC2_CONCAVE_R);
+    PointF leg2Poly[4 * (ROCKY_MASS_CENTER_ARC_SAMPLES + 1)];
+    int leg2N = sampleLimbStageOutline(b.hip2Circle, b.hip2Radius, b.feet2Circle, b.feet2Radius, thigh2, ROCKY_MASS_CENTER_ARC_SAMPLES, leg2Poly);
+    PointF leg2CentroidLocal = robArmPolygonCentroid(leg2Poly, leg2N);
+    PointF leg2CentroidWorld = jointToWorld(leg2CentroidLocal, b.hip2Circle, b.hip2Angle, center, angle);
+
+    // Combined leg centroid: plain, equally-weighted average of both legs
+    // -- see this function's own comment above.
+    outLegCentroidWorld->x = (leg1CentroidWorld.x + leg2CentroidWorld.x) * 0.5f;
+    outLegCentroidWorld->y = (leg1CentroidWorld.y + leg2CentroidWorld.y) * 0.5f;
+}
+
+// Blends computeStiloMassCenterEndpointsWorld's two endpoints by Stilo's
+// CURRENT bodyWeight/legWeight -- same 50/50 zero-guard as Rocky's/
+// Semni's own versions.
+PointF computeStiloMassCenterWorld(Stilo b)
+{
+    PointF bodyCentroidWorld, legCentroidWorld;
+    computeStiloMassCenterEndpointsWorld(b, &bodyCentroidWorld, &legCentroidWorld);
+
+    float bw = b.bodyWeight;
+    float lw = b.legWeight;
+    float totalWeight = bw + lw;
+    if (totalWeight <= 1e-6f)
+    {
+        bw = 0.5f;
+        lw = 0.5f;
+        totalWeight = 1.0f;
+    }
+
+    PointF massCenter;
+    massCenter.x = (bw * bodyCentroidWorld.x + lw * legCentroidWorld.x) / totalWeight;
+    massCenter.y = (bw * bodyCentroidWorld.y + lw * legCentroidWorld.y) / totalWeight;
+    return massCenter;
+}
+
+// Small on-canvas indicator for the Body<->Leg ratio slider (input.c's
+// hWeightRatioSlider) -- a plain filled dot at wherever
 // computeRockyMassCenterWorld says the combined mass center currently
 // sits, so the effect of those two numbers is visible directly on the
 // robot instead of only showing up later in an exported Rob.txt. Also
@@ -1569,6 +1754,33 @@ static void drawRockyMassCenterMarker(PointF p, int active, float radius, float 
     glEnd();
 }
 
+// Dashed green guide line between the two fixed endpoints
+// computeRockyMassCenterEndpointsWorld blends between (body centroid <->
+// leg centroid) -- shows the user the full range the green mass-center
+// handle (drawRockyMassCenterMarker) can be dragged along. Same dashed-
+// line convention drawSemniCircleSegments' unhovered segments use
+// (glLineStipple(1, 0x00FF)), colored to match the handle itself so it
+// reads as "this is that dot's track". View-Segments-gated like the other
+// overlays in drawRocky below, since it's reference info, not a control.
+static void drawRockyMassCenterTrack(Rocky b, float opacity)
+{
+    PointF bodyCentroidWorld, legCentroidWorld;
+    computeRockyMassCenterEndpointsWorld(b, &bodyCentroidWorld, &legCentroidWorld);
+
+    glEnable(GL_LINE_STIPPLE);
+    glLineStipple(1, 0x00FF);
+    glLineWidth(1.5f);
+    glColor4f(0.15f, 0.85f, 0.25f, 0.8f * opacity);
+
+    glBegin(GL_LINES);
+    glVertex2f(bodyCentroidWorld.x, bodyCentroidWorld.y);
+    glVertex2f(legCentroidWorld.x, legCentroidWorld.y);
+    glEnd();
+
+    glLineWidth(1.0f);
+    glDisable(GL_LINE_STIPPLE);
+}
+
 void drawRocky(Rocky b, RenderState* rs, int includeHandles, float opacity)
 {
     drawRockyBodyRect(b, rs, opacity);
@@ -1585,6 +1797,7 @@ void drawRocky(Rocky b, RenderState* rs, int includeHandles, float opacity)
         drawRockyCircleSegments(b, rs->hoveredCircleSegment, opacity);
         drawRockyBodyCircleHover(b, rs->hoveredBodyCircle, opacity);
         drawRockyReferencePoint(b, opacity);
+        drawRockyMassCenterTrack(b, opacity);
     }
 
     // Body resize/move handle -- same visible-dot treatment drawSemniHandles
@@ -1600,7 +1813,7 @@ void drawRocky(Rocky b, RenderState* rs, int includeHandles, float opacity)
         drawHandle(center, rs->draggingRockyBody || rs->hoverRockyBody, HIP_HANDLE_RADIUS, opacity);
 
         // Body/Leg Weight mass-center dot -- draggable alternative to
-        // typing into hBodyWeightEdit/hLegWeightEdit (see input.c's
+        // dragging hWeightRatioSlider (see input.c's
         // hoverRockyMassCenter/draggingRockyMassCenter). Gated the same as
         // every OTHER handle here now that it's a real drag target, not
         // just an informational overlay -- so it's hidden in an exported
@@ -2110,6 +2323,12 @@ void drawStilo(Stilo b, RenderState* rs, int includeHandles, float opacity)
         drawStiloHandles(b, rs, opacity);
         drawStiloThigh1Handles(b, rs, opacity);
         drawStiloThigh2Handles(b, rs, opacity);
+
+        // Body/Leg Weight mass-center dot -- same idea as Semni's own
+        // version just above (drawSemni), reusing the same generic marker
+        // helper. Leg Wt here covers both legs combined (see app.h's own
+        // comment on Stilo's legWeight and computeStiloMassCenterWorld).
+        drawRockyMassCenterMarker(computeStiloMassCenterWorld(b), rs->draggingStiloMassCenter || rs->hoverStiloMassCenter, MASS_CENTER_HANDLE_RADIUS, opacity);
     }
 }
 
@@ -2145,6 +2364,10 @@ static void renderRobot(AppState* app, int includeHandles, float opacity)
     rs.draggingRockyFoot = app->draggingRockyFoot;
     rs.hoverRockyMassCenter = app->hoverRockyMassCenter;
     rs.draggingRockyMassCenter = app->draggingRockyMassCenter;
+    rs.hoverSemniMassCenter = app->hoverSemniMassCenter;
+    rs.draggingSemniMassCenter = app->draggingSemniMassCenter;
+    rs.hoverStiloMassCenter = app->hoverStiloMassCenter;
+    rs.draggingStiloMassCenter = app->draggingStiloMassCenter;
     rs.draggingRockyShin1 = app->draggingRockyShin1;
     rs.draggingRockyShin2 = app->draggingRockyShin2;
     rs.hoverRockyShin1 = app->hoverRockyShin1;
