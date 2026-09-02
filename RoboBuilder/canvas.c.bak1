@@ -2089,15 +2089,12 @@ void canvasRenderFrame(float dimAmount)
                     // raw rect-edge order: top, right, bottom, left (see
                     // renderer.c's computeRockyRectSegments) -- raw fillet
                     // order: shin1, shin2 -- raw body order: knee, foot.
-                    // The 4 rectangle edges still come first (1-4), then
-                    // knee(5), foot(6), shin1(7), shin2(8) -- but the
-                    // mapping among the 4 edges was cyclically shifted by
-                    // one position per explicit user request (whatever
-                    // showed "4" should show "1", "1"->"2", "2"->"3",
-                    // "3"->"4"): raw index 0 (top, was 1) is now 2, raw 1
-                    // (right, was 2) is now 3, raw 2 (bottom, was 3) is now
-                    // 4, raw 3 (left, was 4) is now 1.
-                    static const int rockyRectDisplayNum[NUM_ROCKY_RECT_SEGMENTS] = { 2, 3, 4, 1 };
+                    // Desired (requested directly): the 4 rectangle edges
+                    // first (1-4, in their own raw order -- the user didn't
+                    // ask for a specific edge-to-number mapping among the 4,
+                    // just that all 4 come first), then knee(5), foot(6),
+                    // shin1(7), shin2(8).
+                    static const int rockyRectDisplayNum[NUM_ROCKY_RECT_SEGMENTS] = { 1, 2, 3, 4 };
                     static const int rockyFilletDisplayNum[NUM_ROCKY_CIRCLE_SEGMENTS] = { 7, 8 };
                     static const int rockyBodyDisplayNum[NUM_ROCKY_BODY_CIRCLES] = { 5, 6 };
                     numCircleSegments = NUM_ROCKY_CIRCLE_SEGMENTS;
@@ -3756,17 +3753,12 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	        // Env.txt's segments come from canvas.segmentResultCount,
 	        // which is only produced by tracing (View Segments/Comparison
 	        // Mode trigger it on demand, see ui.c) -- stale the moment
-	        // another stroke is drawn afterward. Re-tracing right here
-	        // closes both gaps for free -- same reasoning (and same
-	        // RunTracePipeline call) the ID_MODE_SIMULATION handler above
-	        // already uses so ground-collision data is always current on
-	        // entry. Gated on CanvasHasTraceableContent() (pipeline.c) now,
-	        // not unconditional any more -- a robot-only Save (nothing ever
-	        // drawn on the Environment canvas) has nothing to trace, so
-	        // skip the call entirely instead of running it just to print
-	        // "Canvas is empty" to the console every single time.
-	        if (CanvasHasTraceableContent())
-	            RunTracePipeline();
+	        // another stroke is drawn afterward. Re-tracing right here, unconditionally,
+	        // every time Save runs, closes both gaps for free -- same
+	        // reasoning (and same RunTracePipeline call) the
+	        // ID_MODE_SIMULATION handler above already uses so
+	        // ground-collision data is always current on entry.
+	        RunTracePipeline();
 
 	        CreateDirectoryA("EnvExport", NULL);
 
@@ -3795,18 +3787,13 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	        }
 	        else
 	        {
-	            // Save original drawing. Guarded on the exact same
-	            // pointCount/strokeCount check canvasToImage() itself uses
-	            // (not CanvasHasTraceableContent() above -- a pending,
-	            // not-yet-traced uploaded BMP still has no actual canvas
-	            // stroke, so canvasToImage() would return NULL and print
-	            // "Canvas is empty" anyway in that case). Save still always
-	            // runs this branch even when the user only came here to
-	            // save a robot and never drew an environment at all (a
-	            // perfectly normal case, not an error), it just no longer
-	            // calls into canvasToImage() at all in that case, so
-	            // there's no "Canvas is empty" console print and no dialog.
-	            Image* img = (canvas.pointCount >= 1 && canvas.strokeCount >= 1) ? canvasToImage() : NULL;
+	            // Save original drawing. NOTE: no "Canvas is empty" warning
+	            // here any more -- Save now always runs this branch even
+	            // when the user only came here to save a robot and never
+	            // drew an environment at all, which is a perfectly normal
+	            // case, not an error, so it just quietly skips Env.bmp
+	            // instead of interrupting with a dialog every single Save.
+	            Image* img = canvasToImage();
 	            if (img)
 	            {
 	                saveBMP_UI("EnvExport\\Env.bmp", img, img->bin, BMP_RGB);
@@ -3831,12 +3818,7 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	                CreateDirectoryA("RockyExport", NULL);
 
 	                saveCanvasAsBMP("RockyExport\\rocky.bmp", app.hwndMain, &app);
-	                // rocky.txt (saveRockyAsEquations) is no longer written
-	                // here on every File > Save -- rocky.bmp alone is
-	                // enough for this export, per explicit user request.
-	                // saveRockyAsEquations itself is untouched and still
-	                // used elsewhere (input.c's Standing/Home pose buttons,
-	                // Poses\rocky_standing.txt / Poses\rocky_home.txt).
+	                saveRockyAsEquations("RockyExport\\rocky.txt", &app);
 
 	                // Rob.txt/Arm.txt export (see save.c's
 	                // saveRockyAsRobArm) -- reads the Body/Leg Weight

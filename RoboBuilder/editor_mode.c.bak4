@@ -27,24 +27,19 @@ void switchEditorMode(EditorMode newMode, EditorModeState* modeState)
 
     applyEditorModeVisibility(modeState);
 
-    printf("[EditorMode] Switched to: %ls\n", getEditorModeName(newMode));
+    printf("[EditorMode] Switched to: %ls (was: %ls)\n",
+           getEditorModeName(newMode),
+           getEditorModeName(modeState->previousMode));
 }
 
 const wchar_t* getEditorModeName(EditorMode mode)
 {
     switch (mode)
     {
-        // EDITOR_MODE_SEMNI is really "the Robot Editor screen is active"
-        // (covers all 3 robot kinds, not just Semni -- see this enum's own
-        // comment in editor_mode.h), so the log now calls it what the user
-        // actually sees: "Design Robot". EDITOR_MODE_ARCSPLINE is the
-        // separate canvas where the level/environment gets drawn, so it's
-        // now called "Environment" instead of the internal "ArcSpline"
-        // name. No more "(was: ...)" half -- just which mode it switched to.
         case EDITOR_MODE_SEMNI:
-            return L"Design Robot";
+            return L"Semni Robot";
         case EDITOR_MODE_ARCSPLINE:
-            return L"Environment";
+            return L"ArcSpline";
         default:
             return L"Unknown";
     }

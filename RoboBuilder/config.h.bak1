@@ -106,12 +106,6 @@
 // that means the two robots no longer match exactly.
 #define ROCKY_SHIN_HANDLE_RADIUS 0.016f
 
-// Tiny, non-interactive marker for Rob.txt's export reference point (the
-// rectangle's own local bottom-left corner, pre-rotation) -- View
-// Segments-only, purely informational (no hit-test, no drag), so it's
-// deliberately much smaller than every real handle above.
-#define ROCKY_REF_POINT_RADIUS 0.008f
-
 // thigh arcs (between innerCircle/hip and kneeCircle/knee) use the same
 // tangent-restricted-fillet construction as the head/butt seam arcs (see
 // MIN_ARC_R/MAX_ARC_R above), but the hip/knee circles are much smaller

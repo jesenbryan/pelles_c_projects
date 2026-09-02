@@ -417,32 +417,6 @@ static BOOL rockyMassCenterWins(PointF mouse, PointF massCenter, PointF rockyCen
     return rockyDistSq(mouse, massCenter) <= rockyDistSq(mouse, otherPoint); // tie -> mass center
 }
 
-// Whether a rectangle-edge hit (Width/Height resize) should actually win
-// against Knee/Foot/Shin1/Shin2 when the mouse is ALSO within range of one
-// of those. hitTestRockyEdge deliberately extends a bit past each edge's
-// own span (its own "slack" margin) so a drag started slightly past the
-// edge's true endpoint still grabs it -- but that same slack means the
-// edge's hit region reaches into a CORNER, where the knee (or foot/shin)
-// handle can legitimately be sitting too (reported: a knee parked right in
-// a corner became impossible to grab at all, since the edge unconditionally
-// won every time). Same "whichever the mouse is actually closer to wins"
-// principle as rockyMassCenterWins above, just for this other pairing.
-static BOOL rockyEdgeWins(PointF mouse, PointF edgeMid, PointF kneeWorld, PointF footWorld, PointF shin1World, PointF shin2World)
-{
-    float edgeDistSq = rockyDistSq(mouse, edgeMid);
-
-    if (isNear(mouse, kneeWorld, KNEE_HANDLE_RADIUS) && rockyDistSq(mouse, kneeWorld) < edgeDistSq)
-        return FALSE;
-    if (isNear(mouse, footWorld, FOOT_HANDLE_RADIUS) && rockyDistSq(mouse, footWorld) < edgeDistSq)
-        return FALSE;
-    if (isNear(mouse, shin1World, ROCKY_SHIN_HANDLE_RADIUS) && rockyDistSq(mouse, shin1World) < edgeDistSq)
-        return FALSE;
-    if (isNear(mouse, shin2World, ROCKY_SHIN_HANDLE_RADIUS) && rockyDistSq(mouse, shin2World) < edgeDistSq)
-        return FALSE;
-
-    return TRUE;
-}
-
 // Hit-tests Rocky's 4 rectangle edges (left/right/top/bottom) against a
 // point already given in the rectangle's OWN local frame (i.e. already
 // run through inverseRotate around getRockyCenter -- see WM_LBUTTONDOWN/
@@ -758,6 +732,28 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     // guard.
                     float total = app->robotScene.rocky.bodyWeight + app->robotScene.rocky.legWeight;
                     app->rockyMassCenterDragTotal = (total > 1e-6f) ? total : 1.0f;
+
+                    // Debug-only: dumps the exact live state a
+                    // "starts on the body handle, then snaps to 1/0 on the
+                    // first tiny move" report needs to diagnose -- either
+                    // bodyWeight/legWeight genuinely aren't 0.5/0.5 at grab
+                    // time (a real defaults bug), or the segment between
+                    // rectCentroidWorld and legCentroidWorld is unusually
+                    // short right now (e.g. the leg's currently folded up
+                    // close to the body), which makes ordinary mouse
+                    // movement project to a huge swing in t even though
+                    // nothing is actually broken -- this print tells the
+                    // two apart at a glance.
+                    {
+                        PointF dbgRectC, dbgLegC;
+                        computeRockyMassCenterEndpointsWorld(app->robotScene.rocky, &dbgRectC, &dbgLegC);
+                        float dbgSegLen = sqrtf((dbgLegC.x - dbgRectC.x) * (dbgLegC.x - dbgRectC.x) +
+                                                 (dbgLegC.y - dbgRectC.y) * (dbgLegC.y - dbgRectC.y));
+                        printf("[MASSCENTER] grab: bodyWeight=%.4f legWeight=%.4f dragTotal=%.4f\n",
+                               app->robotScene.rocky.bodyWeight, app->robotScene.rocky.legWeight, app->rockyMassCenterDragTotal);
+                        printf("[MASSCENTER]   rectCentroid=(%.4f,%.4f) legCentroid=(%.4f,%.4f) segLen=%.4f\n",
+                               dbgRectC.x, dbgRectC.y, dbgLegC.x, dbgLegC.y, dbgSegLen);
+                    }
                 }
                 else if (isNear(app->mouseGL, rockyCenter, HIP_HANDLE_RADIUS))
                 {
@@ -777,15 +773,8 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 // now take priority right after the move-handle, ahead of
                 // knee/foot/shin -- see rockyEdgeHitDown's own comment
                 // above for why this no longer has to be a last-resort
-                // fallback check. But only actually wins when
-                // rockyEdgeWins agrees it's the CLOSER of the two (see
-                // that function's own comment) -- hitTestRockyEdge's own
-                // corner slack otherwise let an edge unconditionally beat
-                // a knee/foot/shin handle parked right in that corner,
-                // making it impossible to grab.
-                else if (rockyEdgeHitDown != ROCKY_EDGE_NONE &&
-                         rockyEdgeWins(app->mouseGL, rockyEdgeMidWorld(app->robotScene.rocky, rockyEdgeHitDown, rockyCenter),
-                                       kneeWorld, footWorld, rockyShin1World, rockyShin2World))
+                // fallback check.
+                else if (rockyEdgeHitDown != ROCKY_EDGE_NONE)
                 {
                     app->draggingRockyEdge = rockyEdgeHitDown;
                 }
@@ -1337,18 +1326,9 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     rockyMassCenterWins(app->mouseGL, rockyMassCenterWorld, rockyCenter, rockyEdgeHitNow,
                                          app->robotScene.rocky, kneeWorld, footWorld, rockyShin1World, rockyShin2World);
 
-                // Same rockyEdgeWins tie-break WM_LBUTTONDOWN now uses --
-                // keeps the hover highlight matching whatever a click
-                // would actually grab, including a knee/foot/shin handle
-                // sitting in a corner an edge's own hit-test slack also
-                // reaches into.
-                BOOL rockyEdgeWinsNow = (rockyEdgeHitNow != ROCKY_EDGE_NONE) &&
-                    rockyEdgeWins(app->mouseGL, rockyEdgeMidWorld(app->robotScene.rocky, rockyEdgeHitNow, rockyCenter),
-                                  kneeWorld, footWorld, rockyShin1World, rockyShin2World);
-
                 app->hoverRockyMassCenter = rockyMassWinsNow;
                 app->hoverRockyBody = !app->hoverRockyMassCenter && isNear(app->mouseGL, rockyCenter, HIP_HANDLE_RADIUS);
-                app->hoverRockyEdge = (app->hoverRockyMassCenter || app->hoverRockyBody || !rockyEdgeWinsNow) ? ROCKY_EDGE_NONE : rockyEdgeHitNow;
+                app->hoverRockyEdge = (app->hoverRockyMassCenter || app->hoverRockyBody) ? ROCKY_EDGE_NONE : rockyEdgeHitNow;
                 app->hoverRockyKnee = !app->hoverRockyMassCenter && !app->hoverRockyBody && app->hoverRockyEdge == ROCKY_EDGE_NONE && isNear(app->mouseGL, kneeWorld, KNEE_HANDLE_RADIUS);
                 app->hoverRockyFoot = !app->hoverRockyMassCenter && !app->hoverRockyBody && app->hoverRockyEdge == ROCKY_EDGE_NONE && !app->hoverRockyKnee && isNear(app->mouseGL, footWorld, FOOT_HANDLE_RADIUS);
 
@@ -1604,6 +1584,15 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                         SetWindowText(app->ui.hBodyWeightEdit, weightBuf);
                         formatNonNegativeFloat2dp(app->robotScene.rocky.legWeight, weightBuf);
                         SetWindowText(app->ui.hLegWeightEdit, weightBuf);
+
+                        // Debug-only: pairs with the [MASSCENTER] grab print
+                        // above -- shows exactly how a given mouse position
+                        // maps to t and the resulting split, live, every
+                        // move, so a "snapped straight to 1/0" report can be
+                        // read right off the console instead of guessed at.
+                        printf("[MASSCENTER] drag: mouse=(%.4f,%.4f) t=%.4f -> bodyWeight=%.4f legWeight=%.4f\n",
+                               app->mouseGL.x, app->mouseGL.y, t,
+                               app->robotScene.rocky.bodyWeight, app->robotScene.rocky.legWeight);
                     }
                 }
                 else if (app->draggingRockyShin1)

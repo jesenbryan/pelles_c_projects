@@ -3831,12 +3831,7 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	                CreateDirectoryA("RockyExport", NULL);
 
 	                saveCanvasAsBMP("RockyExport\\rocky.bmp", app.hwndMain, &app);
-	                // rocky.txt (saveRockyAsEquations) is no longer written
-	                // here on every File > Save -- rocky.bmp alone is
-	                // enough for this export, per explicit user request.
-	                // saveRockyAsEquations itself is untouched and still
-	                // used elsewhere (input.c's Standing/Home pose buttons,
-	                // Poses\rocky_standing.txt / Poses\rocky_home.txt).
+	                saveRockyAsEquations("RockyExport\\rocky.txt", &app);
 
 	                // Rob.txt/Arm.txt export (see save.c's
 	                // saveRockyAsRobArm) -- reads the Body/Leg Weight

@@ -3795,18 +3795,14 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	        }
 	        else
 	        {
-	            // Save original drawing. Guarded on the exact same
-	            // pointCount/strokeCount check canvasToImage() itself uses
-	            // (not CanvasHasTraceableContent() above -- a pending,
-	            // not-yet-traced uploaded BMP still has no actual canvas
-	            // stroke, so canvasToImage() would return NULL and print
-	            // "Canvas is empty" anyway in that case). Save still always
+	            // Save original drawing. Guarded the same way the
+	            // RunTracePipeline() call above now is -- Save still always
 	            // runs this branch even when the user only came here to
 	            // save a robot and never drew an environment at all (a
 	            // perfectly normal case, not an error), it just no longer
 	            // calls into canvasToImage() at all in that case, so
 	            // there's no "Canvas is empty" console print and no dialog.
-	            Image* img = (canvas.pointCount >= 1 && canvas.strokeCount >= 1) ? canvasToImage() : NULL;
+	            Image* img = CanvasHasTraceableContent() ? canvasToImage() : NULL;
 	            if (img)
 	            {
 	                saveBMP_UI("EnvExport\\Env.bmp", img, img->bin, BMP_RGB);
@@ -3831,12 +3827,7 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	                CreateDirectoryA("RockyExport", NULL);
 
 	                saveCanvasAsBMP("RockyExport\\rocky.bmp", app.hwndMain, &app);
-	                // rocky.txt (saveRockyAsEquations) is no longer written
-	                // here on every File > Save -- rocky.bmp alone is
-	                // enough for this export, per explicit user request.
-	                // saveRockyAsEquations itself is untouched and still
-	                // used elsewhere (input.c's Standing/Home pose buttons,
-	                // Poses\rocky_standing.txt / Poses\rocky_home.txt).
+	                saveRockyAsEquations("RockyExport\\rocky.txt", &app);
 
 	                // Rob.txt/Arm.txt export (see save.c's
 	                // saveRockyAsRobArm) -- reads the Body/Leg Weight

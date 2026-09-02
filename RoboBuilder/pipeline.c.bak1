@@ -29,11 +29,6 @@ static void freePendingBmpImage(void)
     s_pendingBmpImage = NULL;
 }
 
-BOOL CanvasHasTraceableContent(void)
-{
-    return (canvas.pointCount >= 1 && canvas.strokeCount >= 1) || (s_pendingBmpImage != NULL);
-}
-
 // find_start_end_pixels/tracePath/buildSegments were all written assuming a
 // SINGLE curve fills the whole bin buffer - with more than one freehand
 // stroke (or an uploaded BMP with several curves in it, see 2curves.bmp),

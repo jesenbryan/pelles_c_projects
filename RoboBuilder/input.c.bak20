@@ -758,6 +758,28 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     // guard.
                     float total = app->robotScene.rocky.bodyWeight + app->robotScene.rocky.legWeight;
                     app->rockyMassCenterDragTotal = (total > 1e-6f) ? total : 1.0f;
+
+                    // Debug-only: dumps the exact live state a
+                    // "starts on the body handle, then snaps to 1/0 on the
+                    // first tiny move" report needs to diagnose -- either
+                    // bodyWeight/legWeight genuinely aren't 0.5/0.5 at grab
+                    // time (a real defaults bug), or the segment between
+                    // rectCentroidWorld and legCentroidWorld is unusually
+                    // short right now (e.g. the leg's currently folded up
+                    // close to the body), which makes ordinary mouse
+                    // movement project to a huge swing in t even though
+                    // nothing is actually broken -- this print tells the
+                    // two apart at a glance.
+                    {
+                        PointF dbgRectC, dbgLegC;
+                        computeRockyMassCenterEndpointsWorld(app->robotScene.rocky, &dbgRectC, &dbgLegC);
+                        float dbgSegLen = sqrtf((dbgLegC.x - dbgRectC.x) * (dbgLegC.x - dbgRectC.x) +
+                                                 (dbgLegC.y - dbgRectC.y) * (dbgLegC.y - dbgRectC.y));
+                        printf("[MASSCENTER] grab: bodyWeight=%.4f legWeight=%.4f dragTotal=%.4f\n",
+                               app->robotScene.rocky.bodyWeight, app->robotScene.rocky.legWeight, app->rockyMassCenterDragTotal);
+                        printf("[MASSCENTER]   rectCentroid=(%.4f,%.4f) legCentroid=(%.4f,%.4f) segLen=%.4f\n",
+                               dbgRectC.x, dbgRectC.y, dbgLegC.x, dbgLegC.y, dbgSegLen);
+                    }
                 }
                 else if (isNear(app->mouseGL, rockyCenter, HIP_HANDLE_RADIUS))
                 {
@@ -1604,6 +1626,15 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                         SetWindowText(app->ui.hBodyWeightEdit, weightBuf);
                         formatNonNegativeFloat2dp(app->robotScene.rocky.legWeight, weightBuf);
                         SetWindowText(app->ui.hLegWeightEdit, weightBuf);
+
+                        // Debug-only: pairs with the [MASSCENTER] grab print
+                        // above -- shows exactly how a given mouse position
+                        // maps to t and the resulting split, live, every
+                        // move, so a "snapped straight to 1/0" report can be
+                        // read right off the console instead of guessed at.
+                        printf("[MASSCENTER] drag: mouse=(%.4f,%.4f) t=%.4f -> bodyWeight=%.4f legWeight=%.4f\n",
+                               app->mouseGL.x, app->mouseGL.y, t,
+                               app->robotScene.rocky.bodyWeight, app->robotScene.rocky.legWeight);
                     }
                 }
                 else if (app->draggingRockyShin1)
