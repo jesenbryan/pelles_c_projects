@@ -529,25 +529,18 @@
 // acceleration (world units / ms^2) rather than "per tick" -- since
 // advanceAutoGravity (canvas.c) now scales by the ACTUAL elapsed time
 // between calls (GetTickCount deltas), not an assumed fixed tick length,
-// it stays correct however often/rarely it actually gets called.
-//
-// Raised 4x (was 0.00025f) per explicit user request -- the whole-body
-// fall read as too slow at the default actualWeight (1.0, see
-// app_init.c), and weight is meant to represent the robot's actual mass
-// rather than double as a global fall-speed knob, so the base speed got
-// bumped directly here instead of via a heavier default weight.
-#define SIMULATION_AUTO_GRAVITY_ACCEL_PER_MS2 0.001f
+// it stays correct however often/rarely it actually gets called. Numerically
+// equivalent to the old 0.004-per-16ms-tick value (0.004 / 16).
+#define SIMULATION_AUTO_GRAVITY_ACCEL_PER_MS2 0.00025f
 
 // Terminal velocity (world units / ms) the acceleration above builds up
-// to and caps at -- quick enough to feel like it's at full speed almost
-// immediately, not a slow gradual creep. Reset back to 0 the instant it
-// lands on something (robotCollidesWithEnvironment), so the next fall
-// also starts from rest instead of carrying over speed through solid
-// ground. Raised 4x alongside the acceleration above (was 0.005f), same
-// reasoning and same proportion kept between the two so the ramp-up
-// shape/timing to reach terminal velocity is unchanged, just faster
-// overall.
-#define SIMULATION_AUTO_GRAVITY_MAX_VELOCITY_PER_MS 0.02f
+// to and caps at, reached after ~240ms of continuous falling -- quick
+// enough to feel like it's at full speed almost immediately, not a slow
+// gradual creep. Reset back to 0 the instant it lands on something
+// (robotCollidesWithEnvironment), so the next fall also starts from rest
+// instead of carrying over speed through solid ground. Numerically
+// equivalent to the old 0.08-per-16ms-tick cap (0.08 / 16).
+#define SIMULATION_AUTO_GRAVITY_MAX_VELOCITY_PER_MS 0.005f
 
 // advanceAutoGravity (canvas.c) can be called from arbitrarily far-apart
 // real-time gaps -- e.g. the window was blocked on something else for a
@@ -629,53 +622,6 @@
 // rotation (hip/knee) is the Shift-gated action instead -- see
 // SIMULATION_JOINT_ROTATE_STEP_DEG and WM_MOUSEWHEEL's Shift check.
 #define SIMULATION_WHOLE_BODY_ROTATE_STEP_DEG 2.0f
-
-// ---- Rocky's knee-to-foot pendulum (first slice of real per-joint
-// physics, layered on top of the whole-robot "drop until it touches
-// something" gravity above -- see canvas.c's advanceAutoGravity) ----
-//
-// While Auto Gravity (Shift+G) is on, Rocky is active, and the FOOT
-// specifically isn't resting on anything (independent of whether the rest
-// of the robot already landed elsewhere -- e.g. standing at a ledge with
-// the leg hanging off), the knee swings on its own like a damped pendulum
-// toward hanging straight down in world space, instead of the whole body
-// dragging it down as one rigid unit like every other gravity interaction
-// above.
-
-// Angular "gravity" strength, degrees/second^2 -- plays the same role
-// SIMULATION_AUTO_GRAVITY_ACCEL_PER_MS2 does for the linear fall, just in
-// angle instead of position: how quickly the swing accelerates toward
-// vertical. Tuned by feel, not derived from a real pendulum length --
-// raise it for a snappier swing, lower it for a slower one.
-//
-// The original 900.0f here was picked while canvas.c's own integration
-// had a 1000x unit bug (deg/s^2 was being folded into the deg/MILLISECOND
-// velocity as if it were deg/SECOND -- see advanceAutoGravity's own
-// comment on the fix), so it was never actually tested against real
-// physics: every tick's velocity was 1000x too large regardless of this
-// constant, instantly maxing out at
-// SIMULATION_KNEE_PENDULUM_MAX_VELOCITY_DEG_PER_MS and just slamming back
-// and forth at that speed. Once the unit bug was fixed, 900 alone reads
-// as floaty/slow -- this higher value is the actual first real tuning
-// pass now that the integration is correct. Keep raising it if it still
-// feels too slow, or lower it if a swing now overshoots too dramatically.
-#define SIMULATION_KNEE_PENDULUM_ACCEL_DEG_PER_S2 6000.0f
-
-// Velocity decay rate, per millisecond -- a real frictionless pendulum
-// would swing back and forth forever, which reads as a bug the first time
-// someone sees a robot leg still swinging a minute later, so this bleeds
-// off a fraction of the angular velocity every millisecond (scaled by
-// real elapsed time, same convention as everything else in
-// advanceAutoGravity) until it settles hanging straight down instead of
-// oscillating indefinitely.
-#define SIMULATION_KNEE_PENDULUM_DAMPING_PER_MS 0.004f
-
-// Angular velocity safety clamp, degrees/millisecond (400 degrees/second)
-// -- same purpose as SIMULATION_AUTO_GRAVITY_MAX_VELOCITY_PER_MS's linear
-// cap, just for rotation: keeps a large swing from ever picking up enough
-// speed in one frame to tunnel through the per-tick ground-collision
-// check below instead of stopping at it.
-#define SIMULATION_KNEE_PENDULUM_MAX_VELOCITY_DEG_PER_MS 0.4f
 
 // ---- Scripted gait ("Walk" toggle, Shift+W -- see canvas.c's gaitActive/
 // advanceGait/gaitCycle) ----

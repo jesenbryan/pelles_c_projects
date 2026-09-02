@@ -1254,30 +1254,6 @@ static float rockyKneeAngularVelocityDegPerMs = 0.0f;
 // comment for why this matters.
 static DWORD autoGravityLastTickTime = 0;
 
-// Whether Rocky's FOOT specifically (not the rest of the robot) is
-// currently touching the environment -- exactly the same per-part test
-// robotCollidesWithEnvironment's Rocky branch runs for bodyCircles[1] (see
-// computeRockyBodyCircles' own comment on that indexing: 0 = knee, 1 =
-// foot), just isolated to only that one part instead of the whole robot.
-// Needed because robotCollidesWithEnvironment answers "is ANY part of the
-// robot touching," which is TRUE the instant the body/rect lands (the
-// normal, common case) even while the foot itself is still dangling in
-// midair off a ledge -- exactly the situation the knee pendulum inside
-// advanceAutoGravity below exists to react to, so it needs its own,
-// narrower answer.
-static BOOL rockyFootCollides(void)
-{
-    Rocky* r = &app.robotScene.rocky;
-    PointF center = getRockyCenter(*r);
-    PointF footWorld = jointToWorld(r->footCircle, r->kneeCircle, r->kneeAngle, center, r->angle);
-
-    float ecx, ecy;
-    robotPointToEnvWorld(footWorld.x, footWorld.y, &ecx, &ecy);
-    float eRadius = robotLengthToEnvWorld(r->footRadius);
-
-    return pointCollidesWithAnyEnvironmentStroke(ecx, ecy, eRadius);
-}
-
 // Advances auto gravity by however much real time has actually passed
 // since the last call, instead of assuming a fixed SIMULATION_AUTO_GRAVITY_
 // INTERVAL_MS worth of time. This is what it is because of a real bug:
@@ -1294,6 +1270,29 @@ static BOOL rockyFootCollides(void)
 // directly from WM_MOUSEMOVE (so mouse movement itself keeps driving the
 // fall forward instead of blocking it) -- both funnel through here so the
 // physics can never disagree no matter which message actually triggered it.
+// Whether Rocky's FOOT specifically (not the rest of the robot) is
+// currently touching the environment -- exactly the same per-part test
+// robotCollidesWithEnvironment's Rocky branch runs for bodyCircles[1] (see
+// computeRockyBodyCircles' own comment on that indexing: 0 = knee, 1 =
+// foot), just isolated to only that one part instead of the whole robot.
+// Needed because robotCollidesWithEnvironment answers "is ANY part of the
+// robot touching," which is TRUE the instant the body/rect lands (the
+// normal, common case) even while the foot itself is still dangling in
+// midair off a ledge -- exactly the situation the knee pendulum below
+// exists to react to, so it needs its own, narrower answer.
+static BOOL rockyFootCollides(void)
+{
+    Rocky* r = &app.robotScene.rocky;
+    PointF center = getRockyCenter(*r);
+    PointF footWorld = jointToWorld(r->footCircle, r->kneeCircle, r->kneeAngle, center, r->angle);
+
+    float ecx, ecy;
+    robotPointToEnvWorld(footWorld.x, footWorld.y, &ecx, &ecy);
+    float eRadius = robotLengthToEnvWorld(r->footRadius);
+
+    return pointCollidesWithAnyEnvironmentStroke(ecx, ecy, eRadius);
+}
+
 static void advanceAutoGravity(HWND hWnd)
 {
     if (!autoGravityActive || appMode != APP_MODE_SIMULATION) return;
@@ -1342,116 +1341,6 @@ static void advanceAutoGravity(HWND hWnd)
 
     if (applyGravityStep(hWnd, step))
         autoGravityVelocity = 0.0f; // landed -- next fall starts from rest
-
-    // ---- Rocky's knee-to-foot pendulum -- first slice of real per-joint
-    // physics (see config.h's SIMULATION_KNEE_PENDULUM_* comment block for
-    // the overall rationale), layered on top of the whole-body drop just
-    // above rather than replacing it. Runs off the SAME simElapsed this
-    // function already computed for that whole-body step, so both reflect
-    // the identical slice of real time and Slow Motion scaling -- they
-    // just move different things: the whole robot above, and just this
-    // one joint here. Deliberately does NOT scale by weightFactor the way
-    // the whole-body step does: a pendulum's period depends on its length,
-    // not its mass, so a heavier Rocky shouldn't swing its own leg any
-    // faster than a lighter one would.
-    if (app.robotScene.activeKind == ROBOT_KIND_ROCKY)
-    {
-        if (rockyFootCollides())
-        {
-            // Foot's already resting -- nothing to swing, and any leftover
-            // velocity from before it landed shouldn't carry into the next
-            // time it's lifted back into the air (e.g. dragged, or posed
-            // with E/Q -- see canvas.c's WM_KEYDOWN).
-            rockyKneeAngularVelocityDegPerMs = 0.0f;
-        }
-        else
-        {
-            Rocky* r = &app.robotScene.rocky;
-
-            // Fixed geometric direction of the shin at kneeAngle == 0 --
-            // r->footCircle/r->kneeCircle are always stored in that
-            // unrotated-by-kneeAngle reference frame (kneeAngle is applied
-            // ON TOP of them via rotatePoint, never baked into them, same
-            // as jointToWorld's own comment describes). kneeAngle and the
-            // whole body's own angle both then add directly onto this,
-            // since rotating a direction vector by two angles in sequence
-            // is the same as rotating it once by their sum.
-            float localRestAngleDeg = atan2f(r->footCircle.y - r->kneeCircle.y, r->footCircle.x - r->kneeCircle.x) * (180.0f / 3.1415926f);
-            float worldAngleDeg = localRestAngleDeg + r->kneeAngle + r->angle;
-
-            // Equilibrium is straight down in WORLD space (-90 degrees in
-            // this atan2 convention: 0 along +X, 90 up) -- wrapped to
-            // (-180, 180] so a shin that's swung past vertical reads as a
-            // small correction back, not nearly a full extra turn.
-            float theta = worldAngleDeg - (-90.0f);
-            while (theta > 180.0f)  theta -= 360.0f;
-            while (theta < -180.0f) theta += 360.0f;
-
-            float thetaRad = theta * (3.1415926f / 180.0f);
-
-            // Standard damped-pendulum integration: a restoring "torque"
-            // toward equilibrium shaped like -sin(theta) (a real
-            // pendulum's equation of motion, not just a linear spring),
-            // plus a time-scaled damping term so it settles hanging
-            // straight down instead of oscillating forever -- see
-            // SIMULATION_KNEE_PENDULUM_DAMPING_PER_MS's own comment for
-            // why a frictionless swing would read as a bug here.
-            //
-            // Unit conversion: angularAccelDegPerS2 is degrees/SECOND^2,
-            // but rockyKneeAngularVelocityDegPerMs is degrees/MILLISECOND
-            // (same convention autoGravityVelocity uses, for the same
-            // WM_TIMER-starvation reason) -- so a velocity DELTA over
-            // simElapsed milliseconds needs converting twice: once from
-            // ms to s for the accel*(time) multiply, then again from
-            // deg/s down to deg/ms, i.e. an overall factor of 1e-6, not
-            // 1e-3. Using 1e-3 here originally added the acceleration's
-            // effect 1000x too strongly every single tick -- the velocity
-            // slammed into SIMULATION_KNEE_PENDULUM_MAX_VELOCITY_DEG_PER_MS
-            // almost immediately, overshot equilibrium at that capped
-            // speed, flipped direction the instant the restoring term's
-            // sign flipped past vertical, and just kept slamming
-            // back and forth at the velocity ceiling -- exactly the "just
-            // rotates back and forth" symptom this was reported as,
-            // rather than a real decaying swing.
-            float angularAccelDegPerS2 = -SIMULATION_KNEE_PENDULUM_ACCEL_DEG_PER_S2 * sinf(thetaRad);
-            rockyKneeAngularVelocityDegPerMs += angularAccelDegPerS2 * simElapsed * 1e-6f;
-            rockyKneeAngularVelocityDegPerMs -= rockyKneeAngularVelocityDegPerMs * SIMULATION_KNEE_PENDULUM_DAMPING_PER_MS * simElapsed;
-
-            if (rockyKneeAngularVelocityDegPerMs > SIMULATION_KNEE_PENDULUM_MAX_VELOCITY_DEG_PER_MS)
-                rockyKneeAngularVelocityDegPerMs = SIMULATION_KNEE_PENDULUM_MAX_VELOCITY_DEG_PER_MS;
-            if (rockyKneeAngularVelocityDegPerMs < -SIMULATION_KNEE_PENDULUM_MAX_VELOCITY_DEG_PER_MS)
-                rockyKneeAngularVelocityDegPerMs = -SIMULATION_KNEE_PENDULUM_MAX_VELOCITY_DEG_PER_MS;
-
-            float deltaDeg = rockyKneeAngularVelocityDegPerMs * simElapsed;
-
-            // Same "propose the step, check per-part collision, and if it
-            // hits, binary-search the largest safe fraction of it instead
-            // of leaving a whole-step gap" idiom applyGravityStep uses
-            // above, just rotating the knee instead of translating the
-            // whole robot, and checking only the foot (rockyFootCollides)
-            // instead of the whole robot (robotCollidesWithEnvironment).
-            float oldKneeAngle = r->kneeAngle;
-            r->kneeAngle = oldKneeAngle + deltaDeg;
-
-            if (rockyFootCollides())
-            {
-                float safe = 0.0f;
-                float blocked = deltaDeg;
-
-                for (int i = 0; i < GRAVITY_CONTACT_SEARCH_ITERATIONS; i++)
-                {
-                    float mid = (safe + blocked) * 0.5f;
-                    r->kneeAngle = oldKneeAngle + mid;
-                    if (rockyFootCollides()) blocked = mid; else safe = mid;
-                }
-
-                r->kneeAngle = oldKneeAngle + safe;
-                rockyKneeAngularVelocityDegPerMs = 0.0f; // landed -- next swing starts from rest
-            }
-
-            InvalidateRect(hWnd, NULL, FALSE);
-        }
-    }
 }
 
 // ---- Scripted gait ("Walk" toggle, Shift+W -- see config.h's

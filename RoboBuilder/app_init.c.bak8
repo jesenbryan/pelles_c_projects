@@ -240,17 +240,16 @@ void initAppState(AppState* app)
 
 	// Separate real total-mass export value (app.h's Rocky.actualWeight,
 	// input.c's hActualWeightEdit) -- same one-time-default reasoning as
-	// bodyWeight/legWeight just above. Back to 1.0f -- 100.0f was tried
-	// per an earlier request as a way to speed up the whole-body Auto
-	// Gravity fall (canvas.c's activeRobotWeightFactor multiplies
-	// straight into SIMULATION_AUTO_GRAVITY_ACCEL_PER_MS2/
-	// _MAX_VELOCITY_PER_MS with no ceiling), but weight is meant to
-	// represent the robot's actual mass for export/physics purposes, not
-	// serve as a global fall-speed knob -- config.h's
-	// SIMULATION_AUTO_GRAVITY_ACCEL_PER_MS2/_MAX_VELOCITY_PER_MS
-	// themselves are the right place to retune the base fall speed
-	// instead, which is what got bumped directly this time.
-	app->robotScene.rocky.actualWeight = 1.0f;
+	// bodyWeight/legWeight just above. 100.0f per explicit user request
+	// (previously 1.0f) -- NOTE this also scales Simulation mode's
+	// whole-body Auto Gravity fall speed (canvas.c's
+	// activeRobotWeightFactor multiplies straight into
+	// SIMULATION_AUTO_GRAVITY_ACCEL_PER_MS2/_MAX_VELOCITY_PER_MS with no
+	// ceiling), so the default whole-body drop is now ~100x faster than
+	// it was at the old 1.0f default -- worth retuning those two
+	// config.h constants if 100x reads as too extreme once you see it
+	// falling.
+	app->robotScene.rocky.actualWeight = 100.0f;
 
 	// Same bodyWeight/legWeight/actualWeight defaults for Semni and Stilo
 	// now that they have their own SemniExport/StiloExport weight-share
@@ -258,14 +257,14 @@ void initAppState(AppState* app)
 	// own draggable mass-center dot (renderer.c's
 	// computeSemniMassCenterWorld/computeStiloMassCenterWorld) -- same
 	// one-time-only placement (not inside any Standing/Home pose init) and
-	// same 0.5/0.5/1.0 reasoning as Rocky's own version just above. Stilo's
-	// legWeight is the one COMBINED value for both legs together (see
-	// app.h's own comment on Stilo's legWeight).
+	// same 0.5/0.5/100.0 reasoning as Rocky's own version just above.
+	// Stilo's legWeight is the one COMBINED value for both legs together
+	// (see app.h's own comment on Stilo's legWeight).
 	app->robotScene.robot.bodyWeight = 0.5f;
 	app->robotScene.robot.legWeight = 0.5f;
-	app->robotScene.robot.actualWeight = 1.0f;
+	app->robotScene.robot.actualWeight = 100.0f;
 
 	app->robotScene.stilo.bodyWeight = 0.5f;
 	app->robotScene.stilo.legWeight = 0.5f;
-	app->robotScene.stilo.actualWeight = 1.0f;
+	app->robotScene.stilo.actualWeight = 100.0f;
 }

@@ -529,25 +529,18 @@
 // acceleration (world units / ms^2) rather than "per tick" -- since
 // advanceAutoGravity (canvas.c) now scales by the ACTUAL elapsed time
 // between calls (GetTickCount deltas), not an assumed fixed tick length,
-// it stays correct however often/rarely it actually gets called.
-//
-// Raised 4x (was 0.00025f) per explicit user request -- the whole-body
-// fall read as too slow at the default actualWeight (1.0, see
-// app_init.c), and weight is meant to represent the robot's actual mass
-// rather than double as a global fall-speed knob, so the base speed got
-// bumped directly here instead of via a heavier default weight.
-#define SIMULATION_AUTO_GRAVITY_ACCEL_PER_MS2 0.001f
+// it stays correct however often/rarely it actually gets called. Numerically
+// equivalent to the old 0.004-per-16ms-tick value (0.004 / 16).
+#define SIMULATION_AUTO_GRAVITY_ACCEL_PER_MS2 0.00025f
 
 // Terminal velocity (world units / ms) the acceleration above builds up
-// to and caps at -- quick enough to feel like it's at full speed almost
-// immediately, not a slow gradual creep. Reset back to 0 the instant it
-// lands on something (robotCollidesWithEnvironment), so the next fall
-// also starts from rest instead of carrying over speed through solid
-// ground. Raised 4x alongside the acceleration above (was 0.005f), same
-// reasoning and same proportion kept between the two so the ramp-up
-// shape/timing to reach terminal velocity is unchanged, just faster
-// overall.
-#define SIMULATION_AUTO_GRAVITY_MAX_VELOCITY_PER_MS 0.02f
+// to and caps at, reached after ~240ms of continuous falling -- quick
+// enough to feel like it's at full speed almost immediately, not a slow
+// gradual creep. Reset back to 0 the instant it lands on something
+// (robotCollidesWithEnvironment), so the next fall also starts from rest
+// instead of carrying over speed through solid ground. Numerically
+// equivalent to the old 0.08-per-16ms-tick cap (0.08 / 16).
+#define SIMULATION_AUTO_GRAVITY_MAX_VELOCITY_PER_MS 0.005f
 
 // advanceAutoGravity (canvas.c) can be called from arbitrarily far-apart
 // real-time gaps -- e.g. the window was blocked on something else for a
@@ -659,7 +652,7 @@
 // as floaty/slow -- this higher value is the actual first real tuning
 // pass now that the integration is correct. Keep raising it if it still
 // feels too slow, or lower it if a swing now overshoots too dramatically.
-#define SIMULATION_KNEE_PENDULUM_ACCEL_DEG_PER_S2 6000.0f
+#define SIMULATION_KNEE_PENDULUM_ACCEL_DEG_PER_S2 3600.0f
 
 // Velocity decay rate, per millisecond -- a real frictionless pendulum
 // would swing back and forth forever, which reads as a bug the first time

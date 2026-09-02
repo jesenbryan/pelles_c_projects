@@ -240,16 +240,7 @@ void initAppState(AppState* app)
 
 	// Separate real total-mass export value (app.h's Rocky.actualWeight,
 	// input.c's hActualWeightEdit) -- same one-time-default reasoning as
-	// bodyWeight/legWeight just above. Back to 1.0f -- 100.0f was tried
-	// per an earlier request as a way to speed up the whole-body Auto
-	// Gravity fall (canvas.c's activeRobotWeightFactor multiplies
-	// straight into SIMULATION_AUTO_GRAVITY_ACCEL_PER_MS2/
-	// _MAX_VELOCITY_PER_MS with no ceiling), but weight is meant to
-	// represent the robot's actual mass for export/physics purposes, not
-	// serve as a global fall-speed knob -- config.h's
-	// SIMULATION_AUTO_GRAVITY_ACCEL_PER_MS2/_MAX_VELOCITY_PER_MS
-	// themselves are the right place to retune the base fall speed
-	// instead, which is what got bumped directly this time.
+	// bodyWeight/legWeight just above.
 	app->robotScene.rocky.actualWeight = 1.0f;
 
 	// Same bodyWeight/legWeight/actualWeight defaults for Semni and Stilo
