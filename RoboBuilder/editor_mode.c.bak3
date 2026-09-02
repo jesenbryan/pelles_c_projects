@@ -70,16 +70,8 @@ void applyEditorModeVisibility(EditorModeState* modeState)
         ShowWindow(app.ui.hSetHomeButton, semniActive ? SW_SHOW : SW_HIDE);
     if (app.ui.hMirrorButton)
         ShowWindow(app.ui.hMirrorButton, semniActive ? SW_SHOW : SW_HIDE);
-    // Mirror Leg 2 only means anything for Stilo (its second leg) -- also
-    // gated on activeKind here, not just semniActive, so switching back
-    // to the Robot Editor screen (from the ArcSpline canvas) while Semni
-    // or Rocky was the last-active kind doesn't unconditionally reshow
-    // it. See input.c's ID_ROBOT_SELECTOR handler for the other half of
-    // this same gating, which fires on a KIND switch instead of a MODE
-    // switch (this function only runs on the latter).
     if (app.ui.hMirrorButton2)
-        ShowWindow(app.ui.hMirrorButton2,
-                   (semniActive && app.robotScene.activeKind == ROBOT_KIND_STILO) ? SW_SHOW : SW_HIDE);
+        ShowWindow(app.ui.hMirrorButton2, semniActive ? SW_SHOW : SW_HIDE);
     if (app.ui.hScaleLabel)
         ShowWindow(app.ui.hScaleLabel, semniActive ? SW_SHOW : SW_HIDE);
     if (app.ui.hScaleSlider)

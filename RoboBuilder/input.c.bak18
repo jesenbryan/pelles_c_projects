@@ -4124,19 +4124,6 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                                 break;
                         }
 
-                        // Mirror Leg 2 only means anything for Stilo
-                        // (its second, independent leg) -- Semni and
-                        // Rocky each have exactly one leg, so the button
-                        // used to just sit there doing nothing for them
-                        // (see ID_MIRROR_LEG2_BUTTON's own comment).
-                        // Hide it outright for those two instead, same
-                        // "don't show a control that has nothing to act
-                        // on" treatment the rest of this panel's kind-
-                        // specific controls (Body Wt/Leg Wt/Weight) get.
-                        if (app->ui.hMirrorButton2)
-                            ShowWindow(app->ui.hMirrorButton2,
-                                       (app->robotScene.activeKind == ROBOT_KIND_STILO) ? SW_SHOW : SW_HIDE);
-
                         // Clear any drag/hover state left over from
                         // whichever robot was active before -- meaningful
                         // for Semni and Rocky's body handle right now (see
