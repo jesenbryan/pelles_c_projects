@@ -13,7 +13,6 @@
 #include "save.h"          // For saveCanvasAsBMP/saveRockyAsEquations/saveRockyAsRobArm/saveSemniAsRobLeg/saveStiloAsRobLeg -- File > Save (ID_SAVE below) now dispatches to these directly, folded in from the old Robot editor Save button. saveRobotAsEquations/saveStiloAsEquations are declared here too but no longer called from this file -- they're still used by input.c's Standing/Home pose buttons (Poses\*.txt).
 #include "help_dialog.h"   // For showControlsHelpDialog -- Help > Controls Help... (ID_HELP below)
 #include "env_export.h"   // For saveEnvironmentSegmentsAsTxt (moved out of this file)
-#include "debug.h"        // For ClearConsoleLog -- Simulation's Reset button (ID_RESET_ROBOT below)
 #include <math.h>
 #include <string.h>
 #include <stdlib.h>        // For wcstod (Rocky's Body/Leg Weight edit boxes, read in ID_SAVE below)
@@ -695,53 +694,13 @@ static BOOL robotCollidesWithEnvironment(void)
                 RockyEdgeSegment rectEdges[NUM_ROCKY_RECT_SEGMENTS];
                 computeRockyRectSegments(app.robotScene.rocky, rectEdges);
 
-                // ARC_SAMPLE_COUNT (41) points spread across a WHOLE edge
-                // (which can be long -- Rocky's full body height/width)
-                // leaves consecutive samples spaced roughly edgeLength/40
-                // apart. simEnvLineHalfWidthWorld's own comment explains
-                // its collision band SHRINKS in world units as sim-camera
-                // zoom increases (it's held to a constant size in SCREEN
-                // pixels instead) -- so at high enough zoom, that fixed
-                // spacing ends up LARGER than the band's own width, and
-                // the true continuous edge can pass straight through the
-                // line, undetected, between two samples that each land
-                // just outside the band on opposite sides. That's a real,
-                // reproducible way for "the rectangle passes through the
-                // ground line" to happen with NO rotation and NO oversized
-                // gravity step at all -- just an edge long enough, and a
-                // line thin enough, for 41 fixed samples to under-cover
-                // it. Growing the sample count here so consecutive
-                // spacing always stays under the CURRENT band width (not
-                // just using a bigger fixed constant, since halfW itself
-                // keeps shrinking the more you zoom in) closes that gap
-                // at any zoom, up to SIMULATION_ROCKY_EDGE_MAX_SAMPLES'
-                // own safety cap (see its comment for why one exists).
-                float halfW = simEnvLineHalfWidthWorld();
-
                 for (int e = 0; e < NUM_ROCKY_RECT_SEGMENTS; e++)
                 {
-                    float dx = rectEdges[e].end.x - rectEdges[e].start.x;
-                    float dy = rectEdges[e].end.y - rectEdges[e].start.y;
-                    float edgeLenWorld = robotLengthToEnvWorld(sqrtf(dx * dx + dy * dy));
-
-                    int sampleCount = ARC_SAMPLE_COUNT;
-                    if (halfW > 0.0f)
+                    for (int i = 0; i < ARC_SAMPLE_COUNT; i++)
                     {
-                        // +2 (not +1): asks for enough INTERVALS that each
-                        // one is comfortably under halfW, not just equal
-                        // to it -- a spacing exactly equal to the band
-                        // width can still slip through right at its edge.
-                        int needed = (int)(edgeLenWorld / halfW) + 2;
-                        if (needed > sampleCount) sampleCount = needed;
-                    }
-                    if (sampleCount > SIMULATION_ROCKY_EDGE_MAX_SAMPLES)
-                        sampleCount = SIMULATION_ROCKY_EDGE_MAX_SAMPLES;
-
-                    for (int i = 0; i < sampleCount; i++)
-                    {
-                        float t = (float)i / (float)(sampleCount - 1);
-                        float lx = rectEdges[e].start.x + dx * t;
-                        float ly = rectEdges[e].start.y + dy * t;
+                        float t = (float)i / (float)(ARC_SAMPLE_COUNT - 1);
+                        float lx = rectEdges[e].start.x + (rectEdges[e].end.x - rectEdges[e].start.x) * t;
+                        float ly = rectEdges[e].start.y + (rectEdges[e].end.y - rectEdges[e].start.y) * t;
 
                         float ecx, ecy;
                         robotPointToEnvWorld(lx, ly, &ecx, &ecy);
@@ -1103,7 +1062,7 @@ static void drawSimulationLiveContactDots(void)
     BOOL savedSuppressGravityDebug = gSuppressGravityDebug;
     gSuppressGravityDebug = TRUE;
 
-    const float liveContactDotRadius = 0.0015f;
+    const float liveContactDotRadius = 0.003f;
     float eArcThickness = robotLengthToEnvWorld(SIMULATION_ARC_COLLISION_THICKNESS);
 
     switch (app.robotScene.activeKind)

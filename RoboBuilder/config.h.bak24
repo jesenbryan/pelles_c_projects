@@ -488,21 +488,6 @@
 // level; collision still matches it exactly either way, floor included.
 #define SIM_ENV_LINE_MIN_PIXELS 2.0f
 
-// Safety cap on the ADAPTIVE per-edge sample count robotCollidesWithEnvironment
-// (Rocky's rectangle-edge branch) grows to as simEnvLineHalfWidthWorld's
-// collision band shrinks at high zoom -- see that adaptive count's own
-// comment there for the actual bug this fixes (a long edge's fixed 41
-// samples spaced further apart than a thinned-out collision band, letting
-// the true continuous edge pass straight through the line between two
-// samples that each individually land just outside it). Without a cap,
-// an extreme zoom-in (or a degenerate near-zero halfW) could ask for an
-// enormous sample count and visibly stall a gravity tick -- this bounds
-// the worst case to something still comfortably cheap (a handful of
-// microseconds) per edge per tick, at the cost of the adaptive fix no
-// longer being able to fully guarantee zero gaps at truly extreme zoom
-// (which MIN_ZOOM/MAX_ZOOM below already keep far out of reach anyway).
-#define SIMULATION_ROCKY_EDGE_MAX_SAMPLES 2000
-
 // Display-only padding for the two Simulation-mode contact indicators
 // (canvas.c's drawSimulationContactDebug 'C'-toggle overlay and the
 // always-on drawSimulationLiveContactDots) -- NOT used by anything that
@@ -801,30 +786,6 @@
 // rotation (hip/knee) is the Shift-gated action instead -- see
 // SIMULATION_JOINT_ROTATE_STEP_DEG and WM_MOUSEWHEEL's Shift check.
 #define SIMULATION_WHOLE_BODY_ROTATE_STEP_DEG 2.0f
-
-// Whole-body rotate (VK_LEFT/RIGHT above) turns the rectangle about its
-// own CENTER, not about whichever corner is currently touching the
-// ground -- so a robot balanced on a short/narrow edge can have a corner
-// far from that center sweep a noticeable arc for even one single 2-
-// degree press, and Windows' own key-repeat can fire many presses per
-// second while the key is held. resolveUpwardIfPenetrating (called once
-// per press, after the FULL step is already applied) only pushes back
-// UP when the robot's new position is found actually colliding -- it
-// can't help if a single press's corner travel is larger than the
-// ground line's own thickness (SIMULATION_ARC_COLLISION_THICKNESS/
-// simEnvLineHalfWidthWorld): the corner can then land clean on the far
-// side of the line in one discrete step, never once testing as
-// colliding at either the before or after angle, which reads as the
-// rectangle "passing through the ground line" when rotated while
-// resting on a narrow edge. Splitting each press into several smaller
-// sub-rotations (canvas.c's WM_KEYDOWN), each followed by its own
-// resolveUpwardIfPenetrating check, keeps every single sub-step's worst-
-// case corner travel comfortably under that thickness, so the corner is
-// forced to pass THROUGH the "currently colliding" state (and get
-// pushed back up) at some sub-step instead of skipping over it entirely
-// -- same reasoning as advanceAutoGravity's own per-tick sub-stepping
-// fix for straight-line falls, applied here to rotation instead.
-#define SIMULATION_WHOLE_BODY_ROTATE_SUBSTEP_DEG 0.2f
 
 // Rocky's knee-to-foot pendulum (an automatic damped swing while Auto
 // Gravity was on and the foot wasn't resting) was removed by explicit

@@ -1103,7 +1103,7 @@ static void drawSimulationLiveContactDots(void)
     BOOL savedSuppressGravityDebug = gSuppressGravityDebug;
     gSuppressGravityDebug = TRUE;
 
-    const float liveContactDotRadius = 0.0015f;
+    const float liveContactDotRadius = 0.003f;
     float eArcThickness = robotLengthToEnvWorld(SIMULATION_ARC_COLLISION_THICKNESS);
 
     switch (app.robotScene.activeKind)

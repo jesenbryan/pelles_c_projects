@@ -38,52 +38,6 @@ void OpenConsole() {
     SetConsoleTitle(L"Debug Console");
 }
 
-// Wipes the AllocConsole window OpenConsole created, same way "cls" does,
-// but through the Console API directly rather than spawning a shell
-// process to run the real cls.exe (system("cls") works too, but launching
-// a whole extra process just to clear a window we already own is
-// unnecessary overhead, and briefly steals focus/flashes a window on some
-// setups). Fills the entire current screen buffer with blank spaces (the
-// console's own default background attribute), then homes the cursor back
-// to (0,0) -- printf's own internal position tracking doesn't need any
-// reset, it just keeps writing from wherever the cursor physically is.
-void ClearConsoleLog(void)
-{
-    // Deliberately NOT GetStdHandle(STD_OUTPUT_HANDLE) here: OpenConsole
-    // above already re-pointed the CRT's own `stdout` FILE* at CONOUT$ via
-    // freopen AFTER AllocConsole handed the process its std handles --
-    // freopen opens its OWN new low-level handle for that (it doesn't
-    // call SetStdHandle to keep the two in sync), so STD_OUTPUT_HANDLE can
-    // end up stale/still referring to whatever (usually nothing, for a
-    // GUI-subsystem app) the process had before AllocConsole ran, even
-    // though printf's own output clearly still reaches the visible
-    // window through the separate freopen'd handle. Opening "CONOUT$"
-    // directly, the same special filename freopen itself uses, always
-    // resolves to THIS process's current active console screen buffer
-    // regardless of which handle anything else is holding, so this can't
-    // silently no-op the way GetStdHandle did.
-    HANDLE hConsole = CreateFileA("CONOUT$", GENERIC_READ | GENERIC_WRITE,
-                                   FILE_SHARE_READ | FILE_SHARE_WRITE,
-                                   NULL, OPEN_EXISTING, 0, NULL);
-    if (hConsole == INVALID_HANDLE_VALUE) return;
-
-    CONSOLE_SCREEN_BUFFER_INFO csbi;
-    if (GetConsoleScreenBufferInfo(hConsole, &csbi))
-    {
-        DWORD cellCount = (DWORD)csbi.dwSize.X * (DWORD)csbi.dwSize.Y;
-        COORD homeCoords = { 0, 0 };
-        DWORD count;
-
-        FillConsoleOutputCharacter(hConsole, ' ', cellCount, homeCoords, &count);
-        FillConsoleOutputAttribute(hConsole, csbi.wAttributes, cellCount, homeCoords, &count);
-        SetConsoleCursorPosition(hConsole, homeCoords);
-    }
-
-    // Opened fresh above (unlike GetStdHandle's handle, which belongs to
-    // the system) -- ours to close.
-    CloseHandle(hConsole);
-}
-
 void debugPrintPath(Point* path, int numPoints) {
     printf("\n[DEBUG] Path Analysis: %d points identified.\n", numPoints);
 

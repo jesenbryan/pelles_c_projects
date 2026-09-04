@@ -4,19 +4,6 @@
 void RunTracePipeline(void);
 void RunUploadPipeline(void);
 
-// When TRUE, suppresses the [DEBUG] Path Analysis / Arc Segmentation
-// console dumps runPipelineOnImage prints on every trace (debug.c's
-// debugPrintPath/debugPrintSegments) -- useful console output while
-// actually drawing/tracing in Design > Environment, but pure noise when
-// it fires from ID_MODE_SIMULATION's own automatic re-trace on entering
-// Simulation mode (canvas.c), which the user never asked for and just
-// wants the environment ready to collide against. Set/cleared right
-// around that one RunTracePipeline() call, same save-and-restore idiom
-// as canvas.c's own gSuppressGravityDebug -- every other caller
-// (View Segments, Comparison Mode, Save, window-resize-while-simulating)
-// leaves it FALSE and keeps seeing the normal debug output.
-extern BOOL gSuppressTraceDebugPrints;
-
 // Traces + builds segments for the most recently uploaded BMP, if it hasn't
 // been traced yet (upload no longer auto-traces - see RunUploadPipeline).
 // Safe to call any time; it's a no-op if there's nothing pending. Returns

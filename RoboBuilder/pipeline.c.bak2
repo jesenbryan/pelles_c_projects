@@ -19,8 +19,6 @@
 // the user actually asks to view segments (see RunPendingUploadTrace).
 static Image* s_pendingBmpImage = NULL;
 
-BOOL gSuppressTraceDebugPrints = FALSE;   // see pipeline.h
-
 static void freePendingBmpImage(void)
 {
     if (!s_pendingBmpImage) return;
@@ -253,7 +251,7 @@ static void runPipelineOnImage(Image* img, const char* sourceLabel, BOOL stretch
             componentPaths[componentPathCount++] = path;
 
             int numPoints = tracePath(compBin, w, h, sx, sy, ex, ey, path, 10000);
-            if (!gSuppressTraceDebugPrints) debugPrintPath(path, numPoints);
+            debugPrintPath(path, numPoints);
 
             ArcSegment segs[MAX_ARC_SEGMENTS];
             int segCount = buildSegments(path, numPoints, segs);
@@ -358,9 +356,9 @@ static void runPipelineOnImage(Image* img, const char* sourceLabel, BOOL stretch
         printf("No traceable curve found (%s)\n", sourceLabel);
     }
 
-    if (!gSuppressTraceDebugPrints) debugPrintSegments(allSegments, totalSegCount);
+    debugPrintSegments(allSegments, totalSegCount);
     setSegmentOverlay(allSegments, totalSegCount, w, h, stretched);
-    if (!gSuppressTraceDebugPrints) debugPrintSegments(allSegments, totalSegCount);
+    debugPrintSegments(allSegments, totalSegCount);
 
     for (int i = 0; i < componentPathCount; i++) free(componentPaths[i]);
     free(remaining);

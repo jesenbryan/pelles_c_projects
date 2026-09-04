@@ -3,6 +3,5 @@
 #include "geometry.h"
 
 void OpenConsole(void);
-void ClearConsoleLog(void);   // NEW: wipes the debug console's text, used by Simulation's Reset button
 void debugPrintPath(Point* path, int numPoints);
 void debugPrintSegments(ArcSegment* segments, int count);   // NEW

@@ -1,5 +1,4 @@
 #include "endpoints.h"
-#include "pipeline.h"   // for gSuppressTraceDebugPrints
 
 //int find_any_curve_pixel(uint8_t* bin, int w, int h, int* sx, int* sy)
 //{
@@ -89,17 +88,8 @@ int find_start_end_pixels(uint8_t* bin, int w, int h, int* sx, int* sy, int* ex,
 	        *ey = ty;
 	    }
 
-	    // Gated the same as debug.c's Path Analysis/Arc Segmentation
-	    // dumps below (see gSuppressTraceDebugPrints' own comment) --
-	    // these two lines are printed from the SAME per-component
-	    // trace pass, right before debugPrintPath, so they need the
-	    // same suppression or the "quiet" Simulation-entry retrace
-	    // would still start with this pair every time.
-	    if (!gSuppressTraceDebugPrints)
-	    {
-	        printf("Start (RED): (%d, %d) (left)\n", *sx, *sy);
-	        printf("End  (BLUE): (%d, %d)\n", *ex, *ey);
-	    }
+	    printf("Start (RED): (%d, %d) (left)\n", *sx, *sy);
+	    printf("End  (BLUE): (%d, %d)\n", *ex, *ey);
 	}
 	else if (count_found == 0) {
 	    printf("No start/end pixels found\n");
