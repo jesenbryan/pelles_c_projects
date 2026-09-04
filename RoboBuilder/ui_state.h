@@ -24,6 +24,7 @@
 #define ID_WALK_TOGGLE       13
 #define ID_HELP              14
 #define ID_TOGGLE_HIDE_INACTIVE 15
+#define ID_RESET_ROBOT       16
 
 // App-wide mode, switched from the "Mode" menu on the GL window.
 // Design = draw/trace/edit arc-spline paths (current behavior).

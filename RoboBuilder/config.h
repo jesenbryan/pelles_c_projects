@@ -621,6 +621,75 @@
 // two places it's available.
 #define SIMULATION_JOINT_ROTATE_STEP_DEG 2.0f
 
+// E/Q's "glide over an obstruction" behavior (sweeping past a contact and
+// jumping to clear ground on the far side) was removed by explicit
+// request -- the foot was technically still passing through solid ground
+// to get there, which is wrong regardless of how it reads.
+//
+// What replaced it (see canvas.c's WM_KEYDOWN, ROBOT_KIND_ROCKY branch)
+// is a real lever, not a freeze: rotating the knee always applies in
+// full, and if that would bury the leg (the foot circle OR either shin
+// fillet arc -- see the Rocky struct's own comment on shinArc1Angle/
+// shinArc2Angle in app.h) in the environment, the whole robot is pushed
+// straight up instead, exactly like a real leg pressing its foot/shin
+// against the ground would lever the torso upward rather than the leg
+// simply stopping dead. Only when even a generous push (see
+// SIMULATION_LEG_PUSH_SEARCH_MAX below) still can't clear it -- the leg
+// boxed in on every side, an extreme edge case -- does it fall back to
+// the old hard-stop-at-first-contact behavior, using the same
+// GRAVITY_CONTACT_SEARCH_ITERATIONS binary search applyGravityStep uses
+// for the whole-body landing.
+
+// Starting distance and sanity cap for the "push the body up" search
+// above. Doubles from START each attempt until the leg clears or MAX is
+// reached, then binary-searches within whatever range that found --
+// unlike SIMULATION_SLOPE_CORRECTION_MAX above (a small fixed budget for
+// tiny post-ROTATION residuals from re-aligning to a slope), a
+// deliberate leg extension can legitimately need to lift the body by far
+// more than that, and there's no way to know the right amount in
+// advance. Both are in the robot's own local world units, same space
+// SIMULATION_GRAVITY_STEP is in -- START is one gravity step, MAX is
+// several times Rocky's default knee-to-foot leg length (~0.3, see
+// app_init.c's initRockyStandingPosition) so a genuinely large push
+// still succeeds instead of being mistaken for "impossible."
+#define SIMULATION_LEG_PUSH_SEARCH_START 0.02f
+#define SIMULATION_LEG_PUSH_SEARCH_MAX 1.0f
+
+// Rocky-only, and only relevant once the knee can be detached from the
+// rectangle (see app.h's own comment on draggingRockyKnee): the
+// whole-body gravity drop above stops the instant its LOWEST part (often
+// the foot, if the knee was dragged far from the body) touches something
+// -- the rectangle just ends up wherever that leaves it, which can look
+// like it's floating well above the ground with a big gap underneath.
+//
+// See canvas.c's advanceRockySettle: called every gravity tick
+// (applyGravityStep, alongside the whole-body translate above) while any
+// part of Rocky is touching something, it tries two independent things,
+// each by one small step in each direction, and keeps whichever helps:
+// bending the KNEE (SIMULATION_LEG_SETTLE_STEP_DEG) and rotating the
+// RECTANGLE itself (SIMULATION_BODY_SETTLE_STEP_DEG, Rocky's own
+// `angle` field) -- so the torso can tip toward a more natural resting
+// orientation, not just sink straight down at whatever angle it started
+// at. Either one closes the "floating body" gap gradually over several
+// ticks instead of all at once. By explicit request this runs EVERY
+// tick, continuously, rather than once after landing -- earlier, a
+// similar continuous idea (slope alignment, see applyGravityStep's own
+// comment) caused a visible bounce/wobble, but that one accumulated a
+// velocity/damping state across ticks that could overshoot. This has no
+// such state: every tick is an independent deterministic search
+// (dropActiveRobotToRest, the same binary-search idiom the rest of
+// gravity already uses) that only ever COMMITS a change when it
+// confirms the body genuinely falls further and stays collision-free --
+// there's nothing to oscillate, so it can settle smoothly without the
+// stuck-state risk the old knee pendulum had.
+//
+// Both kept deliberately small (smaller than one E/Q press or one
+// Left/Right whole-body rotate press, SIMULATION_JOINT_ROTATE_STEP_DEG/
+// SIMULATION_WHOLE_BODY_ROTATE_STEP_DEG) so the settle reads as a smooth
+// gradual sink across many ticks rather than a single visible snap.
+#define SIMULATION_LEG_SETTLE_STEP_DEG 1.0f
+#define SIMULATION_BODY_SETTLE_STEP_DEG 1.0f
+
 // Simulation mode: plain Left/Right (no Shift) rotates the WHOLE robot
 // (Semni.angle) -- see canvas.c's WM_KEYDOWN. Same value (and Left =
 // positive / Right = negative sign convention) as Design > Robot mode's
@@ -630,52 +699,13 @@
 // SIMULATION_JOINT_ROTATE_STEP_DEG and WM_MOUSEWHEEL's Shift check.
 #define SIMULATION_WHOLE_BODY_ROTATE_STEP_DEG 2.0f
 
-// ---- Rocky's knee-to-foot pendulum (first slice of real per-joint
-// physics, layered on top of the whole-robot "drop until it touches
-// something" gravity above -- see canvas.c's advanceAutoGravity) ----
-//
-// While Auto Gravity (Shift+G) is on, Rocky is active, and the FOOT
-// specifically isn't resting on anything (independent of whether the rest
-// of the robot already landed elsewhere -- e.g. standing at a ledge with
-// the leg hanging off), the knee swings on its own like a damped pendulum
-// toward hanging straight down in world space, instead of the whole body
-// dragging it down as one rigid unit like every other gravity interaction
-// above.
-
-// Angular "gravity" strength, degrees/second^2 -- plays the same role
-// SIMULATION_AUTO_GRAVITY_ACCEL_PER_MS2 does for the linear fall, just in
-// angle instead of position: how quickly the swing accelerates toward
-// vertical. Tuned by feel, not derived from a real pendulum length --
-// raise it for a snappier swing, lower it for a slower one.
-//
-// The original 900.0f here was picked while canvas.c's own integration
-// had a 1000x unit bug (deg/s^2 was being folded into the deg/MILLISECOND
-// velocity as if it were deg/SECOND -- see advanceAutoGravity's own
-// comment on the fix), so it was never actually tested against real
-// physics: every tick's velocity was 1000x too large regardless of this
-// constant, instantly maxing out at
-// SIMULATION_KNEE_PENDULUM_MAX_VELOCITY_DEG_PER_MS and just slamming back
-// and forth at that speed. Once the unit bug was fixed, 900 alone reads
-// as floaty/slow -- this higher value is the actual first real tuning
-// pass now that the integration is correct. Keep raising it if it still
-// feels too slow, or lower it if a swing now overshoots too dramatically.
-#define SIMULATION_KNEE_PENDULUM_ACCEL_DEG_PER_S2 6000.0f
-
-// Velocity decay rate, per millisecond -- a real frictionless pendulum
-// would swing back and forth forever, which reads as a bug the first time
-// someone sees a robot leg still swinging a minute later, so this bleeds
-// off a fraction of the angular velocity every millisecond (scaled by
-// real elapsed time, same convention as everything else in
-// advanceAutoGravity) until it settles hanging straight down instead of
-// oscillating indefinitely.
-#define SIMULATION_KNEE_PENDULUM_DAMPING_PER_MS 0.004f
-
-// Angular velocity safety clamp, degrees/millisecond (400 degrees/second)
-// -- same purpose as SIMULATION_AUTO_GRAVITY_MAX_VELOCITY_PER_MS's linear
-// cap, just for rotation: keeps a large swing from ever picking up enough
-// speed in one frame to tunnel through the per-tick ground-collision
-// check below instead of stopping at it.
-#define SIMULATION_KNEE_PENDULUM_MAX_VELOCITY_DEG_PER_MS 0.4f
+// Rocky's knee-to-foot pendulum (an automatic damped swing while Auto
+// Gravity was on and the foot wasn't resting) was removed by explicit
+// request -- it kept producing "stuck"/embedded states that were hard to
+// reason about on top of the manual E/Q rotation. E/Q (SIMULATION_JOINT_
+// ROTATE_STEP_DEG above) is now the only way Rocky's knee moves in
+// Simulation mode; the whole-body "drop until it touches something"
+// gravity above is unaffected.
 
 // ---- Scripted gait ("Walk" toggle, Shift+W -- see canvas.c's gaitActive/
 // advanceGait/gaitCycle) ----
