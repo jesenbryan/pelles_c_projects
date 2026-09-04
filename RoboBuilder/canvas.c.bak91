@@ -1199,26 +1199,12 @@ static void translateActiveRobot(float dx, float dy)
 // generalizes isPointInsideRobotBody (Semni-only, robot.c) to all three
 // kinds for Simulation mode's hover/drag-start hit-testing. Stilo is pure
 // circles + arcs like Semni, so it gets the identical circle-containment
-// test via computeStiloBodyCircles.
-//
-// Rocky's rectangular torso USED to have no interior-point hit-test
-// anywhere else in this app (input.c's own hoverRockyBody is a proximity
-// check to the body's center handle, HIP_HANDLE_RADIUS, not a true
-// rectangle-interior test) -- Simulation mode's whole-body drag matched
-// that same convention instead of inventing a different one, which meant
-// clicking most of the visible rectangle (anywhere outside a small
-// HIP_HANDLE_RADIUS circle at its exact center) didn't start a drag at
-// all, a real report of "only some part of it" grabs the body. A real
-// rotated-rectangle test fixes that: undo the rectangle's own rotation
-// around its center (rotatePoint by -angle, the exact inverse of however
-// drawRockyBodyRect/computeRockyRectSegments built it), then it's a plain
-// axis-aligned half-width/half-height box test in that unrotated frame.
-//
-// Both the rectangle test and the leg circles below respect Rocky's own
-// legHidden/bodyHidden testing toggles (ID_ROCKY_TOGGLE_LEG_BUTTON/
-// ID_ROCKY_TOGGLE_BODY_BUTTON) -- a hidden part shouldn't be draggable by
-// clicking where it used to be any more than it's still rendered or
-// collision-tested there.
+// test via computeStiloBodyCircles. Rocky's rectangular torso has no
+// interior-point hit-test anywhere else in this app either -- input.c's
+// own hoverRockyBody is a proximity check to the body's center handle
+// (HIP_HANDLE_RADIUS), not a true rectangle-interior test -- so this
+// matches that same established convention instead of inventing a
+// different one just for Simulation mode.
 static BOOL isPointInsideActiveRobotBody(float wx, float wy)
 {
     switch (app.robotScene.activeKind)
@@ -1226,30 +1212,18 @@ static BOOL isPointInsideActiveRobotBody(float wx, float wy)
         case ROBOT_KIND_ROCKY:
         {
             PointF center = getRockyCenter(app.robotScene.rocky);
+            float cdx = wx - center.x, cdy = wy - center.y;
+            if (sqrtf(cdx * cdx + cdy * cdy) <= HIP_HANDLE_RADIUS)
+                return TRUE;
 
-            if (!app.robotScene.rocky.bodyHidden)
+            CircleSegment bodyCircles[NUM_ROCKY_BODY_CIRCLES];
+            computeRockyBodyCircles(app.robotScene.rocky, bodyCircles);
+            for (int i = 0; i < NUM_ROCKY_BODY_CIRCLES; i++)
             {
-                float cdx = wx - center.x, cdy = wy - center.y;
-                if (sqrtf(cdx * cdx + cdy * cdy) <= HIP_HANDLE_RADIUS)
+                float dx = wx - bodyCircles[i].center.x;
+                float dy = wy - bodyCircles[i].center.y;
+                if (sqrtf(dx * dx + dy * dy) <= bodyCircles[i].radius)
                     return TRUE;
-
-                PointF local = rotatePoint((PointF){ wx, wy }, center, -app.robotScene.rocky.angle);
-                if (fabsf(local.x - center.x) <= app.robotScene.rocky.bodyHalfWidth
-                    && fabsf(local.y - center.y) <= app.robotScene.rocky.bodyHalfHeight)
-                    return TRUE;
-            }
-
-            if (!app.robotScene.rocky.legHidden)
-            {
-                CircleSegment bodyCircles[NUM_ROCKY_BODY_CIRCLES];
-                computeRockyBodyCircles(app.robotScene.rocky, bodyCircles);
-                for (int i = 0; i < NUM_ROCKY_BODY_CIRCLES; i++)
-                {
-                    float dx = wx - bodyCircles[i].center.x;
-                    float dy = wy - bodyCircles[i].center.y;
-                    if (sqrtf(dx * dx + dy * dy) <= bodyCircles[i].radius)
-                        return TRUE;
-                }
             }
             return FALSE;
         }
@@ -1350,33 +1324,13 @@ static float dropActiveRobotToRest(void)
     float safe = 0.0f;      // largest confirmed-clear drop so far
     float push = SIMULATION_LEG_PUSH_SEARCH_START;
 
-    // Tracks whether the doubling search below ever actually FOUND a
-    // collision boundary, as opposed to just running out of search range
-    // (SIMULATION_LEG_PUSH_SEARCH_MAX) without ever touching anything.
-    // That distinction matters a lot to advanceRockySettle's own probes:
-    // they call this to answer "would a candidate kneeAngle/bodyAngle let
-    // the robot fall further," and pick whichever candidate reports the
-    // BIGGEST drop -- without this flag, a candidate that actually swings
-    // the tested part out past the edge of a short environment segment
-    // (open air, no ground anywhere below within range) used to come back
-    // reporting a drop of roughly SIMULATION_LEG_PUSH_SEARCH_MAX, which a
-    // real report showed reads to those probes as "by far the best
-    // option" -- bigger than any genuine nearby resting-height
-    // improvement -- so they'd confidently commit to rotating the body
-    // (or knee) straight off the edge of a small platform, and the very
-    // next ordinary gravity tick then free-falls with nothing left
-    // underneath it at all. "Ran out of search range" has to report back
-    // as "no improvement here" (0.0f), not as the deepest drop anyone's
-    // found yet.
-    BOOL foundGround = FALSE;
-
     for (;;)
     {
         translateActiveRobot(0.0f, -push);
         BOOL hits = robotCollidesWithEnvironment();
         translateActiveRobot(0.0f, push); // undo probe
 
-        if (hits) { foundGround = TRUE; break; }
+        if (hits) break;
 
         safe = push;
         if (push >= SIMULATION_LEG_PUSH_SEARCH_MAX)
@@ -1384,10 +1338,6 @@ static float dropActiveRobotToRest(void)
 
         push *= 2.0f;
     }
-
-    if (!foundGround)
-        return 0.0f; // open air the whole way out -- not a real resting
-                      // spot, so this is not an "improvement" of any size
 
     float blocked = push;
 
@@ -1490,15 +1440,8 @@ static void advanceRockySettle(void)
 
     Rocky* r = &app.robotScene.rocky;
 
-    // Probe 1: bend the knee. Skipped entirely while the leg is hidden
-    // (ID_ROCKY_TOGGLE_LEG_BUTTON, app.h's legHidden comment) -- with no
-    // leg being rendered or collision-tested, bending an invisible knee
-    // around an invisible foot can never affect anything real (the
-    // rectangle's own position/rotation is untouched by kneeAngle -- see
-    // getRockyCenter), so this used to just spin kneeAngle through
-    // hundreds of degrees for no visible effect, flooding the console
-    // with [SETTLE] lines about a foot nobody can see or collide with.
-    if (!r->legHidden && rockyKneeSettleStep >= SIMULATION_LEG_SETTLE_MIN_STEP_DEG)
+    // Probe 1: bend the knee.
+    if (rockyKneeSettleStep >= SIMULATION_LEG_SETTLE_MIN_STEP_DEG)
     {
         float baseKneeAngle = r->kneeAngle;
         float bestDrop = 0.0f;
@@ -2307,44 +2250,7 @@ static void advanceAutoGravity(HWND hWnd)
 
     float step = autoGravityVelocity * simElapsed;
 
-    // A single velocity-scaled step here can be MUCH bigger than the
-    // plain G press's fixed SIMULATION_GRAVITY_STEP -- up to 100x, at the
-    // velocity/elapsed-time caps just above (SIMULATION_AUTO_GRAVITY_MAX_
-    // VELOCITY_PER_MS * SIMULATION_AUTO_GRAVITY_MAX_DT_MS) -- which is
-    // exactly what a real stall produces (a burst of WM_MOUSEWHEEL zoom
-    // events is a common real trigger: each one forces a synchronous
-    // UpdateWindow that can starve AUTO_GRAVITY_TIMER_ID for a while, so
-    // the next tick's catch-up elapsed time balloons toward its cap).
-    // applyGravityStep's own GRAVITY_CONTACT_SEARCH_ITERATIONS binary
-    // search only narrows the gap AFTER it already detected a collision
-    // at the far end of a step -- it does nothing for a step that's
-    // simply bigger than the ground line's own thickness, which can
-    // carry the robot from cleanly above a thin line to cleanly below it
-    // in one jump, with the end-of-step check reporting "not touching"
-    // because it's already through to the other side. That's tunneling,
-    // not a resting-precision problem, and no amount of searching WITHIN
-    // one oversized step can catch it. Splitting into a sequence of
-    // SIMULATION_GRAVITY_STEP-sized sub-steps -- the same size a plain G
-    // press already uses without this problem -- guarantees the
-    // environment gets tested at least once per that increment on the
-    // way down, so a thin line can never be skipped over unnoticed no
-    // matter how large the originally requested step was.
-    float remaining = step;
-    BOOL landedThisTick = FALSE;
-
-    while (remaining > 0.0f)
-    {
-        float subStep = (remaining > SIMULATION_GRAVITY_STEP) ? SIMULATION_GRAVITY_STEP : remaining;
-        remaining -= subStep;
-
-        if (applyGravityStep(hWnd, subStep))
-        {
-            landedThisTick = TRUE;
-            break;
-        }
-    }
-
-    if (landedThisTick)
+    if (applyGravityStep(hWnd, step))
         autoGravityVelocity = 0.0f; // landed -- next fall starts from rest
 
     // Rocky's knee-to-foot pendulum used to run here (an automatic damped
@@ -3495,7 +3401,6 @@ void renderCombinedFrame(void)
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         drawSimulationContactDebug();
-        drawSimulationLiveContactDots();
     }
 
     SwapBuffers(hDC);
