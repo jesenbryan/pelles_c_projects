@@ -690,6 +690,74 @@
 #define SIMULATION_LEG_SETTLE_STEP_DEG 1.0f
 #define SIMULATION_BODY_SETTLE_STEP_DEG 1.0f
 
+// The smallest drop advanceRockySettle will actually treat as "this step
+// helped." dropActiveRobotToRest's own binary search (GRAVITY_CONTACT_
+// SEARCH_ITERATIONS above) only converges to within roughly 1/2^12 of
+// whatever range it grew to -- close to the true contact point, but not
+// exact -- so right at the real resting pose, re-probing a tiny knee/body
+// rotation can keep reporting a wafer-thin "drop" that's really just that
+// search's own precision noise, not a genuine further settle. Without a
+// floor, advanceRockySettle would happily commit that noise every single
+// tick forever (never reaching a tick with truly nothing left to
+// improve), which is exactly what reads as visible vibration instead of
+// a clean stop. Comparing against this instead of a bare > 0.0f is what
+// lets it actually finish and go quiet once it's really done.
+#define SIMULATION_LEG_SETTLE_MIN_DROP 0.001f
+
+// Floor for advanceRockySettle's own per-probe step size (separate from
+// SIMULATION_LEG_SETTLE_STEP_DEG/SIMULATION_BODY_SETTLE_STEP_DEG above,
+// which are just the STARTING size). A fixed 1-degree-ish step that
+// never shrinks can decide "converged" too early -- there are poses
+// where the real remaining improvement at THAT step size rounds down
+// under SIMULATION_LEG_SETTLE_MIN_DROP even though a genuinely lower
+// resting position exists a finer fraction of a degree away (the same
+// "coarse step overshoots a narrow useful window" problem the original
+// one-shot version of this search used to guard against by halving its
+// step on every failed attempt). So now each probe does the same: halve
+// its OWN step whenever a try finds nothing worth committing, instead of
+// immediately giving up, and only that probe's search is considered
+// exhausted once its step has shrunk below this floor. Both probes have
+// to be exhausted before advanceRockySettle calls the whole thing
+// converged and stops for good -- see rockySettleConverged.
+#define SIMULATION_LEG_SETTLE_MIN_STEP_DEG 0.01f
+
+// Hard cap, in world units, on how far advanceRockySettle is allowed to
+// actually TRANSLATE the body in a single tick when a probe finds a real
+// drop to commit. Without this, a real report showed the body appearing
+// to sit still (small angle steps swinging the dangling foot, or tiny
+// sub-threshold drops) and then suddenly SNAP down by a large amount the
+// instant dropActiveRobotToRest's search finally found a big opening --
+// its search isn't bounded by the small per-tick angle step above, only
+// by SIMULATION_LEG_PUSH_SEARCH_MAX, so a single 1-degree knee/body
+// change can reveal a resting depth far bigger than the angle change
+// itself would suggest (a long shin arc swinging past a critical point,
+// for instance). Capping the committed translate to the same order of
+// magnitude as ordinary per-tick gravity (SIMULATION_GRAVITY_STEP) means
+// any leftover drop just gets picked up on the following tick(s) instead
+// -- either by applyGravityStep's own normal fall (if the remaining gap
+// is bigger than one gravity step) or by advanceRockySettle re-probing
+// again immediately (if it's smaller), so a big resting-depth discovery
+// still reads as a smooth multi-frame sink instead of an instant snap.
+#define SIMULATION_LEG_SETTLE_MAX_DROP_PER_TICK SIMULATION_GRAVITY_STEP
+
+// Fixed (NOT adaptive/shrinking) lookahead angle both settle probes use
+// to escape a local "flat spot" before giving up and halving their own
+// fine step. A real report showed Rocky settling into a visibly dangling
+// -- foot pose (rectangle resting on one corner, foot hanging in open
+// air) that never improved further even with auto-gravity left running:
+// the fine step (SIMULATION_LEG_SETTLE_STEP_DEG, shrinking toward
+// SIMULATION_LEG_SETTLE_MIN_STEP_DEG) had landed exactly on a point where
+// the foot's height barely changes with kneeAngle -- a near-zero local
+// slope -- even though continuing further in the same direction clearly
+// keeps helping. Halving an already-tiny step can never discover that:
+// every even-finer neighboring angle is just as flat. Scouting this much
+// bigger, constant-size angle purely to test "is there real improvement
+// out here" (never committed directly -- only used to decide whether to
+// keep nudging by the normal small per-tick step instead of shrinking
+// it) breaks out of that trap while still moving at the same smooth,
+// gradual pace as everywhere else in the settle system.
+#define SIMULATION_LEG_SETTLE_SCOUT_STEP_DEG 20.0f
+
 // Simulation mode: plain Left/Right (no Shift) rotates the WHOLE robot
 // (Semni.angle) -- see canvas.c's WM_KEYDOWN. Same value (and Left =
 // positive / Right = negative sign convention) as Design > Robot mode's

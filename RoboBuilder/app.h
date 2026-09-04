@@ -38,6 +38,16 @@
 // syncWeightRatioSlider).
 #define ID_WEIGHT_RATIO_SLIDER 1015
 
+// Testing-only toggles, Rocky editor only (Design > Robot, Rocky
+// selected) -- lets you drop the leg (knee/foot circles + shin arcs) or
+// the rectangular body out of both rendering and collision entirely, one
+// at a time, so a specific part's behavior (does gravity/settle work
+// right for JUST the body, or JUST the leg) can be tested in isolation
+// without the other part's own geometry interfering. See Rocky's own
+// legHidden/bodyHidden fields and input.c's WM_COMMAND handling.
+#define ID_ROCKY_TOGGLE_LEG_BUTTON 1016
+#define ID_ROCKY_TOGGLE_BODY_BUTTON 1017
+
 // dropdown at the top of the control panel that picks which of the three
 // robots (Semni/Rocky/Stilo) the Standing/Home/Mirror/Debug Log buttons
 // below it act on, and which one File > Save (canvas.c) exports -- see
@@ -219,6 +229,20 @@ typedef struct {
     // legWeight above -- see input.c's hActualWeightEdit/
     // hActualWeightLabel. Defaulted to 1.0f alongside bodyWeight/legWeight.
     float actualWeight;
+
+    // Testing-only visibility/collision toggles (see
+    // ID_ROCKY_TOGGLE_LEG_BUTTON/ID_ROCKY_TOGGLE_BODY_BUTTON above) --
+    // NOT part of the robot's actual pose/geometry, so printRockyAsInit/
+    // saveRockyAsRobArm deliberately don't touch these, and they're left
+    // out of Rob.txt/Arm.txt exports the same way. Both default FALSE
+    // (nothing hidden) since `app` is a plain zero-initialized global
+    // (see main.c) -- no explicit app_init.c initialization needed.
+    // legHidden drops the knee/foot circles AND the shin fillet arcs
+    // (computeRockyBodyCircles/computeRockyArcPoints) from both
+    // drawRocky and robotCollidesWithEnvironment; bodyHidden does the
+    // same for the rectangular torso (computeRockyRectSegments) alone.
+    BOOL legHidden;
+    BOOL bodyHidden;
 } Rocky;
 
 // ---- robot model ("Stilo") ----
@@ -389,6 +413,16 @@ typedef struct {
     // gets a dump when you actually want one (e.g. to copy a hand-posed
     // starting pose back into app_init.c).
     HWND hDebugLogButton;
+
+    // Rocky-only testing toggles (ID_ROCKY_TOGGLE_LEG_BUTTON/
+    // ID_ROCKY_TOGGLE_BODY_BUTTON) -- same checkbox-as-button convention
+    // as hViewSegmentsButton above. Shown only while Rocky is the active
+    // robot kind (see ID_ROBOT_SELECTOR's CBN_SELCHANGE handling in
+    // input.c, same "hide what has nothing to act on" treatment as
+    // hMirrorButton2), since they toggle Rocky's own legHidden/
+    // bodyHidden fields.
+    HWND hRockyToggleLegButton;
+    HWND hRockyToggleBodyButton;
 
     // bottom-left status label -- shows the friendly name of whichever
     // handle the mouse is currently hovering (e.g. "Thigh Arc 1"), blank

@@ -755,7 +755,7 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     float total = app->robotScene.rocky.bodyWeight + app->robotScene.rocky.legWeight;
                     app->rockyMassCenterDragTotal = (total > 1e-6f) ? total : 1.0f;
                 }
-                else if (isNear(app->mouseGL, rockyCenter, HIP_HANDLE_RADIUS))
+                else if (!app->robotScene.rocky.bodyHidden && isNear(app->mouseGL, rockyCenter, HIP_HANDLE_RADIUS))
                 {
                     app->draggingRockyBody = 1;
 
@@ -779,13 +779,13 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 // corner slack otherwise let an edge unconditionally beat
                 // a knee/foot/shin handle parked right in that corner,
                 // making it impossible to grab.
-                else if (rockyEdgeHitDown != ROCKY_EDGE_NONE &&
+                else if (!app->robotScene.rocky.bodyHidden && rockyEdgeHitDown != ROCKY_EDGE_NONE &&
                          rockyEdgeWins(app->mouseGL, rockyEdgeMidWorld(app->robotScene.rocky, rockyEdgeHitDown, rockyCenter),
                                        kneeWorld, footWorld, rockyShin1World, rockyShin2World))
                 {
                     app->draggingRockyEdge = rockyEdgeHitDown;
                 }
-                else if (isNear(app->mouseGL, kneeWorld, KNEE_HANDLE_RADIUS))
+                else if (!app->robotScene.rocky.legHidden && isNear(app->mouseGL, kneeWorld, KNEE_HANDLE_RADIUS))
                 {
                     app->draggingRockyKnee = 1;
 
@@ -797,13 +797,13 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     app->rockyKneeDragFootOffset.x = app->robotScene.rocky.footCircle.x - app->robotScene.rocky.kneeCircle.x;
                     app->rockyKneeDragFootOffset.y = app->robotScene.rocky.footCircle.y - app->robotScene.rocky.kneeCircle.y;
                 }
-                else if (isNear(app->mouseGL, footWorld, FOOT_HANDLE_RADIUS))
+                else if (!app->robotScene.rocky.legHidden && isNear(app->mouseGL, footWorld, FOOT_HANDLE_RADIUS))
                 {
                     // no offset capture needed -- nothing hangs off the
                     // foot, same as Semni's own draggingFoot
                     app->draggingRockyFoot = 1;
                 }
-                else if (isNear(app->mouseGL, rockyShin1World, ROCKY_SHIN_HANDLE_RADIUS))
+                else if (!app->robotScene.rocky.legHidden && isNear(app->mouseGL, rockyShin1World, ROCKY_SHIN_HANDLE_RADIUS))
                 {
                     app->draggingRockyShin1 = 1;
 
@@ -814,7 +814,7 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     app->rockyShinArcDragStartPerp = perpOffsetOnAxis(rockyShinLocalMouseDown, app->robotScene.rocky.kneeCircle, app->robotScene.rocky.footCircle);
                     app->rockyShinArcDragStartAngle = app->robotScene.rocky.shinArc1Angle;
                 }
-                else if (isNear(app->mouseGL, rockyShin2World, ROCKY_SHIN_HANDLE_RADIUS))
+                else if (!app->robotScene.rocky.legHidden && isNear(app->mouseGL, rockyShin2World, ROCKY_SHIN_HANDLE_RADIUS))
                 {
                     app->draggingRockyShin2 = 1;
 
@@ -1377,18 +1377,29 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     rockyEdgeWins(app->mouseGL, rockyEdgeMidWorld(app->robotScene.rocky, rockyEdgeHitNow, rockyCenter),
                                   kneeWorld, footWorld, rockyShin1World, rockyShin2World);
 
+                // Testing-only toggles (ID_ROCKY_TOGGLE_LEG_BUTTON/
+                // ID_ROCKY_TOGGLE_BODY_BUTTON) -- AND'd into each
+                // assignment below (rather than restructuring the whole
+                // priority cascade above) so a hidden part's condition
+                // simply reads false and the cascade falls through to
+                // whatever's next in priority exactly like the part was
+                // never there, same treatment as the mirrored
+                // WM_LBUTTONDOWN cascade above.
+                BOOL rockyLegHidden = app->robotScene.rocky.legHidden;
+                BOOL rockyBodyHidden = app->robotScene.rocky.bodyHidden;
+
                 app->hoverRockyMassCenter = rockyMassWinsNow;
-                app->hoverRockyBody = !app->hoverRockyMassCenter && isNear(app->mouseGL, rockyCenter, HIP_HANDLE_RADIUS);
-                app->hoverRockyEdge = (app->hoverRockyMassCenter || app->hoverRockyBody || !rockyEdgeWinsNow) ? ROCKY_EDGE_NONE : rockyEdgeHitNow;
-                app->hoverRockyKnee = !app->hoverRockyMassCenter && !app->hoverRockyBody && app->hoverRockyEdge == ROCKY_EDGE_NONE && isNear(app->mouseGL, kneeWorld, KNEE_HANDLE_RADIUS);
-                app->hoverRockyFoot = !app->hoverRockyMassCenter && !app->hoverRockyBody && app->hoverRockyEdge == ROCKY_EDGE_NONE && !app->hoverRockyKnee && isNear(app->mouseGL, footWorld, FOOT_HANDLE_RADIUS);
+                app->hoverRockyBody = !rockyBodyHidden && !app->hoverRockyMassCenter && isNear(app->mouseGL, rockyCenter, HIP_HANDLE_RADIUS);
+                app->hoverRockyEdge = (rockyBodyHidden || app->hoverRockyMassCenter || app->hoverRockyBody || !rockyEdgeWinsNow) ? ROCKY_EDGE_NONE : rockyEdgeHitNow;
+                app->hoverRockyKnee = !rockyLegHidden && !app->hoverRockyMassCenter && !app->hoverRockyBody && app->hoverRockyEdge == ROCKY_EDGE_NONE && isNear(app->mouseGL, kneeWorld, KNEE_HANDLE_RADIUS);
+                app->hoverRockyFoot = !rockyLegHidden && !app->hoverRockyMassCenter && !app->hoverRockyBody && app->hoverRockyEdge == ROCKY_EDGE_NONE && !app->hoverRockyKnee && isNear(app->mouseGL, footWorld, FOOT_HANDLE_RADIUS);
 
                 // Requested directly: hovering a shin arc handle (not just
                 // dragging it) should also turn it yellow -- same treatment
                 // Semni's own hoverSeamArc1/hoverThigh1/etc. give their own
                 // arc handles.
-                BOOL hoverRockyShin1Now = isNear(app->mouseGL, rockyShin1World, ROCKY_SHIN_HANDLE_RADIUS);
-                BOOL hoverRockyShin2Now = isNear(app->mouseGL, rockyShin2World, ROCKY_SHIN_HANDLE_RADIUS);
+                BOOL hoverRockyShin1Now = !rockyLegHidden && isNear(app->mouseGL, rockyShin1World, ROCKY_SHIN_HANDLE_RADIUS);
+                BOOL hoverRockyShin2Now = !rockyLegHidden && isNear(app->mouseGL, rockyShin2World, ROCKY_SHIN_HANDLE_RADIUS);
                 app->hoverRockyShin1 = hoverRockyShin1Now;
                 app->hoverRockyShin2 = hoverRockyShin2Now;
 
@@ -2907,7 +2918,7 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 // shiftHeld read further below
                 int shiftHeld = (LOWORD(wParam) & MK_SHIFT) != 0;
 
-                if (isNear(mouse, rockyCenter, HIP_HANDLE_RADIUS))
+                if (!app->robotScene.rocky.bodyHidden && isNear(mouse, rockyCenter, HIP_HANDLE_RADIUS))
                 {
                     float sizeStep = 0.02f;
                     if (wheelDelta > 0)
@@ -2938,7 +2949,7 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     // since the knee isn't bound to the body at all
                     // anymore (detached by explicit request).
                 }
-                else if (isNear(mouse, kneeWorld, KNEE_HANDLE_RADIUS) && shiftHeld)
+                else if (!app->robotScene.rocky.legHidden && isNear(mouse, kneeWorld, KNEE_HANDLE_RADIUS) && shiftHeld)
                 {
                     // rotate the knee joint -- bends the foot/shin around
                     // kneeCircle, leaving the rectangle and the knee's own
@@ -2953,7 +2964,7 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     else
                         app->robotScene.rocky.kneeAngle -= step;
                 }
-                else if (isNear(mouse, kneeWorld, KNEE_HANDLE_RADIUS))
+                else if (!app->robotScene.rocky.legHidden && isNear(mouse, kneeWorld, KNEE_HANDLE_RADIUS))
                 {
                     // plain scroll (no Shift) resizes the knee circle
                     // itself instead of bending -- same idea as the body
@@ -2973,7 +2984,7 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     // re-validate their existing angles against the new size
                     adjustRockyShinArcs(app);
                 }
-                else if (isNear(mouse, footWorld, FOOT_HANDLE_RADIUS))
+                else if (!app->robotScene.rocky.legHidden && isNear(mouse, footWorld, FOOT_HANDLE_RADIUS))
                 {
                     // plain scroll on the foot handle resizes it -- no
                     // Shift-gated rotate branch needed, same reasoning as
@@ -3630,7 +3641,8 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             int relYScale    = relYSize     + btnH       + rowGap; // Scale label + slider
             int relYSeg      = relYScale    + sliderH    + rowGap; // View Segments
             int relYDebug    = relYSeg      + btnH       + rowGap; // Debug Log
-            int panelH       = relYDebug    + btnH       + pad;
+            int relYRockyHide = relYDebug   + btnH       + rowGap; // Remove Leg | Remove Body (Rocky only, testing)
+            int panelH       = relYRockyHide + btnH      + pad;
 
             int panelX = rect.right - outerMargin - panelW;
             int panelY = outerMargin;
@@ -3756,6 +3768,14 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                  col1X, panelY + relYDebug, contentW, btnH,
                  SWP_NOZORDER);
 
+            SetWindowPos(app->ui.hRockyToggleLegButton, NULL,
+                 col1X, panelY + relYRockyHide, colW, btnH,
+                 SWP_NOZORDER);
+
+            SetWindowPos(app->ui.hRockyToggleBodyButton, NULL,
+                 col2X, panelY + relYRockyHide, colW, btnH,
+                 SWP_NOZORDER);
+
             // ---- bottom-left hover status strip ----
             int hoverPad = 8;
             int hoverLabelW = 280;
@@ -3814,6 +3834,8 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 app->ui.hScaleSlider,
                 app->ui.hViewSegmentsButton,
                 app->ui.hDebugLogButton,
+                app->ui.hRockyToggleLegButton,
+                app->ui.hRockyToggleBodyButton,
                 app->ui.hHoverPanel,
                 app->ui.hHoverLabel,
             };
@@ -4145,6 +4167,40 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             );
              SendMessage(app->ui.hDebugLogButton, WM_SETFONT, (WPARAM)g_semniUIFont, TRUE);
 
+             // Rocky-only testing toggles (see app.h's
+             // ID_ROCKY_TOGGLE_LEG_BUTTON/ID_ROCKY_TOGGLE_BODY_BUTTON and
+             // Rocky's own legHidden/bodyHidden comment) -- same checkbox-
+             // as-button convention as hViewSegmentsButton above, so each
+             // button IS its own toggle state (read via BM_GETCHECK in
+             // WM_COMMAND below). Created for all kinds like the rest of
+             // this panel, but only actually SHOWN while Rocky is active
+             // -- see ID_ROBOT_SELECTOR's CBN_SELCHANGE handling, same
+             // "hide what has nothing to act on" treatment as
+             // hMirrorButton2.
+             app->ui.hRockyToggleLegButton = CreateWindow(
+                L"BUTTON",
+                L"Remove Leg",
+                WS_VISIBLE | WS_CHILD | BS_AUTOCHECKBOX | BS_PUSHLIKE,
+                0, 0, 10, 10,
+                hwnd,
+                (HMENU)ID_ROCKY_TOGGLE_LEG_BUTTON,
+                NULL,
+                NULL
+            );
+             SendMessage(app->ui.hRockyToggleLegButton, WM_SETFONT, (WPARAM)g_semniUIFont, TRUE);
+
+             app->ui.hRockyToggleBodyButton = CreateWindow(
+                L"BUTTON",
+                L"Remove Body",
+                WS_VISIBLE | WS_CHILD | BS_AUTOCHECKBOX | BS_PUSHLIKE,
+                0, 0, 10, 10,
+                hwnd,
+                (HMENU)ID_ROCKY_TOGGLE_BODY_BUTTON,
+                NULL,
+                NULL
+            );
+             SendMessage(app->ui.hRockyToggleBodyButton, WM_SETFONT, (WPARAM)g_semniUIFont, TRUE);
+
              // Small backdrop behind the bottom-left hover label so the
              // status text stays legible no matter what color the 3D
              // scene behind it happens to be -- created before the label
@@ -4247,6 +4303,18 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                         if (app->ui.hMirrorButton2)
                             ShowWindow(app->ui.hMirrorButton2,
                                        (app->robotScene.activeKind == ROBOT_KIND_STILO) ? SW_SHOW : SW_HIDE);
+
+                        // Rocky-only testing toggles (ID_ROCKY_TOGGLE_LEG_
+                        // BUTTON/ID_ROCKY_TOGGLE_BODY_BUTTON) -- same
+                        // "hide what has nothing to act on" treatment as
+                        // hMirrorButton2 above, just gated on ROCKY
+                        // instead of STILO.
+                        if (app->ui.hRockyToggleLegButton)
+                            ShowWindow(app->ui.hRockyToggleLegButton,
+                                       (app->robotScene.activeKind == ROBOT_KIND_ROCKY) ? SW_SHOW : SW_HIDE);
+                        if (app->ui.hRockyToggleBodyButton)
+                            ShowWindow(app->ui.hRockyToggleBodyButton,
+                                       (app->robotScene.activeKind == ROBOT_KIND_ROCKY) ? SW_SHOW : SW_HIDE);
 
                         // Clear any drag/hover state left over from
                         // whichever robot was active before -- meaningful
@@ -4531,6 +4599,33 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     // this same app->showCircleSegments flag.
                     BOOL nowChecked = (SendMessage(app->ui.hViewSegmentsButton, BM_GETCHECK, 0, 0) == BST_CHECKED);
                     app->showCircleSegments = nowChecked;
+                    SetFocus(app->hwndMain);
+                    break;
+                }
+
+                case ID_ROCKY_TOGGLE_LEG_BUTTON:
+                {
+                    // Same "button IS the toggle state" pattern as
+                    // ID_VIEW_SEGMENTS_BUTTON above -- read back the
+                    // checkbox BS_AUTOCHECKBOX already flipped, rather
+                    // than tracking a separate bool. Drives Rocky's own
+                    // legHidden (app.h), which both drawRocky (renderer.c)
+                    // and robotCollidesWithEnvironment (canvas.c) gate on
+                    // -- see their own comments for why a hidden part
+                    // needs to drop out of BOTH, not just rendering, for
+                    // this to actually be useful as an isolation test.
+                    BOOL nowChecked = (SendMessage(app->ui.hRockyToggleLegButton, BM_GETCHECK, 0, 0) == BST_CHECKED);
+                    app->robotScene.rocky.legHidden = nowChecked;
+                    InvalidateRect(app->hwndMain, NULL, FALSE);
+                    SetFocus(app->hwndMain);
+                    break;
+                }
+
+                case ID_ROCKY_TOGGLE_BODY_BUTTON:
+                {
+                    BOOL nowChecked = (SendMessage(app->ui.hRockyToggleBodyButton, BM_GETCHECK, 0, 0) == BST_CHECKED);
+                    app->robotScene.rocky.bodyHidden = nowChecked;
+                    InvalidateRect(app->hwndMain, NULL, FALSE);
                     SetFocus(app->hwndMain);
                     break;
                 }

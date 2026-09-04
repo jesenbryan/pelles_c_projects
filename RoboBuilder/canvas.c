@@ -609,32 +609,42 @@ static BOOL robotCollidesWithEnvironment(void)
     {
         case ROBOT_KIND_ROCKY:
         {
-            CircleSegment bodyCircles[NUM_ROCKY_BODY_CIRCLES];
-            computeRockyBodyCircles(app.robotScene.rocky, bodyCircles);
-
-            for (int c = 0; c < NUM_ROCKY_BODY_CIRCLES; c++)
+            // Testing-only toggles (ID_ROCKY_TOGGLE_LEG_BUTTON/
+            // ID_ROCKY_TOGGLE_BODY_BUTTON, see app.h's Rocky comment) --
+            // a hidden part is dropped out of collision entirely, not
+            // just rendering (drawRocky has the matching guard), so
+            // gravity/settle behavior for the remaining part alone can
+            // actually be tested without the hidden part's own geometry
+            // silently still anchoring/blocking it.
+            if (!app.robotScene.rocky.legHidden)
             {
-                float ecx, ecy;
-                robotPointToEnvWorld(bodyCircles[c].center.x, bodyCircles[c].center.y, &ecx, &ecy);
-                float eRadius = robotLengthToEnvWorld(bodyCircles[c].radius);
+                CircleSegment bodyCircles[NUM_ROCKY_BODY_CIRCLES];
+                computeRockyBodyCircles(app.robotScene.rocky, bodyCircles);
 
-                if (pointCollidesWithAnyEnvironmentStroke(ecx, ecy, eRadius))
-                    return TRUE;
-            }
-
-            PointF arcPts[NUM_ROCKY_CIRCLE_SEGMENTS][ARC_SAMPLE_COUNT];
-            int arcCounts[NUM_ROCKY_CIRCLE_SEGMENTS];
-            computeRockyArcPoints(app.robotScene.rocky, arcPts, arcCounts);
-
-            for (int a = 0; a < NUM_ROCKY_CIRCLE_SEGMENTS; a++)
-            {
-                for (int i = 0; i < arcCounts[a]; i++)
+                for (int c = 0; c < NUM_ROCKY_BODY_CIRCLES; c++)
                 {
                     float ecx, ecy;
-                    robotPointToEnvWorld(arcPts[a][i].x, arcPts[a][i].y, &ecx, &ecy);
+                    robotPointToEnvWorld(bodyCircles[c].center.x, bodyCircles[c].center.y, &ecx, &ecy);
+                    float eRadius = robotLengthToEnvWorld(bodyCircles[c].radius);
 
-                    if (pointCollidesWithAnyEnvironmentStroke(ecx, ecy, eArcThickness))
+                    if (pointCollidesWithAnyEnvironmentStroke(ecx, ecy, eRadius))
                         return TRUE;
+                }
+
+                PointF arcPts[NUM_ROCKY_CIRCLE_SEGMENTS][ARC_SAMPLE_COUNT];
+                int arcCounts[NUM_ROCKY_CIRCLE_SEGMENTS];
+                computeRockyArcPoints(app.robotScene.rocky, arcPts, arcCounts);
+
+                for (int a = 0; a < NUM_ROCKY_CIRCLE_SEGMENTS; a++)
+                {
+                    for (int i = 0; i < arcCounts[a]; i++)
+                    {
+                        float ecx, ecy;
+                        robotPointToEnvWorld(arcPts[a][i].x, arcPts[a][i].y, &ecx, &ecy);
+
+                        if (pointCollidesWithAnyEnvironmentStroke(ecx, ecy, eArcThickness))
+                            return TRUE;
+                    }
                 }
             }
 
@@ -661,22 +671,25 @@ static BOOL robotCollidesWithEnvironment(void)
             // circles already get -- so the rectangle's real edge now
             // settles flush against the environment's real rendered
             // surface, with nothing invented added on either side.
-            RockyEdgeSegment rectEdges[NUM_ROCKY_RECT_SEGMENTS];
-            computeRockyRectSegments(app.robotScene.rocky, rectEdges);
-
-            for (int e = 0; e < NUM_ROCKY_RECT_SEGMENTS; e++)
+            if (!app.robotScene.rocky.bodyHidden)
             {
-                for (int i = 0; i < ARC_SAMPLE_COUNT; i++)
+                RockyEdgeSegment rectEdges[NUM_ROCKY_RECT_SEGMENTS];
+                computeRockyRectSegments(app.robotScene.rocky, rectEdges);
+
+                for (int e = 0; e < NUM_ROCKY_RECT_SEGMENTS; e++)
                 {
-                    float t = (float)i / (float)(ARC_SAMPLE_COUNT - 1);
-                    float lx = rectEdges[e].start.x + (rectEdges[e].end.x - rectEdges[e].start.x) * t;
-                    float ly = rectEdges[e].start.y + (rectEdges[e].end.y - rectEdges[e].start.y) * t;
+                    for (int i = 0; i < ARC_SAMPLE_COUNT; i++)
+                    {
+                        float t = (float)i / (float)(ARC_SAMPLE_COUNT - 1);
+                        float lx = rectEdges[e].start.x + (rectEdges[e].end.x - rectEdges[e].start.x) * t;
+                        float ly = rectEdges[e].start.y + (rectEdges[e].end.y - rectEdges[e].start.y) * t;
 
-                    float ecx, ecy;
-                    robotPointToEnvWorld(lx, ly, &ecx, &ecy);
+                        float ecx, ecy;
+                        robotPointToEnvWorld(lx, ly, &ecx, &ecy);
 
-                    if (pointCollidesWithAnyEnvironmentStroke(ecx, ecy, 0.0f))
-                        return TRUE;
+                        if (pointCollidesWithAnyEnvironmentStroke(ecx, ecy, 0.0f))
+                            return TRUE;
+                    }
                 }
             }
 
@@ -832,60 +845,75 @@ static void drawSimulationContactDebug(void)
     {
         case ROBOT_KIND_ROCKY:
         {
-            CircleSegment bodyCircles[NUM_ROCKY_BODY_CIRCLES];
-            computeRockyBodyCircles(app.robotScene.rocky, bodyCircles);
-
-            for (int c = 0; c < NUM_ROCKY_BODY_CIRCLES; c++)
+            // Testing-only toggles (ID_ROCKY_TOGGLE_LEG_BUTTON/
+            // ID_ROCKY_TOGGLE_BODY_BUTTON) -- a hidden part must not be
+            // SAMPLED here either, not just excluded from the real
+            // robotCollidesWithEnvironment check above: this overlay
+            // runs its own completely separate point pass purely to draw
+            // per-point hit/miss dots and print pointsTested= in the
+            // [CONTACT] dump, so without this guard a hidden leg/body
+            // would still show up in that count (and, worse, still draw
+            // its dots) even though it's supposedly gone.
+            if (!app.robotScene.rocky.legHidden)
             {
-                float ecx, ecy;
-                robotPointToEnvWorld(bodyCircles[c].center.x, bodyCircles[c].center.y, &ecx, &ecy);
-                float eRadius = robotLengthToEnvWorld(bodyCircles[c].radius);
-                BOOL hit = pointCollidesWithAnyEnvironmentStroke(ecx, ecy, eRadius);
-                // Colliding points draw noticeably BIGGER (2.5x), not just
-                // a different color -- a same-size color swap on an
-                // already-small marker is easy to miss at a glance,
-                // especially sitting right at ground contact where the
-                // environment's own line is drawn close by. Size is the
-                // primary signal here; color is secondary.
-                drawMarkerDisc(bodyCircles[c].center.x, bodyCircles[c].center.y, hit ? dotRadius * 2.5f : dotRadius,
-                               hit ? 0.95f : 0.15f, hit ? 0.15f : 0.85f, 0.15f, hit ? 1.0f : 0.9f);
-                if (logThisPass) { dbgPointCount++; if (hit) dbgHitCount++; }
-            }
+                CircleSegment bodyCircles[NUM_ROCKY_BODY_CIRCLES];
+                computeRockyBodyCircles(app.robotScene.rocky, bodyCircles);
 
-            PointF arcPts[NUM_ROCKY_CIRCLE_SEGMENTS][ARC_SAMPLE_COUNT];
-            int arcCounts[NUM_ROCKY_CIRCLE_SEGMENTS];
-            computeRockyArcPoints(app.robotScene.rocky, arcPts, arcCounts);
-
-            for (int a = 0; a < NUM_ROCKY_CIRCLE_SEGMENTS; a++)
-            {
-                for (int i = 0; i < arcCounts[a]; i++)
+                for (int c = 0; c < NUM_ROCKY_BODY_CIRCLES; c++)
                 {
                     float ecx, ecy;
-                    robotPointToEnvWorld(arcPts[a][i].x, arcPts[a][i].y, &ecx, &ecy);
-                    BOOL hit = pointCollidesWithAnyEnvironmentStroke(ecx, ecy, eArcThickness);
-                    drawMarkerDisc(arcPts[a][i].x, arcPts[a][i].y, hit ? smallDotRadius * 3.0f : smallDotRadius,
-                                   hit ? 0.95f : 0.15f, hit ? 0.15f : 0.85f, 0.15f, hit ? 1.0f : 0.7f);
+                    robotPointToEnvWorld(bodyCircles[c].center.x, bodyCircles[c].center.y, &ecx, &ecy);
+                    float eRadius = robotLengthToEnvWorld(bodyCircles[c].radius);
+                    BOOL hit = pointCollidesWithAnyEnvironmentStroke(ecx, ecy, eRadius);
+                    // Colliding points draw noticeably BIGGER (2.5x), not just
+                    // a different color -- a same-size color swap on an
+                    // already-small marker is easy to miss at a glance,
+                    // especially sitting right at ground contact where the
+                    // environment's own line is drawn close by. Size is the
+                    // primary signal here; color is secondary.
+                    drawMarkerDisc(bodyCircles[c].center.x, bodyCircles[c].center.y, hit ? dotRadius * 2.5f : dotRadius,
+                                   hit ? 0.95f : 0.15f, hit ? 0.15f : 0.85f, 0.15f, hit ? 1.0f : 0.9f);
                     if (logThisPass) { dbgPointCount++; if (hit) dbgHitCount++; }
+                }
+
+                PointF arcPts[NUM_ROCKY_CIRCLE_SEGMENTS][ARC_SAMPLE_COUNT];
+                int arcCounts[NUM_ROCKY_CIRCLE_SEGMENTS];
+                computeRockyArcPoints(app.robotScene.rocky, arcPts, arcCounts);
+
+                for (int a = 0; a < NUM_ROCKY_CIRCLE_SEGMENTS; a++)
+                {
+                    for (int i = 0; i < arcCounts[a]; i++)
+                    {
+                        float ecx, ecy;
+                        robotPointToEnvWorld(arcPts[a][i].x, arcPts[a][i].y, &ecx, &ecy);
+                        BOOL hit = pointCollidesWithAnyEnvironmentStroke(ecx, ecy, eArcThickness);
+                        drawMarkerDisc(arcPts[a][i].x, arcPts[a][i].y, hit ? smallDotRadius * 3.0f : smallDotRadius,
+                                       hit ? 0.95f : 0.15f, hit ? 0.15f : 0.85f, 0.15f, hit ? 1.0f : 0.7f);
+                        if (logThisPass) { dbgPointCount++; if (hit) dbgHitCount++; }
+                    }
                 }
             }
 
-            RockyEdgeSegment rectEdges[NUM_ROCKY_RECT_SEGMENTS];
-            computeRockyRectSegments(app.robotScene.rocky, rectEdges);
-
-            for (int e = 0; e < NUM_ROCKY_RECT_SEGMENTS; e++)
+            if (!app.robotScene.rocky.bodyHidden)
             {
-                for (int i = 0; i < ARC_SAMPLE_COUNT; i++)
-                {
-                    float t = (float)i / (float)(ARC_SAMPLE_COUNT - 1);
-                    float lx = rectEdges[e].start.x + (rectEdges[e].end.x - rectEdges[e].start.x) * t;
-                    float ly = rectEdges[e].start.y + (rectEdges[e].end.y - rectEdges[e].start.y) * t;
+                RockyEdgeSegment rectEdges[NUM_ROCKY_RECT_SEGMENTS];
+                computeRockyRectSegments(app.robotScene.rocky, rectEdges);
 
-                    float ecx, ecy;
-                    robotPointToEnvWorld(lx, ly, &ecx, &ecy);
-                    BOOL hit = pointCollidesWithAnyEnvironmentStroke(ecx, ecy, 0.0f);
-                    drawMarkerDisc(lx, ly, hit ? smallDotRadius * 3.0f : smallDotRadius,
-                                   hit ? 0.95f : 0.15f, hit ? 0.15f : 0.85f, 0.15f, hit ? 1.0f : 0.7f);
-                    if (logThisPass) { dbgPointCount++; if (hit) dbgHitCount++; }
+                for (int e = 0; e < NUM_ROCKY_RECT_SEGMENTS; e++)
+                {
+                    for (int i = 0; i < ARC_SAMPLE_COUNT; i++)
+                    {
+                        float t = (float)i / (float)(ARC_SAMPLE_COUNT - 1);
+                        float lx = rectEdges[e].start.x + (rectEdges[e].end.x - rectEdges[e].start.x) * t;
+                        float ly = rectEdges[e].start.y + (rectEdges[e].end.y - rectEdges[e].start.y) * t;
+
+                        float ecx, ecy;
+                        robotPointToEnvWorld(lx, ly, &ecx, &ecy);
+                        BOOL hit = pointCollidesWithAnyEnvironmentStroke(ecx, ecy, 0.0f);
+                        drawMarkerDisc(lx, ly, hit ? smallDotRadius * 3.0f : smallDotRadius,
+                                       hit ? 0.95f : 0.15f, hit ? 0.15f : 0.85f, 0.15f, hit ? 1.0f : 0.7f);
+                        if (logThisPass) { dbgPointCount++; if (hit) dbgHitCount++; }
+                    }
                 }
             }
             break;
@@ -1208,22 +1236,77 @@ static float dropActiveRobotToRest(void)
 // binary-search idiom the rest of gravity uses) genuinely lets the body
 // fall further while staying collision-free, so there is nothing here
 // that can accumulate into an oscillation or a stuck state.
+// Persists across calls: TRUE once BOTH probes below are individually
+// exhausted (see rockyKneeSettleStep/rockyBodySettleStep) for the
+// CURRENT landing, so this stops actually re-probing every subsequent
+// tick instead of continuing to test forever. Reset to FALSE by
+// applyGravityStep right when a FRESH landing begins (see its own
+// comment) so a robot that's lifted off and lands again later still
+// gets a full settle pass of its own.
+static BOOL rockySettleConverged = FALSE;
+
+// Each probe's OWN current step size, shrinking independently as it runs
+// out of room -- separate statics (not the SIMULATION_LEG_SETTLE_STEP_DEG/
+// SIMULATION_BODY_SETTLE_STEP_DEG constants, which are just where these
+// start) because a fixed step that never adapts can call things
+// "converged" too early: the real remaining improvement at a 1-degree
+// step can round down under SIMULATION_LEG_SETTLE_MIN_DROP even though a
+// genuinely lower resting pose exists a finer fraction of a degree away
+// (a real report of exactly this -- settling stopping with the body
+// still visibly floating). Halving on every failed attempt instead of
+// giving straight up is the same "a coarse step can overshoot a narrow
+// useful window" fix the original one-shot version of this search used,
+// just kept as per-probe state now that this runs continuously instead
+// of to completion in one call. Both reset to their starting constants
+// by applyGravityStep alongside rockySettleConverged.
+static float rockyKneeSettleStep = 0.0f;
+static float rockyBodySettleStep = 0.0f;
+
 static void advanceRockySettle(void)
 {
     if (app.robotScene.activeKind != ROBOT_KIND_ROCKY)
         return;
 
+    if (rockySettleConverged)
+        return; // both probes already confirmed exhausted for this landing
+
+    // Lazily initialize on first-ever use (also re-primed by
+    // applyGravityStep on every fresh landing -- see its own comment) --
+    // 0.0f only ever occurs before either has been set, since a real
+    // landing always (re)sets both to their starting constants.
+    if (rockyKneeSettleStep <= 0.0f)
+        rockyKneeSettleStep = SIMULATION_LEG_SETTLE_STEP_DEG;
+    if (rockyBodySettleStep <= 0.0f)
+        rockyBodySettleStep = SIMULATION_BODY_SETTLE_STEP_DEG;
+
     Rocky* r = &app.robotScene.rocky;
 
     // Probe 1: bend the knee.
+    if (rockyKneeSettleStep >= SIMULATION_LEG_SETTLE_MIN_STEP_DEG)
     {
         float baseKneeAngle = r->kneeAngle;
         float bestDrop = 0.0f;
         float bestKneeAngle = baseKneeAngle;
 
+        // Baseline clearance of the FOOT alone (same measurement
+        // rockyEscapeLegPenetration's own [STUCK] print uses), captured
+        // before either candidate angle is tried below. This is the
+        // fallback criterion for when dropActiveRobotToRest can't see an
+        // improvement at all: see the comment inside the loop for why
+        // that happens and why this catches it.
+        PointF baseCenter = getRockyCenter(*r);
+        PointF baseFootWorld = jointToWorld(r->footCircle, r->kneeCircle, baseKneeAngle, baseCenter, r->angle);
+        float baseFecx, baseFecy;
+        robotPointToEnvWorld(baseFootWorld.x, baseFootWorld.y, &baseFecx, &baseFecy);
+        float footCombinedRadius = robotLengthToEnvWorld(r->footRadius) + simEnvLineHalfWidthWorld();
+        float baseFootClearance = nearestEnvDistance(baseFecx, baseFecy) - footCombinedRadius;
+
+        float bestClearanceGain = 0.0f;
+        float bestClearanceKneeAngle = baseKneeAngle;
+
         for (int dir = -1; dir <= 1; dir += 2)
         {
-            r->kneeAngle = baseKneeAngle + dir * SIMULATION_LEG_SETTLE_STEP_DEG;
+            r->kneeAngle = baseKneeAngle + dir * rockyKneeSettleStep;
 
             float drop = dropActiveRobotToRest();
             if (drop > 0.0f)
@@ -1234,16 +1317,123 @@ static void advanceRockySettle(void)
                 bestDrop = drop;
                 bestKneeAngle = r->kneeAngle;
             }
+
+            // Fallback for exactly the "rectangle rests on a corner,
+            // foot dangles in mid-air" pose a real report showed:
+            // dropActiveRobotToRest tests a whole-body translate, but
+            // bending the knee never moves the rectangle's own corners
+            // -- once THOSE are already what's resting on the ground,
+            // any candidate kneeAngle re-collides via that same corner
+            // the instant the body is pushed down at all, so drop comes
+            // back exactly 0.0f no matter how much closer the dangling
+            // foot itself would get. Comparing the foot's own clearance
+            // directly catches that case: if this candidate angle
+            // doesn't embed anything and brings the foot measurably
+            // closer to the ground than the baseline, that is a real
+            // improvement even though the body itself never moves.
+            if (!robotCollidesWithEnvironment())
+            {
+                PointF center = getRockyCenter(*r);
+                PointF footWorld = jointToWorld(r->footCircle, r->kneeCircle, r->kneeAngle, center, r->angle);
+                float fecx, fecy;
+                robotPointToEnvWorld(footWorld.x, footWorld.y, &fecx, &fecy);
+                float clearance = nearestEnvDistance(fecx, fecy) - footCombinedRadius;
+                float gain = baseFootClearance - clearance;
+
+                if (clearance >= 0.0f && gain > bestClearanceGain)
+                {
+                    bestClearanceGain = gain;
+                    bestClearanceKneeAngle = r->kneeAngle;
+                }
+            }
         }
 
         r->kneeAngle = baseKneeAngle;
 
-        if (bestDrop > 0.0f)
+        // Compared against SIMULATION_LEG_SETTLE_MIN_DROP rather than a
+        // bare > 0.0f -- see that constant's own comment on why: without
+        // a floor, the search binary search's own precision noise right
+        // at the true resting pose reads as an endless string of
+        // wafer-thin "improvements," which is exactly what showed up as
+        // visible vibration instead of a clean stop.
+        if (bestDrop > SIMULATION_LEG_SETTLE_MIN_DROP)
         {
+            // Cap what's actually applied THIS tick -- see
+            // SIMULATION_LEG_SETTLE_MAX_DROP_PER_TICK's own comment: a
+            // small angle step can still uncover a large resting-depth
+            // change, and applying all of it in one tick is what read as
+            // a sudden snap after looking "stuck." Any amount left over
+            // just shows up again as a fresh bestDrop next tick (from the
+            // now-lower position), so nothing is lost, only spread out.
+            float appliedDrop = bestDrop;
+            if (appliedDrop > SIMULATION_LEG_SETTLE_MAX_DROP_PER_TICK)
+                appliedDrop = SIMULATION_LEG_SETTLE_MAX_DROP_PER_TICK;
+
             r->kneeAngle = bestKneeAngle;
-            translateActiveRobot(0.0f, -bestDrop);
-            printf("[SETTLE] kneeAngle=%.2f bent the knee %.2f deg, body fell %.5f further this tick\n",
-                   r->kneeAngle, SIMULATION_LEG_SETTLE_STEP_DEG, bestDrop);
+            translateActiveRobot(0.0f, -appliedDrop);
+            printf("[SETTLE] kneeAngle=%.2f bent the knee %.4f deg, body fell %.5f further this tick (of %.5f available)\n",
+                   r->kneeAngle, rockyKneeSettleStep, appliedDrop, bestDrop);
+            // Keep this probe's step size as-is -- it's still finding
+            // real gains at this scale, no need to refine yet.
+        }
+        else if (bestClearanceGain > SIMULATION_LEG_SETTLE_MIN_DROP)
+        {
+            // The body itself didn't fall any further, but the dangling
+            // foot is now genuinely closer to the ground than it was --
+            // commit the knee rotation alone. No translateActiveRobot
+            // call here: the body isn't moving, only the foot swings
+            // around the still-fixed knee.
+            r->kneeAngle = bestClearanceKneeAngle;
+            printf("[SETTLE] kneeAngle=%.2f swung the dangling foot %.4f deg closer to the ground (clearance improved %.5f, body stayed put)\n",
+                   r->kneeAngle, rockyKneeSettleStep, bestClearanceGain);
+        }
+        else
+        {
+            // Before shrinking further, scout a much bigger, FIXED angle
+            // in each direction -- see SIMULATION_LEG_SETTLE_SCOUT_STEP_DEG's
+            // own comment for why a shrinking step alone can get stuck on
+            // a local flat spot. Only ever used to decide direction/
+            // worthwhileness; the actual committed move below is still
+            // just one ordinary rockyKneeSettleStep-sized nudge, so this
+            // can't itself cause a visible jump.
+            BOOL scoutedKnee = FALSE;
+
+            for (int dir = -1; dir <= 1 && !scoutedKnee; dir += 2)
+            {
+                r->kneeAngle = baseKneeAngle + dir * SIMULATION_LEG_SETTLE_SCOUT_STEP_DEG;
+
+                float scoutDrop = dropActiveRobotToRest();
+                if (scoutDrop > 0.0f)
+                    translateActiveRobot(0.0f, scoutDrop); // undo the probe's own move
+
+                BOOL scoutClear = !robotCollidesWithEnvironment();
+                float scoutGain = -1.0f;
+
+                if (scoutClear)
+                {
+                    PointF sCenter = getRockyCenter(*r);
+                    PointF sFootWorld = jointToWorld(r->footCircle, r->kneeCircle, r->kneeAngle, sCenter, r->angle);
+                    float sfecx, sfecy;
+                    robotPointToEnvWorld(sFootWorld.x, sFootWorld.y, &sfecx, &sfecy);
+                    float sClearance = nearestEnvDistance(sfecx, sfecy) - footCombinedRadius;
+                    scoutGain = baseFootClearance - sClearance;
+                }
+
+                if (scoutDrop > SIMULATION_LEG_SETTLE_MIN_DROP
+                    || (scoutClear && scoutGain > SIMULATION_LEG_SETTLE_MIN_DROP))
+                {
+                    r->kneeAngle = baseKneeAngle + dir * rockyKneeSettleStep;
+                    printf("[SETTLE] kneeAngle=%.2f scouted real improvement %.1f deg out (drop=%.5f clearanceGain=%.5f) -- nudging that way instead of shrinking\n",
+                           r->kneeAngle, dir * SIMULATION_LEG_SETTLE_SCOUT_STEP_DEG, scoutDrop, scoutGain);
+                    scoutedKnee = TRUE;
+                }
+            }
+
+            if (!scoutedKnee)
+            {
+                r->kneeAngle = baseKneeAngle;
+                rockyKneeSettleStep *= 0.5f; // nothing here, and nothing further out either -- get finer before giving up
+            }
         }
     }
 
@@ -1256,6 +1446,7 @@ static void advanceRockySettle(void)
     // straight-down clearance afterward, so a rotation only ever commits
     // if it genuinely opens up more room to fall, same guarantee as the
     // knee probe above.
+    if (rockyBodySettleStep >= SIMULATION_LEG_SETTLE_MIN_STEP_DEG)
     {
         float baseBodyAngle = r->angle;
         float bestDrop = 0.0f;
@@ -1263,7 +1454,7 @@ static void advanceRockySettle(void)
 
         for (int dir = -1; dir <= 1; dir += 2)
         {
-            r->angle = baseBodyAngle + dir * SIMULATION_BODY_SETTLE_STEP_DEG;
+            r->angle = baseBodyAngle + dir * rockyBodySettleStep;
 
             float drop = dropActiveRobotToRest();
             if (drop > 0.0f)
@@ -1278,13 +1469,63 @@ static void advanceRockySettle(void)
 
         r->angle = baseBodyAngle;
 
-        if (bestDrop > 0.0f)
+        if (bestDrop > SIMULATION_LEG_SETTLE_MIN_DROP)
         {
+            // Same per-tick cap as the knee probe above, same reason --
+            // see SIMULATION_LEG_SETTLE_MAX_DROP_PER_TICK's comment.
+            float appliedDrop = bestDrop;
+            if (appliedDrop > SIMULATION_LEG_SETTLE_MAX_DROP_PER_TICK)
+                appliedDrop = SIMULATION_LEG_SETTLE_MAX_DROP_PER_TICK;
+
             r->angle = bestBodyAngle;
-            translateActiveRobot(0.0f, -bestDrop);
-            printf("[SETTLE] bodyAngle=%.2f rotated the rectangle %.2f deg, body fell %.5f further this tick\n",
-                   r->angle, SIMULATION_BODY_SETTLE_STEP_DEG, bestDrop);
+            translateActiveRobot(0.0f, -appliedDrop);
+            printf("[SETTLE] bodyAngle=%.2f rotated the rectangle %.4f deg, body fell %.5f further this tick (of %.5f available)\n",
+                   r->angle, rockyBodySettleStep, appliedDrop, bestDrop);
         }
+        else
+        {
+            // Same scouting idea as the knee probe above, same reason --
+            // just the drop-based criterion (rotating the whole body has
+            // no separate "dangling part" fallback of its own; a big body
+            // rotation either opens up a real drop or it doesn't).
+            BOOL scoutedBody = FALSE;
+
+            for (int dir = -1; dir <= 1 && !scoutedBody; dir += 2)
+            {
+                r->angle = baseBodyAngle + dir * SIMULATION_LEG_SETTLE_SCOUT_STEP_DEG;
+
+                float scoutDrop = dropActiveRobotToRest();
+                if (scoutDrop > 0.0f)
+                    translateActiveRobot(0.0f, scoutDrop); // undo the probe's own move
+
+                if (scoutDrop > SIMULATION_LEG_SETTLE_MIN_DROP)
+                {
+                    r->angle = baseBodyAngle + dir * rockyBodySettleStep;
+                    printf("[SETTLE] bodyAngle=%.2f scouted real improvement %.1f deg out (drop=%.5f) -- nudging that way instead of shrinking\n",
+                           r->angle, dir * SIMULATION_LEG_SETTLE_SCOUT_STEP_DEG, scoutDrop);
+                    scoutedBody = TRUE;
+                }
+            }
+
+            if (!scoutedBody)
+            {
+                r->angle = baseBodyAngle;
+                rockyBodySettleStep *= 0.5f;
+            }
+        }
+    }
+
+    if (rockyKneeSettleStep < SIMULATION_LEG_SETTLE_MIN_STEP_DEG
+        && rockyBodySettleStep < SIMULATION_LEG_SETTLE_MIN_STEP_DEG)
+    {
+        // Both probes have been refined all the way down to the floor
+        // and still found nothing worth committing -- THIS is the
+        // resting pose. Stop actually testing from here on (until the
+        // next fresh landing) rather than continuing to probe every tick
+        // for the same nothing.
+        rockySettleConverged = TRUE;
+        printf("[SETTLE] converged -- kneeAngle=%.2f bodyAngle=%.2f, no further improvement found\n",
+               r->kneeAngle, r->angle);
     }
 }
 
@@ -1518,19 +1759,37 @@ static BOOL applyGravityStep(HWND hWnd, float step)
         // that per-tick lean + re-settle read as a visible bounce/wobble
         // instead of a clean stop.)
         //
-        // Rocky specifically gets one more thing here, EVERY tick this
-        // block runs (not gated to suppressThisCall/fresh-landing-only --
-        // by explicit request this is continuous, unlike the removed
-        // slope-alignment idea referenced just above): if the knee was
-        // dragged far from the rectangle (the knee-detach feature, app.h's
-        // own comment on draggingRockyKnee), the LEG can land on
-        // something while the body itself is still floating well above
-        // the ground -- see advanceRockySettle's own comment for why
-        // running it every tick is safe here (no velocity/damping state
-        // to oscillate, unlike the old knee pendulum), and how it bends
-        // the knee AND rotates the rectangle a little further each call
-        // (by explicit request, so the body can tip instead of only ever
-        // sinking straight down) until there's nowhere left to go.
+        // Rocky specifically gets one more thing here, called EVERY tick
+        // this block runs (by explicit request this is continuous, unlike
+        // the removed slope-alignment idea referenced just above): if the
+        // knee was dragged far from the rectangle (the knee-detach
+        // feature, app.h's own comment on draggingRockyKnee), the LEG can
+        // land on something while the body itself is still floating well
+        // above the ground -- see advanceRockySettle's own comment for
+        // why running it every tick is safe here (no velocity/damping
+        // state to oscillate, unlike the old knee pendulum), and how it
+        // bends the knee AND rotates the rectangle a little further each
+        // call (by explicit request, so the body can tip instead of only
+        // ever sinking straight down) until there's nowhere left to go --
+        // advanceRockySettle stops re-probing on its own once that
+        // happens (rockySettleConverged), which is what actually keeps
+        // this from reading as endless vibration.
+        //
+        // !suppressThisCall here means a FRESH landing (wasLanded was
+        // FALSE going into this call) -- reset the convergence flag AND
+        // both probes' step sizes right at that moment so a robot that's
+        // lifted off (E/Q, a drag, or just walking off a ledge) and lands
+        // again later still gets its own full settle pass at full
+        // resolution, instead of staying permanently "already converged"
+        // (or stuck at whatever fine step size it had refined down to)
+        // from whatever the PREVIOUS landing settled into.
+        if (!suppressThisCall)
+        {
+            rockySettleConverged = FALSE;
+            rockyKneeSettleStep = SIMULATION_LEG_SETTLE_STEP_DEG;
+            rockyBodySettleStep = SIMULATION_BODY_SETTLE_STEP_DEG;
+        }
+
         advanceRockySettle();
     }
 
@@ -3802,6 +4061,29 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
                     translateActiveRobot(0.0f, clear);
                     printf("[LEGPUSH] kneeAngle=%.2f pushed body up by %.5f to keep the leg clear\n",
                            r->kneeAngle, clear);
+
+                    // Re-arm advanceRockySettle -- a real report showed
+                    // the body ending up visibly floating after a long
+                    // run of E/Q presses, each individually a small
+                    // necessary lift, none of them ever given back. The
+                    // reason: this lift keeps the body just barely clear
+                    // (same as a normal resting contact), so gravity's own
+                    // wasLanded/suppressThisCall bookkeeping in
+                    // applyGravityStep never sees a fresh "was airborne,
+                    // now landed" transition here -- it just looks like
+                    // the SAME landing continuing -- so rockySettleConverged
+                    // (already TRUE from settling once before) is never
+                    // reset, and advanceRockySettle keeps a no-op return
+                    // forever after, leaving every one of these small
+                    // pushes permanently un-settled. Resetting both flags
+                    // right here, the same way a fresh landing does,
+                    // means the very next gravity tick (auto-gravity's
+                    // timer, or a plain G press) gets a full-resolution
+                    // settle pass that can pull the body back down as far
+                    // as this new knee angle actually allows.
+                    rockySettleConverged = FALSE;
+                    rockyKneeSettleStep = SIMULATION_LEG_SETTLE_STEP_DEG;
+                    rockyBodySettleStep = SIMULATION_BODY_SETTLE_STEP_DEG;
                 }
                 else
                 {
@@ -3864,26 +4146,52 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             return 0;
         }
 
-        // Plain Left/Right (no Shift): rotates the WHOLE robot
-        // (Semni.angle), not any one joint -- joints are a Shift+scroll-
-        // over-the-hovered-circle action instead (WM_MOUSEWHEEL above),
-        // gated behind Shift specifically so a plain scroll still zooms
-        // (see that branch's own comment) -- unrelated to this. Same angle
-        // field and same per-press step Design > Robot mode's own
-        // Left/Right already nudges (input.c's WM_KEYDOWN, `angle +=
-        // 2.0f` / `-= 2.0f`), same Left = positive / Right = negative sign
-        // convention too, so a press feels identical between the two
-        // editors. Windows' own key-repeat re-fires this while held, same
-        // as plain G above, so no repeat bookkeeping needed.
+        // Plain Left/Right (no Shift): rotates the WHOLE robot, not any
+        // one joint -- joints are a Shift+scroll-over-the-hovered-circle
+        // action instead (WM_MOUSEWHEEL above), gated behind Shift
+        // specifically so a plain scroll still zooms (see that branch's
+        // own comment) -- unrelated to this. Same angle field and same
+        // per-press step Design > Robot mode's own Left/Right already
+        // nudges (input.c's WM_KEYDOWN, `angle += 2.0f` / `-= 2.0f`),
+        // same Left = positive / Right = negative sign convention too,
+        // so a press feels identical between the two editors. Windows'
+        // own key-repeat re-fires this while held, same as plain G
+        // above, so no repeat bookkeeping needed.
+        //
+        // Dispatches on activeKind now -- this used to unconditionally
+        // write app.robotScene.robot.angle (Semni's own field) no matter
+        // which kind was actually active, so a real report showed Left/
+        // Right silently doing nothing visible while Rocky or Stilo was
+        // selected: it WAS rotating something, just the invisible,
+        // inactive Semni sitting behind it, not the robot actually on
+        // screen. Every other kind-specific action in this file (E/Q,
+        // robotCollidesWithEnvironment, applyGravityStep's settle, etc.)
+        // already reads app.robotScene.activeKind for exactly this
+        // reason -- this was the one plain-rotate branch that never got
+        // the same treatment.
         if ((wParam == VK_LEFT || wParam == VK_RIGHT) && appMode == APP_MODE_SIMULATION)
         {
             float step = (wParam == VK_LEFT) ? SIMULATION_WHOLE_BODY_ROTATE_STEP_DEG : -SIMULATION_WHOLE_BODY_ROTATE_STEP_DEG;
 
-            app.robotScene.robot.angle += step;
+            switch (app.robotScene.activeKind)
+            {
+                case ROBOT_KIND_ROCKY:
+                    app.robotScene.rocky.angle += step;
+                    break;
+                case ROBOT_KIND_STILO:
+                    app.robotScene.stilo.angle += step;
+                    break;
+                case ROBOT_KIND_SEMNI:
+                default:
+                    app.robotScene.robot.angle += step;
+                    break;
+            }
 
             // Same re-settle WM_MOUSEWHEEL's joint-rotate branch and slope
             // response both use -- keeps a rotate from visibly sinking the
-            // robot into ground it's already resting on.
+            // robot into ground it's already resting on. Already reads
+            // activeKind internally (robotCollidesWithEnvironment's own
+            // switch), so no change needed here to act on the right kind.
             resolveUpwardIfPenetrating(hWnd, SIMULATION_SLOPE_CORRECTION_MAX);
 
             InvalidateRect(hWnd, NULL, FALSE);

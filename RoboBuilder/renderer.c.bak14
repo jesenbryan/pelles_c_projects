@@ -1,0 +1,2582 @@
+#include "renderer.h"
+#include <GL/gl.h>
+#include <math.h>
+#include "geometry.h"
+#include "robot.h"
+#include "config.h"
+#include "graphics.h"
+#include "editor_mode.h"
+#include "ui_state.h"   // for glWindowWidth/glWindowHeight -- drawDashedHorizontalLine's aspect ratio
+#include "save.h"       // for robArmSampleArcThroughMid/robArmSampleArcAwayFrom/robArmPolygonCentroid -- reused by computeRockyMassCenterWorld below
+#include <stdio.h>
+#include <string.h>     // for strlen -- drawRobotSizeBox's mm label
+
+// Forward declaration -- drawRockyMassCenterMarker is defined much further
+// down (right where Rocky's own drawRocky needs it), but drawSemni/
+// drawStilo above that point now also call it (it's a generic colored-dot
+// drawer, nothing Rocky-specific about it -- see its own comment at the
+// definition) for their own mass-center dots. Without this, a compiler
+// that reads top-to-bottom sees the call before ever seeing the (static)
+// definition, assumes an implicit int-returning extern, and then errors
+// on the real definition further down as a conflicting redeclaration.
+static void drawRockyMassCenterMarker(PointF p, int active, float radius, float opacity);
+
+// opacity multiplies every color's alpha (1.0 = fully opaque, down toward
+// 0.0 = nearly invisible) -- this is how the whole Semni scene gets
+// "dimmed" when it isn't the currently active editor mode (see
+// renderRobotScene), instead of a post-hoc full-screen overlay. A
+// full-screen black quad would also darken the shared white canvas
+// background underneath it, making an otherwise-empty scene look grayed
+// out everywhere rather than just its own strokes/lines fading -- scaling
+// each draw's own alpha keeps the shared background untouched and only
+// fades this subsystem's actual ink.
+// rs->draggingWhole/hoveringWhole (Simulation mode -- see app->
+// draggingRobotSim/hoveringRobotSim) force every line blue while actively
+// dragging the robot, or yellow while just hovering it (dragging takes
+// priority over hovering -- see hoveringWhole's comment in renderer.h for
+// why). `active` (the per-part hover/drag highlight Design mode's own
+// handles use, e.g. hipRotateHint/shinAffected below) now comes BEFORE
+// hoveringWhole's generic yellow, though, not after -- Simulation mode
+// feeds those same per-part conditions too now (Shift+hovering hip/knee
+// there arms hipRotateHint/shinAffected exactly like Design mode, see
+// canvas.c's WM_MOUSEWHEEL and renderRobot's rs.shiftHeld), so holding
+// Shift over a joint shows exactly which limb is about to rotate, the
+// same precise feedback Design mode gives, rather than the whole robot
+// just uniformly flashing yellow the way a plain hover elsewhere on the
+// body still does. draggingWhole still wins over everything -- an active
+// whole-robot drag should never be second-guessed by a stale per-part
+// hover highlight.
+static void setColor(RenderState* rs, int active, float r, float g, float b, float opacity)
+{
+    if (rs->draggingWhole)
+        glColor4f(0.2f, 0.4f, 1.0f, opacity);        // Simulation: grabbed and moving
+    else if (active)
+        glColor4f(r, g, b, opacity);
+    else if (rs->hoveringWhole)
+        glColor4f(1.0f, 0.82f, 0.0f, opacity);       // Simulation: hovered, not yet grabbed
+    else
+        glColor4f(0.0f, 0.0f, 0.0f, opacity);
+}
+
+void drawCircle(PointF c, float r)
+{
+    glBegin(GL_LINE_LOOP);
+    for (float t = 0; t < 6.28318f; t += 0.05f)
+    {
+        glVertex2f(
+            c.x + cosf(t) * r,
+            c.y + sinf(t) * r
+        );
+    }
+    glEnd();
+}
+
+// Computes the same circumcircle + sweep-direction curve drawArc renders
+// between p0 and p2 (sweeping the short way around, through p1 -- p1 is
+// the "bulge" handle, same role it played as the bezier control point),
+// as a poly-line written into out (up to ARC_SAMPLE_COUNT points -- see
+// renderer.h). Returns how many points were written: 3 if p0/p1/p2 are
+// (nearly) collinear (out just holds p0, p1, p2 directly, matching
+// drawArc's own straight-line fallback), ARC_SAMPLE_COUNT otherwise.
+// Factored out of drawArc so other code (canvas.c's ground-collision
+// check, input.c's robotBoundingBoxLocal) can walk the exact same curve
+// without duplicating this math -- same "shared computation" reasoning as
+// computeSemniCircleSegments/computeSemniBodyCircles elsewhere in this
+// file. Deliberately NOT static -- see renderer.h's declaration.
+int computeArcPoints(PointF p0, PointF p1, PointF p2, PointF out[ARC_SAMPLE_COUNT])
+{
+    CircleF circle = circumcircle(p0, p1, p2);
+
+    if (!circle.valid)
+    {
+        // p0, p1, p2 are (nearly) collinear -- fall back to straight lines
+        out[0] = p0;
+        out[1] = p1;
+        out[2] = p2;
+        return 3;
+    }
+
+    float a0 = atan2f(p0.y - circle.center.y, p0.x - circle.center.x);
+    float a1 = atan2f(p1.y - circle.center.y, p1.x - circle.center.x);
+    float a2 = atan2f(p2.y - circle.center.y, p2.x - circle.center.x);
+
+    const float TWO_PI = 2.0f * 3.1415926f;
+
+    // sweep from a0 to a2, normalized into (-PI, PI]
+    float sweep = a2 - a0;
+    while (sweep <= -3.1415926f) sweep += TWO_PI;
+    while (sweep > 3.1415926f) sweep -= TWO_PI;
+
+    // where does a1 fall relative to a0, using the same normalization?
+    float toMid = a1 - a0;
+    while (toMid <= -3.1415926f) toMid += TWO_PI;
+    while (toMid > 3.1415926f) toMid -= TWO_PI;
+
+    // if a1 isn't on the short way from a0 to a2, go the long way around
+    int midOnShortPath = (sweep >= 0.0f)
+        ? (toMid >= 0.0f && toMid <= sweep)
+        : (toMid <= 0.0f && toMid >= sweep);
+
+    if (!midOnShortPath)
+        sweep = (sweep >= 0.0f) ? sweep - TWO_PI : sweep + TWO_PI;
+
+    const int segments = ARC_SAMPLE_COUNT - 1;
+
+    for (int i = 0; i <= segments; i++)
+    {
+        float t = (float)i / (float)segments;
+        float a = a0 + sweep * t;
+
+        out[i].x = circle.center.x + cosf(a) * circle.radius;
+        out[i].y = circle.center.y + sinf(a) * circle.radius;
+    }
+
+    return ARC_SAMPLE_COUNT;
+}
+
+// Draws a circular arc that passes through p0, p1, and p2 (p1 is the
+// "bulge" handle, same role it played as the bezier control point).
+void drawArc(PointF p0, PointF p1, PointF p2)
+{
+    PointF pts[ARC_SAMPLE_COUNT];
+    int count = computeArcPoints(p0, p1, p2, pts);
+
+    glBegin(GL_LINE_STRIP);
+    for (int i = 0; i < count; i++)
+        glVertex2f(pts[i].x, pts[i].y);
+    glEnd();
+}
+
+void drawHandle(PointF p, int selected, float radius, float opacity)
+{
+    const int segments = 64;
+
+    // drawn semi-transparent (HANDLE_ALPHA) so handles sit lightly on top
+    // of the robot instead of as solid opaque shapes -- opacity further
+    // scales that down when this whole scene is the dimmed (inactive)
+    // editor mode
+    if (selected)
+        glColor4f(1.0f, 0.85f, 0.35f, HANDLE_ALPHA * opacity);
+    else
+        glColor4f(1.0f, 0.0f, 0.0f, HANDLE_ALPHA * opacity);
+
+    glBegin(GL_TRIANGLE_FAN);
+
+    glVertex2f(p.x, p.y);
+
+    for (int i = 0; i <= segments; i++)
+    {
+        float t = 2.0f * 3.1415926f * i / segments;
+
+        glVertex2f(
+            p.x + cosf(t) * radius,
+            p.y + sinf(t) * radius
+        );
+    }
+
+    glEnd();
+}
+
+// Draws a dashed horizontal "ground" reference line at design-space Y
+// coordinate `y` (must be config.h's GROUND_LINE_DESIGN_Y). Completely
+// unaffected by the "Robot Size" slider -- neither its on-screen size nor
+// its on-screen position changes AT ALL as g_robotScale moves -- while
+// still panning/zooming normally with the camera (middle-drag, mouse
+// wheel), same as everything else in the scene.
+//
+// Earlier versions tried to get this by keeping the shared (robotScale-
+// baked) projection/modelview and algebraically cancelling out the
+// Robot-Size-driven anchor term (g_scaleAnchorX/Y) from the vertex position.
+// That correctly zeroed out the anchor's own contribution, but missed that
+// applyProjection's halfX/halfY themselves are `aspect *
+// ROBOT_VIEW_HALF_EXTENT / (zoom * robotScale)` -- i.e. the whole shared projection scales linearly with
+// robotScale, not just the translate -- so ANY vertex placed through that
+// projection still ends up multiplied by robotScale somewhere, and the
+// line visibly moved/resized as the slider moved (e.g. its Y offset from
+// center literally doubled when robotScale doubled). Fully cancelling that
+// requires the same anchor-solving trick graphicsSetRobotScale itself uses
+// (correct only for the one point it was solved for -- the robot's own
+// center -- not for an arbitrary second point like this line's Y).
+//
+// Simplest correct fix: don't share the robotScale-baked projection at
+// all. Push a completely separate projection + modelview for just this
+// draw call, built from graphicsGetZoom() (plain camera zoom, no
+// robotScale factor) and graphicsGetManualPan() (plain user pan, no
+// Robot-Size anchor), then pop back to the caller's shared transform
+// afterward. From this line's point of view the Robot-Size slider simply
+// doesn't exist -- only genuine camera pan/zoom can move or resize it. Its
+// length is GROUND_LINE_VIEWPORT_MULTIPLIER times the CURRENT viewport's
+// half-width (config.h has the full reasoning) -- kept relative to the
+// viewport rather than either exactly matching it (never shows an end at
+// any zoom) or a fixed world-space length (balloons to an impractical
+// number of screen-widths as you zoom in), so it's always a small,
+// zoom-independent number of screen-widths across.
+void drawDashedHorizontalLine(float y, float opacity)
+{
+    float aspect = (glWindowHeight != 0) ? ((float)glWindowWidth / (float)glWindowHeight) : 1.0f;
+    float zoom = graphicsGetZoom();
+
+    float halfY = ROBOT_VIEW_HALF_EXTENT / zoom;
+    float halfX = halfY * aspect;
+
+    glMatrixMode(GL_PROJECTION);
+    glPushMatrix();
+    glLoadIdentity();
+    glOrtho(-halfX, halfX, -halfY, halfY, -1, 1);
+
+    glMatrixMode(GL_MODELVIEW);
+    glPushMatrix();
+    glLoadIdentity();
+
+    // Manual pan only (see graphicsGetManualPan's own comment) -- genuine
+    // camera panning still moves this line exactly like everything else,
+    // but the Robot-Size anchor folded into graphicsGetPan() never reaches
+    // it, since this whole draw bypasses the shared transform entirely.
+    float manualPanX, manualPanY;
+    graphicsGetManualPan(&manualPanX, &manualPanY);
+    glTranslatef(-manualPanX, -manualPanY, 0.0f);
+
+    glColor4f(0.6f, 0.6f, 0.6f, opacity); // medium gray, subtle
+
+    // Plain world-space lengths -- no division/derivation from zoom, so the
+    // dash pattern shrinks/grows normally with genuine camera zoom exactly
+    // the way any other world-space object drawn through this projection
+    // would.
+    float dashLength = 0.08f;  // shorter dashes for finer appearance
+    float gapLength = 0.06f;   // smaller gaps
+    float segmentLength = dashLength + gapLength;
+
+    // See GROUND_LINE_VIEWPORT_MULTIPLIER's own comment (config.h) for why
+    // this is halfX (the CURRENT viewport's own half-width) times a fixed
+    // multiplier, rather than exactly halfX (ratio 1, never shows an end)
+    // or a fixed world-space length (ratio balloons with zoom).
+    float halfWidth = halfX * GROUND_LINE_VIEWPORT_MULTIPLIER;
+    float left = -halfWidth;
+    float right = halfWidth;
+
+    // start from the left edge and draw dashes across
+    for (float x = left; x < right; x += segmentLength)
+    {
+        float dashEnd = x + dashLength;
+        if (dashEnd > right)
+            dashEnd = right;
+
+        glBegin(GL_LINES);
+        glVertex2f(x, y);
+        glVertex2f(dashEnd, y);
+        glEnd();
+    }
+
+    // Restore the caller's shared (robotScale-baked) projection/modelview
+    // exactly as it was -- renderRobot etc. drawn right after this still
+    // need it untouched.
+    glMatrixMode(GL_PROJECTION);
+    glPopMatrix();
+    glMatrixMode(GL_MODELVIEW);
+    glPopMatrix();
+}
+
+// Draws a rectangle around whichever robot kind is currently active,
+// rotated rigidly to match robotBoundingBoxLocal's box (input.c -- also
+// what the "Size: W x H mm" side-panel label is computed from) to however
+// that robot is currently posed, plus that same W x H mm text floating
+// just above its top edge. Like drawDashedHorizontalLine above, this rides
+// along with the shared pan/zoom/robotScale projection automatically
+// (drawn in the same local coordinates the robot's own body circles are),
+// so its SCREEN size shrinks/grows with the "Robot Size" slider just like
+// the robot's own outline does.
+//
+// alpha is the caller's already-computed hold+fade value (see
+// ROBOT_SIZE_BOX_HOLD_MS/FADE_MS, config.h) multiplied by whatever scene-
+// level opacity/dimming applies -- 0 means fully invisible, and callers
+// are expected to skip calling this entirely once it reaches that (no
+// point issuing GL calls for something nobody can see).
+static void drawRobotSizeBox(AppState* app, float alpha)
+{
+    float minX, maxX, minY, maxY;
+    robotBoundingBoxLocal(app, &minX, &maxX, &minY, &maxY);
+    if (maxX < minX || maxY < minY) return; // no geometry for this kind
+
+    // Rotate the box rigidly by whatever the robot's own whole-body angle
+    // currently is -- robotBoundingBoxLocal's box is computed in
+    // UNROTATED local space (same convention as save.c's export), but the
+    // robot itself is drawn rotated by its own b.angle around its own
+    // center (getCenter/rotatePoint throughout drawSemniBody/drawRocky/
+    // drawStiloBody). Home/Standing poses default to a decidedly non-zero
+    // angle (e.g. Semni's Home pose is 178 degrees, app_init.c) -- drawing
+    // this box axis-aligned in that same local space, unrotated, would
+    // miss the robot almost entirely rather than merely "not quite cover"
+    // it, which is exactly the bug this fixes. Rotating the box's own 4
+    // corners by the same angle/center is enough to keep it fully
+    // enclosing: it's a rigid copy of a box that already fully contains
+    // the (unrotated) local shape, and rotation preserves containment.
+    PointF center;
+    float angle;
+    switch (app->robotScene.activeKind)
+    {
+        case ROBOT_KIND_ROCKY:
+            center = getRockyCenter(app->robotScene.rocky);
+            angle = app->robotScene.rocky.angle;
+            break;
+
+        case ROBOT_KIND_STILO:
+            center = getStiloCenter(app->robotScene.stilo);
+            angle = app->robotScene.stilo.angle;
+            break;
+
+        case ROBOT_KIND_SEMNI:
+        default:
+            center = getCenter(app->robotScene.robot);
+            angle = app->robotScene.robot.angle;
+            break;
+    }
+
+    PointF corners[4] = {
+        { minX, minY },
+        { maxX, minY },
+        { maxX, maxY },
+        { minX, maxY },
+    };
+
+    glColor4f(0.15f, 0.55f, 0.95f, alpha);
+    glLineWidth(1.5f);
+    glBegin(GL_LINE_LOOP);
+    for (int i = 0; i < 4; i++)
+    {
+        PointF w = rotatePoint(corners[i], center, angle);
+        glVertex2f(w.x, w.y);
+    }
+    glEnd();
+    glLineWidth(1.0f);
+
+    // "W x H mm" label, floating in world space just above the box's
+    // (rotated) top edge -- glRasterPos2f is transformed by the current
+    // modelview/projection like any vertex, so this tracks the box's
+    // on-screen position automatically instead of needing a separate
+    // screen-pixel placement pass. The glyphs themselves are a fixed 16px
+    // regardless of zoom (see canvas.c's WM_CREATE, where fontBase is
+    // built) -- same "readable at any scale" reasoning as every other HUD
+    // text in this app (zoom readout, pixel readout, mode indicator, ...).
+    //
+    // Multiplied by the CURRENT "Robot Size" slider value
+    // (graphicsGetRobotScale) rather than left at the fixed designed size
+    // -- matches updateRobotSizeLabel's own identical change (input.c):
+    // dragging this slider is meant to read as actually resizing the
+    // robot's real-world footprint, not just how it's being viewed, so
+    // the number shown here has to move together with the box itself.
+    if (fontBase != 0)
+    {
+        float robotScale = graphicsGetRobotScale();
+        int widthMM  = (int)((maxX - minX) * MM_PER_WORLD_UNIT * robotScale + 0.5f);
+        int heightMM = (int)((maxY - minY) * MM_PER_WORLD_UNIT * robotScale + 0.5f);
+
+        // Rocky specifically shown swapped -- same requested override as
+        // input.c's updateRobotSizeLabel, kept in sync with it so the
+        // side-panel text and this in-scene label never disagree.
+        int displayWidthMM = widthMM;
+        int displayHeightMM = heightMM;
+        if (app->robotScene.activeKind == ROBOT_KIND_ROCKY)
+        {
+            displayWidthMM = heightMM;
+            displayHeightMM = widthMM;
+        }
+
+        char buf[64];
+        wsprintfA(buf, "%d x %d mm", displayWidthMM, displayHeightMM);
+
+        PointF labelWorld = rotatePoint((PointF){ minX, maxY + 0.05f }, center, angle);
+
+        glColor4f(0.15f, 0.55f, 0.95f, alpha);
+        glRasterPos2f(labelWorld.x, labelWorld.y);
+        glPushAttrib(GL_LIST_BIT);
+        glListBase(fontBase - 32);
+        glCallLists((GLsizei)strlen(buf), GL_UNSIGNED_BYTE, buf);
+        glPopAttrib();
+    }
+}
+
+// Computes drawRobotSizeBox's current hold/fade alpha from
+// app->robotSizeBoxStartTick (see its own comment in app.h), 0 meaning
+// "don't draw it at all" -- either the slider has never been touched, or
+// enough time has passed since the last move that it's fully faded out.
+// Factored out of renderApp/renderRobotScene since both need the identical
+// computation.
+static float robotSizeBoxAlpha(AppState* app)
+{
+    if (app->robotSizeBoxStartTick == 0)
+        return 0.0f;
+
+    DWORD elapsed = GetTickCount() - app->robotSizeBoxStartTick;
+
+    if (elapsed < (DWORD)ROBOT_SIZE_BOX_HOLD_MS)
+        return 1.0f;
+
+    if (elapsed < (DWORD)(ROBOT_SIZE_BOX_HOLD_MS + ROBOT_SIZE_BOX_FADE_MS))
+    {
+        float fadeElapsed = (float)(elapsed - ROBOT_SIZE_BOX_HOLD_MS);
+        return 1.0f - (fadeElapsed / (float)ROBOT_SIZE_BOX_FADE_MS);
+    }
+
+    return 0.0f;
+}
+
+void drawSemniBody(Semni b, RenderState* rs, float opacity)
+{
+    PointF center = getCenter(b);
+    float angle = b.angle;
+
+    PointF headCenter = rotatePoint((PointF){b.headX, b.y}, center, angle);
+    PointF buttCenter = rotatePoint((PointF){b.buttX, b.y}, center, angle);
+    PointF inner = rotatePoint(b.innerCircle, center, angle);
+
+	// ---- HEAD circle ----
+    // sliders are gone now -- the resize handle's hover state takes over
+    // this highlight instead
+    setColor(rs, rs->hoverHead, 0.2f, 0.4f, 1.0f, opacity);
+    drawCircle(headCenter, b.headRadius);
+
+	// ---- BUTT circle ----
+    setColor(rs, rs->hoverButt, 0.2f, 0.4f, 1.0f, opacity);
+    drawCircle(buttCenter, b.buttRadius);
+
+	// ---- INNER circle ----
+    // same "compute into a named local first" pattern seamActive uses
+    // below, rather than inlining the OR directly into the setColor call
+    //int innerActive = rs->draggingInner || rs->hoverHip;
+    //
+    // hoverHip WHILE HOLDING SHIFT is excluded here -- shift arms the
+    // hip-rotate scroll, which swings the whole leg rather than the hip
+    // itself, so that combo highlights the leg instead (drawThigh/
+    // drawShin's hipRotateHint) and leaves the hip circle unhighlighted.
+    // A plain hover (no shift) still means "scroll resizes this circle" in
+    // DESIGN mode, so it keeps this blue highlight there.
+    //
+    // "&& !rs->hoveringWhole" excludes this in SIMULATION mode though --
+    // rs->hoveringWhole is only ever set there (app->hoveringRobotSim,
+    // Design mode never touches it), and there's no resize action to
+    // preview in Simulation at all (scrolling a joint only ever rotates
+    // it, and only with Shift held -- see canvas.c's WM_MOUSEWHEEL), so a
+    // plain hover on the hip circle there should read exactly like
+    // hovering anywhere else on the body: setColor's own generic yellow
+    // (hoveringWhole), not this blue "you can resize this" hint that
+    // doesn't apply.
+    setColor(rs, rs->draggingInner || (rs->hoverHip && !rs->shiftHeld && !rs->hoveringWhole), 0.2f, 0.4f, 1.0f, opacity);
+    drawCircle(inner, b.innerRadius);
+
+    // seam arc 1/2 (formerly "top"/"bottom"): each is a circular arc
+    // internally tangent to both the head and butt circles, parameterized
+    // by the angle where it attaches to the head circle (seamArc1Angle/
+    // seamArc2Angle) -- the fillet's radius, center, and its other
+    // tangent point (on butt) all fall out of a closed-form solve. Done
+    // in local (unrotated) space, then rotated into world space at the
+    // end, same pattern used elsewhere for local-frame points.
+    PointF headLocal = { b.headX, b.y };
+    PointF buttLocal = { b.buttX, b.y };
+    PointF bodyMidLocal = { (headLocal.x + buttLocal.x) * 0.5f, (headLocal.y + buttLocal.y) * 0.5f };
+
+    Fillet seamArc1Fillet = filletFromAttachAngle(headLocal, b.headRadius, buttLocal, b.buttRadius, b.seamArc1Angle, MIN_ARC_R, MAX_ARC_R);
+    PointF seamArc1HeadTangentLocal = circleEdge(headLocal, b.headRadius, b.seamArc1Angle); // exact, by definition of the attach angle
+    PointF seamArc1ButtTangentLocal = internalTangentPoint(seamArc1Fillet.center, seamArc1Fillet.radius, buttLocal, b.buttRadius);
+    // hint point for drawArc: the point on the fillet circle nearest the
+    // body's midline, so it sweeps the near/visible arc instead of the
+    // far side of a possibly-huge circle
+    PointF seamArc1NearLocal = circleTowardPoint(seamArc1Fillet.center, seamArc1Fillet.radius, bodyMidLocal);
+
+    Fillet seamArc2Fillet = filletFromAttachAngle(headLocal, b.headRadius, buttLocal, b.buttRadius, b.seamArc2Angle, MIN_ARC_R, MAX_ARC_R);
+    PointF seamArc2HeadTangentLocal = circleEdge(headLocal, b.headRadius, b.seamArc2Angle);
+    PointF seamArc2ButtTangentLocal = internalTangentPoint(seamArc2Fillet.center, seamArc2Fillet.radius, buttLocal, b.buttRadius);
+    PointF seamArc2NearLocal = circleTowardPoint(seamArc2Fillet.center, seamArc2Fillet.radius, bodyMidLocal);
+
+    // seamArc1HeadTangentLocal/seamArc1NearLocal/seamArc1ButtTangentLocal
+    // all sit exactly on the same known circle by construction, so
+    // feeding them through the existing 3-point drawArc reuses its
+    // circumcircle + sweep-direction logic for free -- the near-pole
+    // point just tells it which way (short or long way around) to sweep
+    //
+    // dragging either seam handle updates BOTH seamArc1Angle and
+    // seamArc2Angle (see WM_MOUSEMOVE's mirrored assignment), so both
+    // arcs highlight together too -- otherwise only the one under the
+    // cursor would turn blue even though the other is visibly moving too
+    int seamActive = rs->draggingSeamArc1 || rs->draggingSeamArc2;
+
+    PointF seamArc1P0 = rotatePoint(seamArc1HeadTangentLocal, center, angle);
+    PointF seamArc1P1 = rotatePoint(seamArc1NearLocal, center, angle);
+    PointF seamArc1P2 = rotatePoint(seamArc1ButtTangentLocal, center, angle);
+
+    PointF seamArc2P0 = rotatePoint(seamArc2HeadTangentLocal, center, angle);
+    PointF seamArc2P1 = rotatePoint(seamArc2NearLocal, center, angle);
+    PointF seamArc2P2 = rotatePoint(seamArc2ButtTangentLocal, center, angle);
+
+    setColor(rs, seamActive, 0.2f, 0.4f, 1.0f, opacity);
+    drawArc(seamArc1P0, seamArc1P1, seamArc1P2);
+
+    setColor(rs, seamActive, 0.2f, 0.4f, 1.0f, opacity);
+    drawArc(seamArc2P0, seamArc2P1, seamArc2P2);
+}
+
+// Draws the knee joint and the two arcs connecting it back to the inner
+// joint (innerCircle), so together they read as a thigh: hip circle ->
+// two tapered arcs -> knee circle.
+//
+// The knee/thigh points first get rotated by hipAngle around innerCircle
+// (the hip joint's own rotation) and only then by the whole-body angle
+// around center, so scrolling on the hip handle swings the leg without
+// touching the rest of the body.
+static void drawThigh(Semni b, RenderState* rs, float opacity)
+{
+    PointF center = getCenter(b);
+    float angle = b.angle;
+
+    PointF kneeWorld = jointToWorld(b.kneeCircle, b.innerCircle, b.hipAngle, center, angle);
+
+    // the whole thigh (knee circle + both connecting arcs) swings with the
+    // hip, so hovering the hip handle WHILE HOLDING SHIFT previews that
+    // reach in blue -- shift is what actually arms the hip-rotate scroll
+    // (see WM_MOUSEWHEEL), so the preview is scoped to match: a plain
+    // hover (no shift) only highlights the hip's own handle.
+    // Actively dragging the hip (draggingInner) also carries the whole leg
+    // along rigidly (see WM_MOUSEMOVE's hipDragKneeOffset/hipDragFootOffset
+    // handling), so that gets the same blue highlight, unconditionally.
+    int hipRotateHint = (rs->hoverHip && rs->shiftHeld) || rs->draggingInner;
+
+    // knee's own highlight mirrors the hip circle's rule in drawSemniBody:
+    // hoverKnee WHILE HOLDING SHIFT arms the knee-rotate scroll (see
+    // WM_MOUSEWHEEL), which swings the shin/foot rather than the knee
+    // itself, so that combo is excluded here -- it highlights the shin
+    // instead (drawShin's shinAffected already includes hoverKnee && shift).
+    // A plain hover (no shift) keeps the highlight.
+    //
+    // draggingKnee is deliberately left out here too: actively dragging the
+    // knee stretches the thigh arcs (they're what visibly reacts -- see the
+    // draggingKnee highlight added below), not the knee circle itself, so
+    // the circle stays unhighlighted for the duration of that drag. The
+    // hoverKnee term also needs !draggingKnee -- the cursor is still
+    // sitting on the handle for the whole drag (that's what started it),
+    // so without this the hover term alone would keep re-lighting the
+    // circle every frame regardless of the exclusion above.
+    //
+    // "&& !rs->hoveringWhole" excludes the plain-hover resize hint in
+    // Simulation mode, same reasoning as the hip circle's own version in
+    // drawSemniBody -- there's no resize action there, so it should fall
+    // through to setColor's generic yellow instead of this blue hint.
+    setColor(rs, hipRotateHint || (rs->hoverKnee && !rs->shiftHeld && !rs->draggingKnee && !rs->hoveringWhole), 0.2f, 0.4f, 1.0f, opacity);
+    drawCircle(kneeWorld, b.kneeRadius);
+
+    // the two thigh arcs: same tangent-fillet construction as the
+    // head/butt seams, just between innerCircle and kneeCircle -- worked
+    // out in the leg's own local (pre-hipAngle) frame, then rotated into
+    // world space at the end, same pattern drawSemniBody uses for the
+    // head/butt seams (which work in pre-body-angle local space)
+    PointF axisMidLocal = { (b.innerCircle.x + b.kneeCircle.x) * 0.5f, (b.innerCircle.y + b.kneeCircle.y) * 0.5f };
+
+    Fillet thigh1Fillet = filletFromAttachAngle(b.innerCircle, b.innerRadius, b.kneeCircle, b.kneeRadius, b.thighArc1Angle, MIN_THIGH_ARC_R, MAX_SEMNI_THIGH_ARC_R);
+    PointF thigh1InnerTangentLocal = circleEdge(b.innerCircle, b.innerRadius, b.thighArc1Angle);
+    PointF thigh1KneeTangentLocal = internalTangentPoint(thigh1Fillet.center, thigh1Fillet.radius, b.kneeCircle, b.kneeRadius);
+    PointF thigh1NearLocal = circleTowardPoint(thigh1Fillet.center, thigh1Fillet.radius, axisMidLocal);
+
+    // thighArc2Angle uses the concave construction (bulges inward instead
+    // of outward -- see app.h's comment). The knee-side tangent point for
+    // an externally-tangent fillet is just circleTowardPoint(fillet,
+    // kneeCircle) instead of internalTangentPoint -- externally tangent
+    // circles touch exactly on the line between their centers, which is
+    // exactly what circleTowardPoint finds.
+    Fillet thigh2Fillet = filletFromAttachAngleConcave(b.innerCircle, b.innerRadius, b.kneeCircle, b.kneeRadius, b.thighArc2Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC2_CONCAVE_R);
+    PointF thigh2InnerTangentLocal = circleEdge(b.innerCircle, b.innerRadius, b.thighArc2Angle);
+    PointF thigh2KneeTangentLocal = circleTowardPoint(thigh2Fillet.center, thigh2Fillet.radius, b.kneeCircle);
+    PointF thigh2NearLocal = circleTowardPoint(thigh2Fillet.center, thigh2Fillet.radius, axisMidLocal);
+
+    // dragging the knee circle also stretches/shrinks both thigh arcs
+    // (they attach to kneeCircle, which just moved along the hip->knee
+    // axis -- see WM_MOUSEMOVE's draggingKnee/constrainToAxis handling),
+    // so that gets the same blue highlight as actually dragging an arc's
+    // own handle, same "carries other parts along" idea as hipRotateHint
+    setColor(rs, rs->draggingThigh1 || rs->draggingKnee || hipRotateHint, 0.2f, 0.4f, 1.0f, opacity);
+    drawArc(jointToWorld(thigh1InnerTangentLocal, b.innerCircle, b.hipAngle, center, angle),
+            jointToWorld(thigh1NearLocal, b.innerCircle, b.hipAngle, center, angle),
+            jointToWorld(thigh1KneeTangentLocal, b.innerCircle, b.hipAngle, center, angle));
+
+    setColor(rs, rs->draggingThigh2 || rs->draggingKnee || hipRotateHint, 0.2f, 0.4f, 1.0f, opacity);
+    drawArc(jointToWorld(thigh2InnerTangentLocal, b.innerCircle, b.hipAngle, center, angle),
+            jointToWorld(thigh2NearLocal, b.innerCircle, b.hipAngle, center, angle),
+            jointToWorld(thigh2KneeTangentLocal, b.innerCircle, b.hipAngle, center, angle));
+}
+
+static void drawThighHandles(Semni b, RenderState* rs, float opacity)
+{
+    PointF center = getCenter(b);
+    float angle = b.angle;
+
+    PointF kneeWorld = jointToWorld(b.kneeCircle, b.innerCircle, b.hipAngle, center, angle);
+
+    // thigh arc handles: pinned to the exact middle of the hip->knee axis
+    // (circleAtAxisMid), same idea as the head/butt seam handles' use of
+    // circleAtX -- except the axis here can point any direction, so the
+    // generalized version is needed instead of pinning to a fixed X
+    PointF axisMidLocal = { (b.innerCircle.x + b.kneeCircle.x) * 0.5f, (b.innerCircle.y + b.kneeCircle.y) * 0.5f };
+
+    Fillet thigh1Fillet = filletFromAttachAngle(b.innerCircle, b.innerRadius, b.kneeCircle, b.kneeRadius, b.thighArc1Angle, MIN_THIGH_ARC_R, MAX_SEMNI_THIGH_ARC_R);
+    PointF thigh1NearLocal = circleTowardPoint(thigh1Fillet.center, thigh1Fillet.radius, axisMidLocal);
+    PointF thigh1MidLocal = circleAtAxisMid(thigh1Fillet.center, thigh1Fillet.radius, b.innerCircle, b.kneeCircle, thigh1NearLocal);
+
+    Fillet thigh2Fillet = filletFromAttachAngleConcave(b.innerCircle, b.innerRadius, b.kneeCircle, b.kneeRadius, b.thighArc2Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC2_CONCAVE_R);
+    PointF thigh2NearLocal = circleTowardPoint(thigh2Fillet.center, thigh2Fillet.radius, axisMidLocal);
+    PointF thigh2MidLocal = circleAtAxisMid(thigh2Fillet.center, thigh2Fillet.radius, b.innerCircle, b.kneeCircle, thigh2NearLocal);
+
+    PointF thigh1World = jointToWorld(thigh1MidLocal, b.innerCircle, b.hipAngle, center, angle);
+    PointF thigh2World = jointToWorld(thigh2MidLocal, b.innerCircle, b.hipAngle, center, angle);
+
+    drawHandle(kneeWorld, rs->draggingKnee || rs->hoverKnee, KNEE_HANDLE_RADIUS, opacity);
+    drawHandle(thigh1World, rs->draggingThigh1 || rs->hoverThigh1, THIGH_HANDLE_RADIUS, opacity);
+    drawHandle(thigh2World, rs->draggingThigh2 || rs->hoverThigh2, THIGH_HANDLE_RADIUS, opacity);
+}
+
+// Continues the leg past the knee: draws the foot joint and the two arcs
+// connecting it back to kneeCircle, same tangent-fillet construction as
+// drawThigh -- the shin arcs are parameterized by the angle where they
+// attach to kneeCircle (shinArc1Angle/shinArc2Angle), just one joint
+// further down the chain. The foot and shin points first rotate around
+// kneeCircle by kneeAngle (the knee's own rotation), then follow the
+// hip/body transforms like the rest of the leg -- so scrolling on the
+// knee handle swings the shin without touching the thigh, hip, or body.
+static void drawShin(Semni b, RenderState* rs, float opacity)
+{
+    PointF center = getCenter(b);
+    float angle = b.angle;
+
+    PointF footWorld = nestedJointToWorld(b.footCircle, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle);
+
+    // the shin (foot/foot circle + both connecting arcs) swings whenever
+    // either the hip OR the knee rotates -- both of those rotations are
+    // now Shift-gated scrolls (see WM_MOUSEWHEEL), so the preview matches:
+    // hovering either handle WHILE HOLDING SHIFT highlights the shin/foot,
+    // same idea as drawThigh's hipRotateHint.
+    // Actively dragging the hip (draggingInner) carries the foot/foot
+    // along too (hipDragFootOffset), so it gets the same highlight,
+    // unconditionally, same as drawThigh's hipRotateHint.
+    int shinAffected = ((rs->hoverKnee || rs->hoverHip) && rs->shiftHeld) || rs->draggingInner;
+
+    // draggingFoot is deliberately left out here, same reasoning as
+    // draggingKnee being left out of the knee circle's own highlight in
+    // drawThigh: actively dragging the foot stretches the shin arcs
+    // (they're what visibly reacts -- see the draggingFoot highlight
+    // added below), not the foot/foot circle itself, so the circle stays
+    // unhighlighted for the duration of that drag.
+    //
+    // hoverFoot previews the plain-scroll resize (see WM_MOUSEWHEEL's
+    // footWorld branch) -- no shift check needed here, unlike hoverHip/
+    // hoverKnee's "&& !shiftHeld" terms, since the foot has no Shift-
+    // gated rotate action to disambiguate from (same as head/butt's
+    // unconditional hover highlight in drawSemniBody). It does still need
+    // "&& !draggingFoot" though, same reasoning as the knee circle's
+    // hoverKnee term above: the cursor sits on the handle for the whole
+    // drag, so without the exclusion the hover term alone would keep
+    // re-lighting the circle every frame despite draggingFoot being left
+    // out on purpose.
+    setColor(rs, shinAffected || (rs->hoverFoot && !rs->draggingFoot), 0.2f, 0.4f, 1.0f, opacity);
+    drawCircle(footWorld, b.footRadius);
+
+    // worked out in the shin's own local (pre-kneeAngle) frame, then
+    // carried through the nested knee->hip->body transforms at the end,
+    // same pattern drawThigh uses for its pre-hipAngle local frame
+    PointF axisMidLocal = { (b.kneeCircle.x + b.footCircle.x) * 0.5f, (b.kneeCircle.y + b.footCircle.y) * 0.5f };
+
+    Fillet shin1Fillet = filletFromAttachAngle(b.kneeCircle, b.kneeRadius, b.footCircle, b.footRadius, b.shinArc1Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC_R);
+    PointF shin1KneeTangentLocal = circleEdge(b.kneeCircle, b.kneeRadius, b.shinArc1Angle);
+    PointF shin1FootTangentLocal = internalTangentPoint(shin1Fillet.center, shin1Fillet.radius, b.footCircle, b.footRadius);
+    PointF shin1NearLocal = circleTowardPoint(shin1Fillet.center, shin1Fillet.radius, axisMidLocal);
+
+    // shinArc2Angle uses the concave construction (bulges inward instead
+    // of outward -- see app.h's comment), same as thighArc2Angle. The
+    // foot-side tangent point for an externally-tangent fillet is just
+    // circleTowardPoint(fillet, footCircle) instead of
+    // internalTangentPoint -- externally tangent circles touch exactly on
+    // the line between their centers, which is exactly what
+    // circleTowardPoint finds.
+    Fillet shin2Fillet = filletFromAttachAngleConcave(b.kneeCircle, b.kneeRadius, b.footCircle, b.footRadius, b.shinArc2Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC2_CONCAVE_R);
+    PointF shin2KneeTangentLocal = circleEdge(b.kneeCircle, b.kneeRadius, b.shinArc2Angle);
+    PointF shin2FootTangentLocal = circleTowardPoint(shin2Fillet.center, shin2Fillet.radius, b.footCircle);
+    PointF shin2NearLocal = circleTowardPoint(shin2Fillet.center, shin2Fillet.radius, axisMidLocal);
+
+    // dragging the foot circle also stretches/shrinks both shin arcs
+    // (they attach to footCircle, which just moved along the knee->foot
+    // axis -- see WM_MOUSEMOVE's draggingFoot/constrainToAxis handling),
+    // same "carries the other visibly-reacting parts along" idea as
+    // draggingKnee getting added to the thigh arcs in drawThigh
+    setColor(rs, rs->draggingShin1 || rs->draggingFoot || shinAffected, 0.2f, 0.4f, 1.0f, opacity);
+    drawArc(nestedJointToWorld(shin1KneeTangentLocal, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle),
+            nestedJointToWorld(shin1NearLocal, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle),
+            nestedJointToWorld(shin1FootTangentLocal, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle));
+
+    setColor(rs, rs->draggingShin2 || rs->draggingFoot || shinAffected, 0.2f, 0.4f, 1.0f, opacity);
+    drawArc(nestedJointToWorld(shin2KneeTangentLocal, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle),
+            nestedJointToWorld(shin2NearLocal, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle),
+            nestedJointToWorld(shin2FootTangentLocal, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle));
+}
+
+static void drawShinHandles(Semni b, RenderState* rs, float opacity)
+{
+    PointF center = getCenter(b);
+    float angle = b.angle;
+
+    PointF footWorld = nestedJointToWorld(b.footCircle, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle);
+
+    // shin arc handles: pinned to the exact middle of the knee->foot axis
+    // (circleAtAxisMid), same idea as the thigh handles' use of it
+    PointF axisMidLocal = { (b.kneeCircle.x + b.footCircle.x) * 0.5f, (b.kneeCircle.y + b.footCircle.y) * 0.5f };
+
+    Fillet shin1Fillet = filletFromAttachAngle(b.kneeCircle, b.kneeRadius, b.footCircle, b.footRadius, b.shinArc1Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC_R);
+    PointF shin1NearLocal = circleTowardPoint(shin1Fillet.center, shin1Fillet.radius, axisMidLocal);
+    PointF shin1MidLocal = circleAtAxisMid(shin1Fillet.center, shin1Fillet.radius, b.kneeCircle, b.footCircle, shin1NearLocal);
+
+    Fillet shin2Fillet = filletFromAttachAngleConcave(b.kneeCircle, b.kneeRadius, b.footCircle, b.footRadius, b.shinArc2Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC2_CONCAVE_R);
+    PointF shin2NearLocal = circleTowardPoint(shin2Fillet.center, shin2Fillet.radius, axisMidLocal);
+    PointF shin2MidLocal = circleAtAxisMid(shin2Fillet.center, shin2Fillet.radius, b.kneeCircle, b.footCircle, shin2NearLocal);
+
+    PointF shin1World = nestedJointToWorld(shin1MidLocal, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle);
+    PointF shin2World = nestedJointToWorld(shin2MidLocal, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle);
+
+    drawHandle(footWorld, rs->draggingFoot || rs->hoverFoot, FOOT_HANDLE_RADIUS, opacity);
+    drawHandle(shin1World, rs->draggingShin1 || rs->hoverShin1, SHIN_HANDLE_RADIUS, opacity);
+    drawHandle(shin2World, rs->draggingShin2 || rs->hoverShin2, SHIN_HANDLE_RADIUS, opacity);
+}
+
+void drawSemniHandles(Semni b, RenderState* rs, float opacity)
+{
+    PointF center = getCenter(b);
+    float angle = b.angle;
+
+    PointF inner        = rotatePoint(b.innerCircle, center, angle);
+    PointF headHandle   = rotatePoint((PointF){b.headX, b.y}, center, angle);
+    PointF buttHandle    = rotatePoint((PointF){b.buttX, b.y}, center, angle);
+
+    // seam attach handles: pinned to the exact midpoint between head and
+    // butt on X, with Y solved from the arc's actual fillet circle at
+    // that exact X (circleAtX) so the handle sits genuinely ON the
+    // visible curve AND in the true middle -- filletBulgePoint alone only
+    // gives the closest point to the midline, which is usually close but
+    // not exactly at bodyMid.x
+    PointF headLocal = { b.headX, b.y };
+    PointF buttLocal = { b.buttX, b.y };
+    PointF bodyMidLocal = { (headLocal.x + buttLocal.x) * 0.5f, (headLocal.y + buttLocal.y) * 0.5f };
+
+    Fillet seamArc1Fillet = filletFromAttachAngle(headLocal, b.headRadius, buttLocal, b.buttRadius, b.seamArc1Angle, MIN_ARC_R, MAX_ARC_R);
+    Fillet seamArc2Fillet = filletFromAttachAngle(headLocal, b.headRadius, buttLocal, b.buttRadius, b.seamArc2Angle, MIN_ARC_R, MAX_ARC_R);
+
+    PointF seamArc1NearLocal = circleTowardPoint(seamArc1Fillet.center, seamArc1Fillet.radius, bodyMidLocal);
+    PointF seamArc2NearLocal = circleTowardPoint(seamArc2Fillet.center, seamArc2Fillet.radius, bodyMidLocal);
+
+    PointF seamArc1MidLocal = circleAtX(seamArc1Fillet.center, seamArc1Fillet.radius, bodyMidLocal.x, seamArc1NearLocal);
+    PointF seamArc2MidLocal = circleAtX(seamArc2Fillet.center, seamArc2Fillet.radius, bodyMidLocal.x, seamArc2NearLocal);
+
+    PointF seamArc1Handle = rotatePoint(seamArc1MidLocal, center, angle);
+    PointF seamArc2Handle = rotatePoint(seamArc2MidLocal, center, angle);
+
+    drawHandle(seamArc1Handle, rs->draggingSeamArc1 || rs->hoverSeamArc1, ARC_HANDLE_RADIUS, opacity);
+    drawHandle(seamArc2Handle, rs->draggingSeamArc2 || rs->hoverSeamArc2, ARC_HANDLE_RADIUS, opacity);
+
+    // joint circle handles: highlight on hover too, not just while dragging
+    drawHandle(inner,
+               rs->draggingInner || rs->hoverHip,
+               HIP_HANDLE_RADIUS, opacity);
+
+    drawHandle(headHandle,
+               rs->hoverHead,
+               HEAD_BUTT_HANDLE_RADIUS, opacity);
+
+    drawHandle(buttHandle,
+               rs->hoverButt,
+               HEAD_BUTT_HANDLE_RADIUS, opacity);
+}
+
+void computeSemniCircleSegments(Semni b, CircleSegment out[NUM_ROBOT_CIRCLE_SEGMENTS])
+{
+    PointF center = getCenter(b);
+    float angle = b.angle;
+
+    // seam arcs 1/2: fillets between the head and butt circles, computed
+    // in the same pre-body-angle local frame drawSemniBody uses -- only
+    // the fillet's CENTER needs rotating into world space (rotation
+    // preserves distances, so the radius itself is unaffected).
+    PointF headLocal = { b.headX, b.y };
+    PointF buttLocal = { b.buttX, b.y };
+
+    Fillet seamArc1Fillet = filletFromAttachAngle(headLocal, b.headRadius, buttLocal, b.buttRadius, b.seamArc1Angle, MIN_ARC_R, MAX_ARC_R);
+    Fillet seamArc2Fillet = filletFromAttachAngle(headLocal, b.headRadius, buttLocal, b.buttRadius, b.seamArc2Angle, MIN_ARC_R, MAX_ARC_R);
+
+    out[0].center = rotatePoint(seamArc1Fillet.center, center, angle);
+    out[0].radius = seamArc1Fillet.radius;
+
+    out[1].center = rotatePoint(seamArc2Fillet.center, center, angle);
+    out[1].radius = seamArc2Fillet.radius;
+
+    // thigh arcs 1/2: fillets between innerCircle (hip) and kneeCircle,
+    // computed in the hip-local (pre-hipAngle) frame, same as drawThigh --
+    // jointToWorld carries the center through hipAngle, then bodyAngle.
+    Fillet thigh1Fillet = filletFromAttachAngle(b.innerCircle, b.innerRadius, b.kneeCircle, b.kneeRadius, b.thighArc1Angle, MIN_THIGH_ARC_R, MAX_SEMNI_THIGH_ARC_R);
+    Fillet thigh2Fillet = filletFromAttachAngleConcave(b.innerCircle, b.innerRadius, b.kneeCircle, b.kneeRadius, b.thighArc2Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC2_CONCAVE_R);
+
+    out[2].center = jointToWorld(thigh1Fillet.center, b.innerCircle, b.hipAngle, center, angle);
+    out[2].radius = thigh1Fillet.radius;
+
+    out[3].center = jointToWorld(thigh2Fillet.center, b.innerCircle, b.hipAngle, center, angle);
+    out[3].radius = thigh2Fillet.radius;
+
+    // shin arcs 1/2: fillets between kneeCircle and footCircle, computed
+    // in the knee-local (pre-kneeAngle) frame, same as drawShin --
+    // nestedJointToWorld carries the center through kneeAngle, then
+    // hipAngle, then bodyAngle.
+    Fillet shin1Fillet = filletFromAttachAngle(b.kneeCircle, b.kneeRadius, b.footCircle, b.footRadius, b.shinArc1Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC_R);
+    Fillet shin2Fillet = filletFromAttachAngleConcave(b.kneeCircle, b.kneeRadius, b.footCircle, b.footRadius, b.shinArc2Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC2_CONCAVE_R);
+
+    out[4].center = nestedJointToWorld(shin1Fillet.center, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle);
+    out[4].radius = shin1Fillet.radius;
+
+    out[5].center = nestedJointToWorld(shin2Fillet.center, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle);
+    out[5].radius = shin2Fillet.radius;
+}
+
+// Computes each of the 6 fillet arcs' actual TRIMMED curve (not the full
+// circle computeSemniCircleSegments above returns) as a world-space
+// poly-line, in the same seam1/seam2/thigh1/thigh2/shin1/shin2 order. The
+// p0 (first-circle tangent point) / p1 (near/bulge point) / p2 (second-
+// circle tangent point) triples computed here are the exact same points
+// drawSemniBody/drawThigh/drawShin feed into drawArc for rendering -- see
+// each of those for the derivation of which tangent-point function
+// (internalTangentPoint vs circleTowardPoint) applies to which arc, and
+// why. Duplicated here (rather than having those draw functions call this
+// instead) so this stays a pure, side-effect-free query usable from
+// outside renderer.c, same relationship computeSemniCircleSegments/
+// computeSemniBodyCircles already have with their own drawSemni* callers.
+void computeSemniArcPoints(Semni b, PointF out[NUM_ROBOT_CIRCLE_SEGMENTS][ARC_SAMPLE_COUNT], int outCounts[NUM_ROBOT_CIRCLE_SEGMENTS])
+{
+    PointF center = getCenter(b);
+    float angle = b.angle;
+
+    // seam arcs 1/2 -- same local-frame math as drawSemniBody
+    PointF headLocal = { b.headX, b.y };
+    PointF buttLocal = { b.buttX, b.y };
+    PointF bodyMidLocal = { (headLocal.x + buttLocal.x) * 0.5f, (headLocal.y + buttLocal.y) * 0.5f };
+
+    Fillet seamArc1Fillet = filletFromAttachAngle(headLocal, b.headRadius, buttLocal, b.buttRadius, b.seamArc1Angle, MIN_ARC_R, MAX_ARC_R);
+    PointF seamArc1P0 = rotatePoint(circleEdge(headLocal, b.headRadius, b.seamArc1Angle), center, angle);
+    PointF seamArc1P1 = rotatePoint(circleTowardPoint(seamArc1Fillet.center, seamArc1Fillet.radius, bodyMidLocal), center, angle);
+    PointF seamArc1P2 = rotatePoint(internalTangentPoint(seamArc1Fillet.center, seamArc1Fillet.radius, buttLocal, b.buttRadius), center, angle);
+    outCounts[0] = computeArcPoints(seamArc1P0, seamArc1P1, seamArc1P2, out[0]);
+
+    Fillet seamArc2Fillet = filletFromAttachAngle(headLocal, b.headRadius, buttLocal, b.buttRadius, b.seamArc2Angle, MIN_ARC_R, MAX_ARC_R);
+    PointF seamArc2P0 = rotatePoint(circleEdge(headLocal, b.headRadius, b.seamArc2Angle), center, angle);
+    PointF seamArc2P1 = rotatePoint(circleTowardPoint(seamArc2Fillet.center, seamArc2Fillet.radius, bodyMidLocal), center, angle);
+    PointF seamArc2P2 = rotatePoint(internalTangentPoint(seamArc2Fillet.center, seamArc2Fillet.radius, buttLocal, b.buttRadius), center, angle);
+    outCounts[1] = computeArcPoints(seamArc2P0, seamArc2P1, seamArc2P2, out[1]);
+
+    // thigh arcs 1/2 -- same local-frame math as drawThigh
+    PointF thighAxisMidLocal = { (b.innerCircle.x + b.kneeCircle.x) * 0.5f, (b.innerCircle.y + b.kneeCircle.y) * 0.5f };
+
+    Fillet thigh1Fillet = filletFromAttachAngle(b.innerCircle, b.innerRadius, b.kneeCircle, b.kneeRadius, b.thighArc1Angle, MIN_THIGH_ARC_R, MAX_SEMNI_THIGH_ARC_R);
+    PointF thigh1P0 = jointToWorld(circleEdge(b.innerCircle, b.innerRadius, b.thighArc1Angle), b.innerCircle, b.hipAngle, center, angle);
+    PointF thigh1P1 = jointToWorld(circleTowardPoint(thigh1Fillet.center, thigh1Fillet.radius, thighAxisMidLocal), b.innerCircle, b.hipAngle, center, angle);
+    PointF thigh1P2 = jointToWorld(internalTangentPoint(thigh1Fillet.center, thigh1Fillet.radius, b.kneeCircle, b.kneeRadius), b.innerCircle, b.hipAngle, center, angle);
+    outCounts[2] = computeArcPoints(thigh1P0, thigh1P1, thigh1P2, out[2]);
+
+    Fillet thigh2Fillet = filletFromAttachAngleConcave(b.innerCircle, b.innerRadius, b.kneeCircle, b.kneeRadius, b.thighArc2Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC2_CONCAVE_R);
+    PointF thigh2P0 = jointToWorld(circleEdge(b.innerCircle, b.innerRadius, b.thighArc2Angle), b.innerCircle, b.hipAngle, center, angle);
+    PointF thigh2P1 = jointToWorld(circleTowardPoint(thigh2Fillet.center, thigh2Fillet.radius, thighAxisMidLocal), b.innerCircle, b.hipAngle, center, angle);
+    PointF thigh2P2 = jointToWorld(circleTowardPoint(thigh2Fillet.center, thigh2Fillet.radius, b.kneeCircle), b.innerCircle, b.hipAngle, center, angle);
+    outCounts[3] = computeArcPoints(thigh2P0, thigh2P1, thigh2P2, out[3]);
+
+    // shin arcs 1/2 -- same local-frame math as drawShin
+    PointF shinAxisMidLocal = { (b.kneeCircle.x + b.footCircle.x) * 0.5f, (b.kneeCircle.y + b.footCircle.y) * 0.5f };
+
+    Fillet shin1Fillet = filletFromAttachAngle(b.kneeCircle, b.kneeRadius, b.footCircle, b.footRadius, b.shinArc1Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC_R);
+    PointF shin1P0 = nestedJointToWorld(circleEdge(b.kneeCircle, b.kneeRadius, b.shinArc1Angle), b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle);
+    PointF shin1P1 = nestedJointToWorld(circleTowardPoint(shin1Fillet.center, shin1Fillet.radius, shinAxisMidLocal), b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle);
+    PointF shin1P2 = nestedJointToWorld(internalTangentPoint(shin1Fillet.center, shin1Fillet.radius, b.footCircle, b.footRadius), b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle);
+    outCounts[4] = computeArcPoints(shin1P0, shin1P1, shin1P2, out[4]);
+
+    Fillet shin2Fillet = filletFromAttachAngleConcave(b.kneeCircle, b.kneeRadius, b.footCircle, b.footRadius, b.shinArc2Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC2_CONCAVE_R);
+    PointF shin2P0 = nestedJointToWorld(circleEdge(b.kneeCircle, b.kneeRadius, b.shinArc2Angle), b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle);
+    PointF shin2P1 = nestedJointToWorld(circleTowardPoint(shin2Fillet.center, shin2Fillet.radius, shinAxisMidLocal), b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle);
+    PointF shin2P2 = nestedJointToWorld(circleTowardPoint(shin2Fillet.center, shin2Fillet.radius, b.footCircle), b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle);
+    outCounts[5] = computeArcPoints(shin2P0, shin2P1, shin2P2, out[5]);
+}
+
+// One distinguishable color per circle segment, same palette values as
+// the ArcSpline canvas's own segmentGhostColor (canvas.c) for a consistent
+// look between the two modes' View Segments overlays. Non-static (declared
+// in renderer.h) so canvas.c's hover-tooltip HUD can color a hovered
+// fillet's "Segment N/M" label to match the ghost circle it's naming,
+// without having to duplicate this exact palette itself.
+void circleSegmentColor(int index, float* r, float* g, float* b)
+{
+    static const float palette[NUM_ROBOT_CIRCLE_SEGMENTS][3] = {
+        {0.85f, 0.20f, 0.20f}, {0.20f, 0.55f, 0.85f}, {0.20f, 0.75f, 0.35f},
+        {0.85f, 0.55f, 0.15f}, {0.60f, 0.30f, 0.80f}, {0.20f, 0.75f, 0.75f}
+    };
+    int i = index % NUM_ROBOT_CIRCLE_SEGMENTS;
+    *r = palette[i][0];
+    *g = palette[i][1];
+    *b = palette[i][2];
+}
+
+void drawSemniCircleSegments(Semni b, int hoveredIndex, float opacity)
+{
+    CircleSegment segs[NUM_ROBOT_CIRCLE_SEGMENTS];
+    computeSemniCircleSegments(b, segs);
+
+    for (int i = 0; i < NUM_ROBOT_CIRCLE_SEGMENTS; i++)
+    {
+        float r, g, bl;
+        circleSegmentColor(i, &r, &g, &bl);
+
+        if (i == hoveredIndex)
+        {
+            // solid, thicker, full opacity -- reads as "this one" the same
+            // way the ArcSpline canvas's hovered segment does
+            glDisable(GL_LINE_STIPPLE);
+            glLineWidth(2.5f);
+            glColor4f(r, g, bl, 1.0f * opacity);
+        }
+        else
+        {
+            glEnable(GL_LINE_STIPPLE);
+            glLineStipple(1, 0x00FF);
+            glLineWidth(1.0f);
+            glColor4f(r, g, bl, 0.6f * opacity);
+        }
+
+        drawCircle(segs[i].center, segs[i].radius);
+    }
+
+    glLineWidth(1.0f);
+    glDisable(GL_LINE_STIPPLE);
+}
+
+// Computes the 5 body circles' world-space center + radius for the
+// robot's CURRENT pose -- same head/butt/hip/knee/foot points
+// drawSemniBody/drawThigh/drawShin already compute for their own
+// rendering, factored out here so the hover ghost-highlight below and
+// input.c's hit-test share the exact same geometry.
+void computeSemniBodyCircles(Semni b, CircleSegment out[NUM_ROBOT_BODY_CIRCLES])
+{
+    PointF center = getCenter(b);
+    float angle = b.angle;
+
+    out[0].center = rotatePoint((PointF){b.headX, b.y}, center, angle);
+    out[0].radius = b.headRadius;
+
+    out[1].center = rotatePoint((PointF){b.buttX, b.y}, center, angle);
+    out[1].radius = b.buttRadius;
+
+    out[2].center = rotatePoint(b.innerCircle, center, angle);
+    out[2].radius = b.innerRadius;
+
+    out[3].center = jointToWorld(b.kneeCircle, b.innerCircle, b.hipAngle, center, angle);
+    out[3].radius = b.kneeRadius;
+
+    out[4].center = nestedJointToWorld(b.footCircle, b.kneeCircle, b.kneeAngle, b.innerCircle, b.hipAngle, center, angle);
+    out[4].radius = b.footRadius;
+}
+
+// One distinguishable color per body circle -- deliberately a different
+// palette from circleSegmentColor's so a hovered body circle never reads
+// as "one of the View Segments fillets" even if both happen to be
+// on-screen at once. Non-static for the same reason as circleSegmentColor
+// above -- canvas.c's hover-tooltip HUD needs it too.
+//
+// 6 entries, not NUM_ROBOT_BODY_CIRCLES (5) -- this palette is shared
+// across every kind now (Semni uses 5, Rocky 2, Stilo 6), so its own size
+// is deliberately decoupled from any one kind's specific body-circle
+// count and sized for the largest (Stilo's 6) instead. Modulo-ing by the
+// smaller NUM_ROBOT_BODY_CIRCLES here would have silently wrapped Stilo's
+// 6th body circle back onto index 0's color, reading as a duplicate
+// rather than a distinct one.
+void bodyCircleColor(int index, float* r, float* g, float* b)
+{
+    static const float palette[6][3] = {
+        {0.95f, 0.75f, 0.15f}, {0.15f, 0.85f, 0.95f}, {0.85f, 0.25f, 0.65f},
+        {0.55f, 0.85f, 0.20f}, {0.95f, 0.45f, 0.15f}, {0.55f, 0.35f, 0.85f}
+    };
+    int i = index % 6;
+    *r = palette[i][0];
+    *g = palette[i][1];
+    *b = palette[i][2];
+}
+
+void drawSemniBodyCircleHover(Semni b, int hoveredIndex, float opacity)
+{
+    if (hoveredIndex < 0 || hoveredIndex >= NUM_ROBOT_BODY_CIRCLES)
+        return;
+
+    CircleSegment segs[NUM_ROBOT_BODY_CIRCLES];
+    computeSemniBodyCircles(b, segs);
+
+    float r, g, bl;
+    bodyCircleColor(hoveredIndex, &r, &g, &bl);
+
+    // solid, thicker, full opacity, drawn on top of the circle's own
+    // already-solid outline -- same "this one" visual language as
+    // drawSemniCircleSegments' hovered fillet, no dashed base needed
+    // since the circle itself is already always visible.
+    glDisable(GL_LINE_STIPPLE);
+    glLineWidth(2.5f);
+    glColor4f(r, g, bl, 1.0f * opacity);
+    drawCircle(segs[hoveredIndex].center, segs[hoveredIndex].radius);
+    glLineWidth(1.0f);
+}
+
+void drawSemni(Semni b, RenderState* rs, int includeHandles, float opacity)
+{
+    drawSemniBody(b, rs, opacity);
+    drawThigh(b, rs, opacity);
+    drawShin(b, rs, opacity);
+
+    // Both of these are Robot-mode editor UI overlays, not part of the
+    // robot's own design, so both are hard-gated on actually being in the
+    // Semni editor right now -- otherwise they'd have no business
+    // appearing in the OTHER mode's rendering of this scene (e.g. the
+    // dimmed background copy drawn behind the ArcSpline canvas -- see
+    // renderCombinedFrame). Both are also gated on the View Segments
+    // toggle itself (rs->showSegments) -- the body-circle hover highlight
+    // is part of the same "reveal the circles this robot is built from"
+    // feature as the fillet ghosts, so it only shows once that's turned
+    // on, not unconditionally.
+    BOOL segmentsVisible = rs->showSegments && (editorModeState.currentMode == EDITOR_MODE_SEMNI);
+
+    if (segmentsVisible)
+    {
+        drawSemniCircleSegments(b, rs->hoveredCircleSegment, opacity);
+        drawSemniBodyCircleHover(b, rs->hoveredBodyCircle, opacity);
+    }
+
+    // The draggable handles are editor UI, not part of the robot itself --
+    // skip them when rendering a frame that's about to be exported, and
+    // hard-gate on actually being in the Semni editor right now (same
+    // reasoning as segmentsVisible above): in Simulation mode the small
+    // drag-handle dots would be misleading (you can't drag an individual
+    // joint there, only the whole robot -- see canvas.c's WM_LBUTTONDOWN),
+    // even though hip/knee CAN be rotated there now via Shift+hover+scroll
+    // (WM_MOUSEWHEEL) -- that feedback comes from drawSemniBody/drawThigh/
+    // drawShin's own hover coloring above instead (rs.shiftHeld, see
+    // renderRobot below), which isn't gated by handlesVisible at all. In
+    // Design > Environment mode this is just the dimmed background copy of
+    // the robot, not something being actively edited -- either way, the
+    // handles would be misleading clutter rather
+    // than useful UI.
+    BOOL handlesVisible = includeHandles && (editorModeState.currentMode == EDITOR_MODE_SEMNI);
+
+    if (handlesVisible)
+    {
+        drawSemniHandles(b, rs, opacity);
+        drawThighHandles(b, rs, opacity);
+        drawShinHandles(b, rs, opacity);
+
+        // Body/Leg Weight mass-center dot -- same draggable-alternative-
+        // to-typing-into-the-edit-boxes idea as Rocky's own version (see
+        // drawRocky's own comment on drawRockyMassCenterMarker), reusing
+        // that exact same marker-drawing helper (it's generic -- just a
+        // colored dot at a point -- nothing Rocky-specific about it).
+        drawRockyMassCenterMarker(computeSemniMassCenterWorld(b), rs->draggingSemniMassCenter || rs->hoverSemniMassCenter, MASS_CENTER_HANDLE_RADIUS, opacity);
+    }
+}
+
+// ---- Rocky ----
+//
+// Rectangular torso (a plain rotated quad outline) + a leg that's
+// identical in construction to Semni's own knee-to-foot "shin" (see
+// drawShin), just hanging directly off the rectangle -- kneeCircle only
+// rotates with the whole-body angle (rigidly attached to the torso, same
+// as Semni's own hip/innerCircle), and kneeAngle alone swings footCircle
+// around it (one jointToWorld nesting instead of drawShin's two, since
+// there's no hip stage above it).
+static void drawRockyBodyRect(Rocky b, RenderState* rs, float opacity)
+{
+    PointF center = getRockyCenter(b);
+    float angle = b.angle;
+
+    PointF c0 = rotatePoint((PointF){ b.bodyX - b.bodyHalfWidth, b.bodyY - b.bodyHalfHeight }, center, angle);
+    PointF c1 = rotatePoint((PointF){ b.bodyX + b.bodyHalfWidth, b.bodyY - b.bodyHalfHeight }, center, angle);
+    PointF c2 = rotatePoint((PointF){ b.bodyX + b.bodyHalfWidth, b.bodyY + b.bodyHalfHeight }, center, angle);
+    PointF c3 = rotatePoint((PointF){ b.bodyX - b.bodyHalfWidth, b.bodyY + b.bodyHalfHeight }, center, angle);
+
+    // Requested directly: a plain hover no longer lights up any part of
+    // the rectangle -- only an actual drag does (rs->hoverRockyBody/
+    // hoverRockyEdge are deliberately NOT read below anymore). And for the
+    // 2 resize edges specifically, dragging one doesn't highlight itself --
+    // it highlights the OTHER pair instead. Dragging a HEIGHT handle (top/
+    // bottom, changes bodyHalfHeight -- see input.c's draggingRockyEdge
+    // handling) visibly stretches the two WIDTH edges (left/right) taller/
+    // shorter, since THEIR length spans the height; those are what light up.
+    // Symmetrically, dragging a WIDTH handle (left/right, changes
+    // bodyHalfWidth) stretches the two HEIGHT edges (top/bottom, whose
+    // length spans the width), so those light up instead. Moving the whole
+    // body (draggingRockyBody) still lights up all 4 together, since that
+    // drag actually does move every edge at once.
+    BOOL rockyBodyMoveActive = rs->draggingRockyBody;
+    BOOL widthHandleDragging  = rs->draggingRockyEdge == ROCKY_EDGE_LEFT || rs->draggingRockyEdge == ROCKY_EDGE_RIGHT;
+    BOOL heightHandleDragging = rs->draggingRockyEdge == ROCKY_EDGE_TOP  || rs->draggingRockyEdge == ROCKY_EDGE_BOTTOM;
+
+    BOOL leftActive   = rockyBodyMoveActive || heightHandleDragging;
+    BOOL rightActive  = rockyBodyMoveActive || heightHandleDragging;
+    BOOL topActive    = rockyBodyMoveActive || widthHandleDragging;
+    BOOL bottomActive = rockyBodyMoveActive || widthHandleDragging;
+
+    setColor(rs, bottomActive, 0.2f, 0.4f, 1.0f, opacity);
+    glBegin(GL_LINES);
+    glVertex2f(c0.x, c0.y);
+    glVertex2f(c1.x, c1.y);
+    glEnd();
+
+    setColor(rs, rightActive, 0.2f, 0.4f, 1.0f, opacity);
+    glBegin(GL_LINES);
+    glVertex2f(c1.x, c1.y);
+    glVertex2f(c2.x, c2.y);
+    glEnd();
+
+    setColor(rs, topActive, 0.2f, 0.4f, 1.0f, opacity);
+    glBegin(GL_LINES);
+    glVertex2f(c2.x, c2.y);
+    glVertex2f(c3.x, c3.y);
+    glEnd();
+
+    setColor(rs, leftActive, 0.2f, 0.4f, 1.0f, opacity);
+    glBegin(GL_LINES);
+    glVertex2f(c3.x, c3.y);
+    glVertex2f(c0.x, c0.y);
+    glEnd();
+}
+
+static void drawRockyLeg(Rocky b, RenderState* rs, float opacity)
+{
+    PointF center = getRockyCenter(b);
+    float angle = b.angle;
+
+    PointF kneeWorld = rotatePoint(b.kneeCircle, center, angle);
+    PointF footWorld = jointToWorld(b.footCircle, b.kneeCircle, b.kneeAngle, center, angle);
+
+    // Knee circle highlights on a plain hover (no Shift, not mid-drag) --
+    // same condition drawThigh uses for Semni's own knee circle, minus the
+    // hip-rotate-hint/hoveringWhole terms that don't apply here (Rocky has
+    // no hip stage and never appears in Simulation mode). Dragging the
+    // knee (see input.c's draggingRockyKnee) repositions it freely inside
+    // the rectangle -- like Semni, that's left unhighlighted here since
+    // there's no separate "thigh" segment to redirect the highlight to.
+    setColor(rs, rs->hoverRockyKnee && !rs->shiftHeld && !rs->draggingRockyKnee, 0.2f, 0.4f, 1.0f, opacity);
+    drawCircle(kneeWorld, b.kneeRadius);
+
+    // Shift+hover arms the bend (kneeAngle) scroll gesture below -- preview
+    // it by highlighting the foot + shin arcs, same idea as Semni's own
+    // shinAffected hint for its kneeAngle bend.
+    int rockyShinAffected = rs->hoverRockyKnee && rs->shiftHeld;
+
+    // Foot circle also lights up on its own plain hover (previewing the
+    // length-change drag -- see input.c's draggingRockyFoot), same
+    // "&& !dragging" exclusion Semni's own hoverFoot uses so the circle
+    // doesn't stay lit for the whole drag once it's what's moving.
+    setColor(rs, rockyShinAffected || (rs->hoverRockyFoot && !rs->draggingRockyFoot), 0.2f, 0.4f, 1.0f, opacity);
+    drawCircle(footWorld, b.footRadius);
+
+    PointF axisMidLocal = { (b.kneeCircle.x + b.footCircle.x) * 0.5f, (b.kneeCircle.y + b.footCircle.y) * 0.5f };
+
+    Fillet shin1Fillet = filletFromAttachAngle(b.kneeCircle, b.kneeRadius, b.footCircle, b.footRadius, b.shinArc1Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC_R);
+    PointF shin1KneeTangentLocal = circleEdge(b.kneeCircle, b.kneeRadius, b.shinArc1Angle);
+    PointF shin1FootTangentLocal = internalTangentPoint(shin1Fillet.center, shin1Fillet.radius, b.footCircle, b.footRadius);
+    PointF shin1NearLocal = circleTowardPoint(shin1Fillet.center, shin1Fillet.radius, axisMidLocal);
+
+    Fillet shin2Fillet = filletFromAttachAngleConcave(b.kneeCircle, b.kneeRadius, b.footCircle, b.footRadius, b.shinArc2Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC2_CONCAVE_R);
+    PointF shin2KneeTangentLocal = circleEdge(b.kneeCircle, b.kneeRadius, b.shinArc2Angle);
+    PointF shin2FootTangentLocal = circleTowardPoint(shin2Fillet.center, shin2Fillet.radius, b.footCircle);
+    PointF shin2NearLocal = circleTowardPoint(shin2Fillet.center, shin2Fillet.radius, axisMidLocal);
+
+    // dragging the foot circle also stretches/shrinks both shin arcs
+    // (they attach to footCircle, which just moved along the knee->foot
+    // axis -- see WM_MOUSEMOVE's draggingRockyFoot/constrainToAxis
+    // handling), same "carries the other visibly-reacting parts along"
+    // idea as Semni's own drawShin. Each arc also lights up while ITS OWN
+    // handle is being dragged (rs->draggingRockyShin1/draggingRockyShin2,
+    // mirrored from app->draggingRockyShin1/draggingRockyShin2 by
+    // renderApp/renderRobotScene's frame-populate step) -- this was
+    // missing before, unlike Semni's drawShin, which already includes its
+    // own draggingShin1/draggingShin2 in this same setColor call.
+    setColor(rs, rockyShinAffected || rs->draggingRockyFoot || rs->draggingRockyShin1, 0.2f, 0.4f, 1.0f, opacity);
+    drawArc(jointToWorld(shin1KneeTangentLocal, b.kneeCircle, b.kneeAngle, center, angle),
+            jointToWorld(shin1NearLocal, b.kneeCircle, b.kneeAngle, center, angle),
+            jointToWorld(shin1FootTangentLocal, b.kneeCircle, b.kneeAngle, center, angle));
+
+    setColor(rs, rockyShinAffected || rs->draggingRockyFoot || rs->draggingRockyShin2, 0.2f, 0.4f, 1.0f, opacity);
+    drawArc(jointToWorld(shin2KneeTangentLocal, b.kneeCircle, b.kneeAngle, center, angle),
+            jointToWorld(shin2NearLocal, b.kneeCircle, b.kneeAngle, center, angle),
+            jointToWorld(shin2FootTangentLocal, b.kneeCircle, b.kneeAngle, center, angle));
+}
+
+// Computes Rocky's 2 shin fillet circles' world-space center + radius --
+// identical construction to computeSemniCircleSegments' own shin1/shin2
+// entries (indices 4/5 there), just reading Rocky's own kneeCircle/
+// footCircle/kneeAngle/shinArc1Angle/shinArc2Angle fields and
+// getRockyCenter instead of Semni's hip-nested versions (Rocky has no
+// hip/thigh stage at all, so there's only ever this one joint pair to
+// cover -- see app.h's Rocky comment). Shared by drawRockyCircleSegments
+// (rendering) and input.c's hover hit-test, same reasoning
+// computeSemniCircleSegments gives.
+void computeRockyCircleSegments(Rocky b, CircleSegment out[NUM_ROCKY_CIRCLE_SEGMENTS])
+{
+    PointF center = getRockyCenter(b);
+    float angle = b.angle;
+
+    Fillet shin1Fillet = filletFromAttachAngle(b.kneeCircle, b.kneeRadius, b.footCircle, b.footRadius, b.shinArc1Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC_R);
+    Fillet shin2Fillet = filletFromAttachAngleConcave(b.kneeCircle, b.kneeRadius, b.footCircle, b.footRadius, b.shinArc2Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC2_CONCAVE_R);
+
+    out[0].center = jointToWorld(shin1Fillet.center, b.kneeCircle, b.kneeAngle, center, angle);
+    out[0].radius = shin1Fillet.radius;
+
+    out[1].center = jointToWorld(shin2Fillet.center, b.kneeCircle, b.kneeAngle, center, angle);
+    out[1].radius = shin2Fillet.radius;
+}
+
+// Computes Rocky's 2 shin fillet ARCS' actual TRIMMED curve (not the full
+// circle computeRockyCircleSegments above returns), as a world-space
+// poly-line -- same p0/p1/p2 derivation drawRockyLeg's own shin1/shin2
+// drawArc calls use. See computeSemniArcPoints' own comment for why this
+// is duplicated as a pure query rather than having drawRockyLeg call it.
+void computeRockyArcPoints(Rocky b, PointF out[NUM_ROCKY_CIRCLE_SEGMENTS][ARC_SAMPLE_COUNT], int outCounts[NUM_ROCKY_CIRCLE_SEGMENTS])
+{
+    PointF center = getRockyCenter(b);
+    float angle = b.angle;
+
+    PointF axisMidLocal = { (b.kneeCircle.x + b.footCircle.x) * 0.5f, (b.kneeCircle.y + b.footCircle.y) * 0.5f };
+
+    Fillet shin1Fillet = filletFromAttachAngle(b.kneeCircle, b.kneeRadius, b.footCircle, b.footRadius, b.shinArc1Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC_R);
+    PointF shin1P0 = jointToWorld(circleEdge(b.kneeCircle, b.kneeRadius, b.shinArc1Angle), b.kneeCircle, b.kneeAngle, center, angle);
+    PointF shin1P1 = jointToWorld(circleTowardPoint(shin1Fillet.center, shin1Fillet.radius, axisMidLocal), b.kneeCircle, b.kneeAngle, center, angle);
+    PointF shin1P2 = jointToWorld(internalTangentPoint(shin1Fillet.center, shin1Fillet.radius, b.footCircle, b.footRadius), b.kneeCircle, b.kneeAngle, center, angle);
+    outCounts[0] = computeArcPoints(shin1P0, shin1P1, shin1P2, out[0]);
+
+    Fillet shin2Fillet = filletFromAttachAngleConcave(b.kneeCircle, b.kneeRadius, b.footCircle, b.footRadius, b.shinArc2Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC2_CONCAVE_R);
+    PointF shin2P0 = jointToWorld(circleEdge(b.kneeCircle, b.kneeRadius, b.shinArc2Angle), b.kneeCircle, b.kneeAngle, center, angle);
+    PointF shin2P1 = jointToWorld(circleTowardPoint(shin2Fillet.center, shin2Fillet.radius, axisMidLocal), b.kneeCircle, b.kneeAngle, center, angle);
+    PointF shin2P2 = jointToWorld(circleTowardPoint(shin2Fillet.center, shin2Fillet.radius, b.footCircle), b.kneeCircle, b.kneeAngle, center, angle);
+    outCounts[1] = computeArcPoints(shin2P0, shin2P1, shin2P2, out[1]);
+}
+
+// Rocky's 2 always-visible body circles: knee, foot -- indices into
+// computeRockyBodyCircles' output and into app->hoveredBodyCircle. Rocky's
+// rectangular torso has no circle at all (see app.h), so it's not
+// included here the same reason Semni's own body-circle list doesn't
+// include anything past its 5 -- there's simply nothing else that's a
+// real circle on Rocky.
+void computeRockyBodyCircles(Rocky b, CircleSegment out[NUM_ROCKY_BODY_CIRCLES])
+{
+    PointF center = getRockyCenter(b);
+    float angle = b.angle;
+
+    out[0].center = rotatePoint(b.kneeCircle, center, angle);
+    out[0].radius = b.kneeRadius;
+
+    out[1].center = jointToWorld(b.footCircle, b.kneeCircle, b.kneeAngle, center, angle);
+    out[1].radius = b.footRadius;
+}
+
+// Overlays the full circle behind each of Rocky's 2 shin fillet arcs --
+// same "ghost circle" idea as drawSemniCircleSegments, reusing the exact
+// same circleSegmentColor palette (it's generic, cycles on any index) so
+// the two kinds' View Segments overlays read consistently.
+void drawRockyCircleSegments(Rocky b, int hoveredIndex, float opacity)
+{
+    CircleSegment segs[NUM_ROCKY_CIRCLE_SEGMENTS];
+    computeRockyCircleSegments(b, segs);
+
+    for (int i = 0; i < NUM_ROCKY_CIRCLE_SEGMENTS; i++)
+    {
+        float r, g, bl;
+        circleSegmentColor(i, &r, &g, &bl);
+
+        if (i == hoveredIndex)
+        {
+            glDisable(GL_LINE_STIPPLE);
+            glLineWidth(2.5f);
+            glColor4f(r, g, bl, 1.0f * opacity);
+        }
+        else
+        {
+            glEnable(GL_LINE_STIPPLE);
+            glLineStipple(1, 0x00FF);
+            glLineWidth(1.0f);
+            glColor4f(r, g, bl, 0.6f * opacity);
+        }
+
+        drawCircle(segs[i].center, segs[i].radius);
+    }
+
+    glLineWidth(1.0f);
+    glDisable(GL_LINE_STIPPLE);
+}
+
+// Bright/solid hover ring on whichever of Rocky's 2 body circles (knee,
+// foot) is currently hovered -- same idea as drawSemniBodyCircleHover,
+// reusing the shared bodyCircleColor palette.
+void drawRockyBodyCircleHover(Rocky b, int hoveredIndex, float opacity)
+{
+    if (hoveredIndex < 0 || hoveredIndex >= NUM_ROCKY_BODY_CIRCLES)
+        return;
+
+    CircleSegment segs[NUM_ROCKY_BODY_CIRCLES];
+    computeRockyBodyCircles(b, segs);
+
+    float r, g, bl;
+    bodyCircleColor(hoveredIndex, &r, &g, &bl);
+
+    glDisable(GL_LINE_STIPPLE);
+    glLineWidth(2.5f);
+    glColor4f(r, g, bl, 1.0f * opacity);
+    drawCircle(segs[hoveredIndex].center, segs[hoveredIndex].radius);
+    glLineWidth(1.0f);
+}
+
+// Rocky's 4 rectangle edges' world-space endpoints for its CURRENT pose --
+// same c0..c3 corner construction drawRockyBodyRect uses to actually draw
+// the rectangle (just returned as 4 separate start/end pairs here instead
+// of one GL_LINE_LOOP), so View Segments' hit-test/ghost-overlay always
+// lines up with what's really on screen. Order (requested directly): top
+// (c2->c3, Body Height 1), right (c1->c2, Body Width 1), bottom (c0->c1,
+// Body Height 2), left (c3->c0, Body Width 2) -- see renderer.h's own
+// comment on NUM_ROCKY_RECT_SEGMENTS for why this differs from both
+// drawRockyBodyRect's own bottom/right/top/left traversal and Rob.txt's
+// own edge order.
+void computeRockyRectSegments(Rocky b, RockyEdgeSegment out[NUM_ROCKY_RECT_SEGMENTS])
+{
+    PointF center = getRockyCenter(b);
+    float angle = b.angle;
+
+    PointF c0 = rotatePoint((PointF){ b.bodyX - b.bodyHalfWidth, b.bodyY - b.bodyHalfHeight }, center, angle);
+    PointF c1 = rotatePoint((PointF){ b.bodyX + b.bodyHalfWidth, b.bodyY - b.bodyHalfHeight }, center, angle);
+    PointF c2 = rotatePoint((PointF){ b.bodyX + b.bodyHalfWidth, b.bodyY + b.bodyHalfHeight }, center, angle);
+    PointF c3 = rotatePoint((PointF){ b.bodyX - b.bodyHalfWidth, b.bodyY + b.bodyHalfHeight }, center, angle);
+
+    out[0].start = c2; out[0].end = c3;   // top    (Body Height 1)
+    out[1].start = c1; out[1].end = c2;   // right  (Body Width 1)
+    out[2].start = c0; out[2].end = c1;   // bottom (Body Height 2)
+    out[3].start = c3; out[3].end = c0;   // left   (Body Width 2)
+}
+
+// One distinguishable color per rectangle edge -- see renderer.h's own
+// comment on why this is a third, separate palette from
+// circleSegmentColor's/bodyCircleColor's.
+void rectSegmentColor(int index, float* r, float* g, float* b)
+{
+    static const float palette[NUM_ROCKY_RECT_SEGMENTS][3] = {
+        {0.75f, 0.45f, 0.10f}, {0.35f, 0.65f, 0.95f}, {0.65f, 0.15f, 0.45f}, {0.45f, 0.75f, 0.55f}
+    };
+    int i = index % NUM_ROCKY_RECT_SEGMENTS;
+    *r = palette[i][0];
+    *g = palette[i][1];
+    *b = palette[i][2];
+}
+
+// Overlays a distinctly-colored line over each of Rocky's 4 rectangle
+// edges -- same dashed/dim-normally, solid/bright/thicker-on-hover
+// treatment as drawRockyCircleSegments, just straight lines (glVertex2f
+// pairs) instead of drawCircle calls. See renderer.h's own comment on why
+// this ALWAYS draws all 4 (drawRockyCircleSegments' treatment), not just
+// the hovered one (drawRockyBodyCircleHover's treatment).
+void drawRockyRectSegments(Rocky b, int hoveredIndex, float opacity)
+{
+    RockyEdgeSegment segs[NUM_ROCKY_RECT_SEGMENTS];
+    computeRockyRectSegments(b, segs);
+
+    for (int i = 0; i < NUM_ROCKY_RECT_SEGMENTS; i++)
+    {
+        float r, g, bl;
+        rectSegmentColor(i, &r, &g, &bl);
+
+        if (i == hoveredIndex)
+        {
+            glDisable(GL_LINE_STIPPLE);
+            glLineWidth(2.5f);
+            glColor4f(r, g, bl, 1.0f * opacity);
+        }
+        else
+        {
+            glEnable(GL_LINE_STIPPLE);
+            glLineStipple(1, 0x00FF);
+            glLineWidth(1.0f);
+            glColor4f(r, g, bl, 0.6f * opacity);
+        }
+
+        glBegin(GL_LINES);
+        glVertex2f(segs[i].start.x, segs[i].start.y);
+        glVertex2f(segs[i].end.x, segs[i].end.y);
+        glEnd();
+    }
+
+    glLineWidth(1.0f);
+    glDisable(GL_LINE_STIPPLE);
+}
+
+// Rocky's Rob.txt export reference point -- the rectangle's own local
+// bottom-left corner (corner = bodyX - bodyHalfWidth, bodyY -
+// bodyHalfHeight), BEFORE the whole-body rotation, then rotated into world
+// space the same way computeRockyRectSegments' own c0/c1/c2/c3 corners are
+// so it lines up with whatever's actually drawn on screen right now. Pure
+// visual indicator: no hit-test, not draggable, View-Segments-only (same
+// gating as the rect/circle segment overlays above) -- just a tiny solid
+// blue dot so the user can see at a glance where Rob.txt/Arm.txt's shared
+// "relative to this corner" convention (save.c) is actually anchored.
+static void drawRockyReferencePoint(Rocky b, float opacity)
+{
+    PointF center = getRockyCenter(b);
+    PointF corner = rotatePoint((PointF){ b.bodyX - b.bodyHalfWidth, b.bodyY - b.bodyHalfHeight }, center, b.angle);
+
+    const int segments = 20;
+
+    glColor4f(0.15f, 0.45f, 1.0f, 0.9f * opacity);
+    glBegin(GL_TRIANGLE_FAN);
+    glVertex2f(corner.x, corner.y);
+    for (int i = 0; i <= segments; i++)
+    {
+        float t = 2.0f * 3.1415926f * i / segments;
+        glVertex2f(corner.x + cosf(t) * ROCKY_REF_POINT_RADIUS, corner.y + sinf(t) * ROCKY_REF_POINT_RADIUS);
+    }
+    glEnd();
+}
+
+// per-arc polygon subdivision count for the marker's leg-centroid
+// approximation below -- deliberately coarser than save.c's own
+// ROB_ARM_ARC_SAMPLES (48), since this runs every frame for an
+// informational dot rather than once at Save time for an exported file;
+// 16 is already visually indistinguishable at any zoom level this editor
+// uses.
+#define ROCKY_MASS_CENTER_ARC_SAMPLES 16
+
+// World-space (rotated by the robot's current angle/kneeAngle -- matching
+// what's actually drawn on screen right now) versions of the two points
+// saveRockyAsRobArm's own combined body+leg mass center (save.c) blends
+// between: the rectangle's own centroid and an approximate leg-silhouette
+// centroid. Fed WORLD points (via rotatePoint/jointToWorld, the same
+// transform drawRockyLeg itself uses to place the leg on screen) instead of
+// save.c's export-frame LOCAL ones. DELIBERATE divergence from save.c, not
+// a bug: save.c's own top-of-section comment says Rob.txt/Arm.txt use
+// Rocky's RAW local fields, "pre-whole-body-angle, pre-kneeAngle... not the
+// current on-screen rotated pose" (that's a canonical-shape definition for
+// the external consumer to pose itself) -- this instead exists to place the
+// draggable mass-center dot visibly ON the actual on-screen leg, wherever
+// it's currently bent, so it deliberately DOES apply both angles.
+//
+// Split out from a single "blend by bodyWeight/legWeight and return one
+// point" function (its own combining still lives in
+// computeRockyMassCenterWorld right below) so input.c's WM_MOUSEMOVE
+// draggingRockyMassCenter branch can get at the two RAW endpoints too --
+// dragging the dot doesn't move either endpoint, it re-derives
+// bodyWeight/legWeight from where the drag lands relative to them, so the
+// endpoints have to be available on their own, not just already-blended.
+//
+// Reuses save.c's own arc-sampling/polygon-centroid helpers
+// (robArmSampleArc*/robArmPolygonCentroid, see save.h) for the leg
+// centroid, so this stays the exact same approximation as what actually
+// gets written to Rob.txt, just rotated into place -- not a separate,
+// potentially-diverging formula.
+void computeRockyMassCenterEndpointsWorld(Rocky b, PointF* outRectCentroidWorld, PointF* outLegCentroidWorld)
+{
+    PointF center = getRockyCenter(b);
+    float angle = b.angle;
+
+    // The rectangle's own centroid is (bodyX, bodyY) itself -- exactly the
+    // rotation pivot (see getRockyCenter) -- so it never moves under
+    // rotation and needs no rotatePoint call of its own.
+    *outRectCentroidWorld = center;
+
+    PointF kneeWorld = rotatePoint(b.kneeCircle, center, angle);
+    PointF footWorld = jointToWorld(b.footCircle, b.kneeCircle, b.kneeAngle, center, angle);
+
+    PointF axisMidLocal = { (b.kneeCircle.x + b.footCircle.x) * 0.5f, (b.kneeCircle.y + b.footCircle.y) * 0.5f };
+
+    Fillet shin1Fillet = filletFromAttachAngle(b.kneeCircle, b.kneeRadius, b.footCircle, b.footRadius, b.shinArc1Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC_R);
+    PointF shin1FilletWorld = jointToWorld(shin1Fillet.center, b.kneeCircle, b.kneeAngle, center, angle);
+    PointF shin1KneeTangentWorld = jointToWorld(circleEdge(b.kneeCircle, b.kneeRadius, b.shinArc1Angle), b.kneeCircle, b.kneeAngle, center, angle);
+    PointF shin1FootTangentWorld = jointToWorld(internalTangentPoint(shin1Fillet.center, shin1Fillet.radius, b.footCircle, b.footRadius), b.kneeCircle, b.kneeAngle, center, angle);
+    PointF shin1MidWorld = jointToWorld(circleTowardPoint(shin1Fillet.center, shin1Fillet.radius, axisMidLocal), b.kneeCircle, b.kneeAngle, center, angle);
+
+    Fillet shin2Fillet = filletFromAttachAngleConcave(b.kneeCircle, b.kneeRadius, b.footCircle, b.footRadius, b.shinArc2Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC2_CONCAVE_R);
+    PointF shin2FilletWorld = jointToWorld(shin2Fillet.center, b.kneeCircle, b.kneeAngle, center, angle);
+    PointF shin2KneeTangentWorld = jointToWorld(circleEdge(b.kneeCircle, b.kneeRadius, b.shinArc2Angle), b.kneeCircle, b.kneeAngle, center, angle);
+    PointF shin2FootTangentWorld = jointToWorld(circleTowardPoint(shin2Fillet.center, shin2Fillet.radius, b.footCircle), b.kneeCircle, b.kneeAngle, center, angle);
+    PointF shin2MidWorld = jointToWorld(circleTowardPoint(shin2Fillet.center, shin2Fillet.radius, axisMidLocal), b.kneeCircle, b.kneeAngle, center, angle);
+
+    // same 4-arc traversal save.c's saveRockyAsRobArm builds (2 shin
+    // fillets + the knee/foot circles' own outward-facing arcs), just with
+    // every point substituted for its WORLD-space counterpart computed
+    // above.
+    PointF poly[4 * (ROCKY_MASS_CENTER_ARC_SAMPLES + 1)];
+    int polyN = 0;
+    polyN += robArmSampleArcThroughMid(shin1FilletWorld, shin1KneeTangentWorld, shin1MidWorld, shin1FootTangentWorld, ROCKY_MASS_CENTER_ARC_SAMPLES, poly + polyN);
+    polyN += robArmSampleArcAwayFrom(footWorld, shin1FootTangentWorld, shin2FootTangentWorld, kneeWorld, ROCKY_MASS_CENTER_ARC_SAMPLES, poly + polyN);
+    polyN += robArmSampleArcThroughMid(shin2FilletWorld, shin2FootTangentWorld, shin2MidWorld, shin2KneeTangentWorld, ROCKY_MASS_CENTER_ARC_SAMPLES, poly + polyN);
+    polyN += robArmSampleArcAwayFrom(kneeWorld, shin2KneeTangentWorld, shin1KneeTangentWorld, footWorld, ROCKY_MASS_CENTER_ARC_SAMPLES, poly + polyN);
+
+    *outLegCentroidWorld = robArmPolygonCentroid(poly, polyN);
+}
+
+// Blends computeRockyMassCenterEndpointsWorld's two endpoints by Rocky's
+// CURRENT bodyWeight/legWeight -- the dot's actual on-screen position right
+// now, used both to draw it (drawRocky below) and to hit-test it
+// (input.c's WM_LBUTTONDOWN/WM_MOUSEMOVE).
+PointF computeRockyMassCenterWorld(Rocky b)
+{
+    PointF rectCentroidWorld, legCentroidWorld;
+    computeRockyMassCenterEndpointsWorld(b, &rectCentroidWorld, &legCentroidWorld);
+
+    // Falls back to an even 50/50 split (not a pure rectangle-only
+    // point) whenever both weights are ~0 -- same guard save.c's own
+    // massCenter computation uses. Previously this fell back to
+    // rectCentroidWorld outright, which put the dot exactly on top of
+    // the Body handle instead of the intended default halfway point
+    // whenever bodyWeight/legWeight ever read as 0/0 (reported: the dot
+    // sitting on the body handle at "startup" even though the boxes
+    // showed 0.5/0.5) -- this guarantees the ON-SCREEN default always
+    // matches the documented 0.5/0.5 starting point regardless of
+    // whatever left the underlying fields at 0.
+    float bw = b.bodyWeight;
+    float lw = b.legWeight;
+
+    // Testing-only toggles (ID_ROCKY_TOGGLE_LEG_BUTTON/
+    // ID_ROCKY_TOGGLE_BODY_BUTTON) -- with one part hidden, the mass
+    // center has nowhere else to be but entirely on the part that's
+    // actually still there, regardless of whatever bodyWeight/legWeight
+    // currently say. Deliberately overrides the LOCAL bw/lw used for
+    // just this blend rather than the underlying fields themselves, so
+    // the user's own weight ratio is preserved underneath and comes
+    // right back the moment the hidden part is restored -- nothing here
+    // is lost, only temporarily not applied. (Both hidden at once is a
+    // degenerate case with nothing left to weight at all -- falls
+    // through to the ordinary totalWeight<=1e-6 guard below, same
+    // 50/50-of-nothing-meaningful fallback as the plain 0/0 case.)
+    if (b.legHidden && !b.bodyHidden)
+    {
+        bw = 1.0f;
+        lw = 0.0f;
+    }
+    else if (b.bodyHidden && !b.legHidden)
+    {
+        bw = 0.0f;
+        lw = 1.0f;
+    }
+
+    float totalWeight = bw + lw;
+    if (totalWeight <= 1e-6f)
+    {
+        bw = 0.5f;
+        lw = 0.5f;
+        totalWeight = 1.0f;
+    }
+
+    PointF massCenter;
+    massCenter.x = (bw * rectCentroidWorld.x + lw * legCentroidWorld.x) / totalWeight;
+    massCenter.y = (bw * rectCentroidWorld.y + lw * legCentroidWorld.y) / totalWeight;
+    return massCenter;
+}
+// ---- Semni's mass-center marker ----
+//
+// Same idea as computeRockyMassCenterEndpointsWorld above, generalized to
+// Semni's arc-based head/butt torso ("body") and its two-stage
+// (hip->knee->foot) leg. Reuses save.h's ChainTangents/
+// computeSeamStyleTangents/computeLimbStyleTangents/
+// sampleLimbStageOutline/robArmPolygonCentroid -- the exact same
+// tangent-fillet construction drawSemniBody/drawThigh/drawShin already use
+// to actually draw this robot, and the exact same "leg centroid = average
+// of the thigh stage's and shin stage's own centroids" simplification
+// save.c's own saveSemniAsRobLeg uses for Leg.txt -- not a separate,
+// potentially-diverging formula.
+//
+// Computes each stage's centroid in its own LOCAL (pre-joint-rotation)
+// frame first, then rotates just that one point into world space via
+// jointToWorld/nestedJointToWorld -- mathematically identical to
+// transforming every polygon vertex first and then taking the centroid
+// (the way Rocky's own version above does it), since all of these are
+// rigid transforms and polygon-centroid computation commutes with any of
+// them; doing it this way here just avoids needing a second, WORLD-space
+// copy of the tangent-point construction. Deliberately DOES apply the
+// robot's current angle/hipAngle/kneeAngle (unlike save.c's own flat,
+// pre-rotation export) so the dot sits visibly on the actual on-screen
+// leg, wherever it's currently bent -- same deliberate divergence Rocky's
+// own version documents.
+void computeSemniMassCenterEndpointsWorld(Semni b, PointF* outBodyCentroidWorld, PointF* outLegCentroidWorld)
+{
+    PointF center = getCenter(b);
+    float angle = b.angle;
+
+    // ---- body: head/butt capsule + 2 seam arcs ----
+    PointF headC = { b.headX, b.y };
+    PointF buttC = { b.buttX, b.y };
+    ChainTangents seam = computeSeamStyleTangents(headC, b.headRadius, buttC, b.buttRadius,
+                                                    b.seamArc1Angle, b.seamArc2Angle,
+                                                    MIN_ARC_R, MAX_ARC_R);
+    PointF bodyPoly[4 * (ROCKY_MASS_CENTER_ARC_SAMPLES + 1)];
+    int bodyPolyN = sampleLimbStageOutline(headC, b.headRadius, buttC, b.buttRadius, seam, ROCKY_MASS_CENTER_ARC_SAMPLES, bodyPoly);
+    PointF bodyCentroidLocal = robArmPolygonCentroid(bodyPoly, bodyPolyN);
+    *outBodyCentroidWorld = rotatePoint(bodyCentroidLocal, center, angle);
+
+    // ---- leg: hip -> knee -> foot, two stages ----
+    PointF hipC = b.innerCircle;
+    PointF kneeC = b.kneeCircle;
+    PointF footC = b.footCircle;
+
+    ChainTangents thigh = computeLimbStyleTangents(hipC, b.innerRadius, kneeC, b.kneeRadius,
+                                                      b.thighArc1Angle, b.thighArc2Angle,
+                                                      MIN_THIGH_ARC_R, MAX_SEMNI_THIGH_ARC_R, MAX_THIGH_ARC2_CONCAVE_R);
+    ChainTangents shin = computeLimbStyleTangents(kneeC, b.kneeRadius, footC, b.footRadius,
+                                                     b.shinArc1Angle, b.shinArc2Angle,
+                                                     MIN_SHIN_ARC_R, MAX_SHIN_ARC_R, MAX_SHIN_ARC2_CONCAVE_R);
+
+    PointF thighPoly[4 * (ROCKY_MASS_CENTER_ARC_SAMPLES + 1)];
+    int thighN = sampleLimbStageOutline(hipC, b.innerRadius, kneeC, b.kneeRadius, thigh, ROCKY_MASS_CENTER_ARC_SAMPLES, thighPoly);
+    PointF thighCentroidLocal = robArmPolygonCentroid(thighPoly, thighN);
+
+    PointF shinPoly[4 * (ROCKY_MASS_CENTER_ARC_SAMPLES + 1)];
+    int shinN = sampleLimbStageOutline(kneeC, b.kneeRadius, footC, b.footRadius, shin, ROCKY_MASS_CENTER_ARC_SAMPLES, shinPoly);
+    PointF shinCentroidLocal = robArmPolygonCentroid(shinPoly, shinN);
+
+    // thigh stage rotates by hipAngle around hipC (innerCircle); shin
+    // stage additionally rotates by kneeAngle around kneeC, nested inside
+    // that -- same joint chain drawThigh/drawShin use.
+    PointF thighCentroidWorld = jointToWorld(thighCentroidLocal, hipC, b.hipAngle, center, angle);
+    PointF shinCentroidWorld = nestedJointToWorld(shinCentroidLocal, kneeC, b.kneeAngle, hipC, b.hipAngle, center, angle);
+
+    outLegCentroidWorld->x = (thighCentroidWorld.x + shinCentroidWorld.x) * 0.5f;
+    outLegCentroidWorld->y = (thighCentroidWorld.y + shinCentroidWorld.y) * 0.5f;
+}
+
+// Blends computeSemniMassCenterEndpointsWorld's two endpoints by Semni's
+// CURRENT bodyWeight/legWeight -- same 50/50 zero-guard as Rocky's own
+// computeRockyMassCenterWorld.
+PointF computeSemniMassCenterWorld(Semni b)
+{
+    PointF bodyCentroidWorld, legCentroidWorld;
+    computeSemniMassCenterEndpointsWorld(b, &bodyCentroidWorld, &legCentroidWorld);
+
+    float bw = b.bodyWeight;
+    float lw = b.legWeight;
+    float totalWeight = bw + lw;
+    if (totalWeight <= 1e-6f)
+    {
+        bw = 0.5f;
+        lw = 0.5f;
+        totalWeight = 1.0f;
+    }
+
+    PointF massCenter;
+    massCenter.x = (bw * bodyCentroidWorld.x + lw * legCentroidWorld.x) / totalWeight;
+    massCenter.y = (bw * bodyCentroidWorld.y + lw * legCentroidWorld.y) / totalWeight;
+    return massCenter;
+}
+
+// ---- Stilo's mass-center marker ----
+//
+// Same idea as computeSemniMassCenterEndpointsWorld above -- Stilo shares
+// Semni's own head/butt torso shape (rotated by just the whole-body angle,
+// no separate hip stage for the TORSO itself, see drawStiloBody), but has
+// TWO independent single-stage legs (hip1->feet1, hip2->feet2) instead of
+// Semni's one two-stage leg. Per explicit user decision, legWeight is ONE
+// combined value covering both legs together, so outLegCentroidWorld here
+// is the plain, equally-weighted average of leg1's and leg2's own
+// centroids -- not a 3-way body/leg1/leg2 blend.
+void computeStiloMassCenterEndpointsWorld(Stilo b, PointF* outBodyCentroidWorld, PointF* outLegCentroidWorld)
+{
+    PointF center = getStiloCenter(b);
+    float angle = b.angle;
+
+    // ---- body: same head/butt capsule shape as Semni's own ----
+    PointF headC = { b.headX, b.y };
+    PointF buttC = { b.buttX, b.y };
+    ChainTangents seam = computeSeamStyleTangents(headC, b.headRadius, buttC, b.buttRadius,
+                                                    b.seamArc1Angle, b.seamArc2Angle,
+                                                    MIN_ARC_R, MAX_ARC_R);
+    PointF bodyPoly[4 * (ROCKY_MASS_CENTER_ARC_SAMPLES + 1)];
+    int bodyPolyN = sampleLimbStageOutline(headC, b.headRadius, buttC, b.buttRadius, seam, ROCKY_MASS_CENTER_ARC_SAMPLES, bodyPoly);
+    PointF bodyCentroidLocal = robArmPolygonCentroid(bodyPoly, bodyPolyN);
+    *outBodyCentroidWorld = rotatePoint(bodyCentroidLocal, center, angle);
+
+    // ---- leg 1: hip1 -> feet1, single stage ----
+    ChainTangents thigh1 = computeLimbStyleTangents(b.hip1Circle, b.hip1Radius, b.feet1Circle, b.feet1Radius,
+                                                      b.thigh1Arc1Angle, b.thigh1Arc2Angle,
+                                                      MIN_THIGH_ARC_R, MAX_SEMNI_THIGH_ARC_R, MAX_THIGH_ARC2_CONCAVE_R);
+    PointF leg1Poly[4 * (ROCKY_MASS_CENTER_ARC_SAMPLES + 1)];
+    int leg1N = sampleLimbStageOutline(b.hip1Circle, b.hip1Radius, b.feet1Circle, b.feet1Radius, thigh1, ROCKY_MASS_CENTER_ARC_SAMPLES, leg1Poly);
+    PointF leg1CentroidLocal = robArmPolygonCentroid(leg1Poly, leg1N);
+    PointF leg1CentroidWorld = jointToWorld(leg1CentroidLocal, b.hip1Circle, b.hip1Angle, center, angle);
+
+    // ---- leg 2: hip2 -> feet2, single stage, fully independent ----
+    ChainTangents thigh2 = computeLimbStyleTangents(b.hip2Circle, b.hip2Radius, b.feet2Circle, b.feet2Radius,
+                                                      b.thigh2Arc1Angle, b.thigh2Arc2Angle,
+                                                      MIN_THIGH_ARC_R, MAX_SEMNI_THIGH_ARC_R, MAX_THIGH_ARC2_CONCAVE_R);
+    PointF leg2Poly[4 * (ROCKY_MASS_CENTER_ARC_SAMPLES + 1)];
+    int leg2N = sampleLimbStageOutline(b.hip2Circle, b.hip2Radius, b.feet2Circle, b.feet2Radius, thigh2, ROCKY_MASS_CENTER_ARC_SAMPLES, leg2Poly);
+    PointF leg2CentroidLocal = robArmPolygonCentroid(leg2Poly, leg2N);
+    PointF leg2CentroidWorld = jointToWorld(leg2CentroidLocal, b.hip2Circle, b.hip2Angle, center, angle);
+
+    // Combined leg centroid: plain, equally-weighted average of both legs
+    // -- see this function's own comment above.
+    outLegCentroidWorld->x = (leg1CentroidWorld.x + leg2CentroidWorld.x) * 0.5f;
+    outLegCentroidWorld->y = (leg1CentroidWorld.y + leg2CentroidWorld.y) * 0.5f;
+}
+
+// Blends computeStiloMassCenterEndpointsWorld's two endpoints by Stilo's
+// CURRENT bodyWeight/legWeight -- same 50/50 zero-guard as Rocky's/
+// Semni's own versions.
+PointF computeStiloMassCenterWorld(Stilo b)
+{
+    PointF bodyCentroidWorld, legCentroidWorld;
+    computeStiloMassCenterEndpointsWorld(b, &bodyCentroidWorld, &legCentroidWorld);
+
+    float bw = b.bodyWeight;
+    float lw = b.legWeight;
+    float totalWeight = bw + lw;
+    if (totalWeight <= 1e-6f)
+    {
+        bw = 0.5f;
+        lw = 0.5f;
+        totalWeight = 1.0f;
+    }
+
+    PointF massCenter;
+    massCenter.x = (bw * bodyCentroidWorld.x + lw * legCentroidWorld.x) / totalWeight;
+    massCenter.y = (bw * bodyCentroidWorld.y + lw * legCentroidWorld.y) / totalWeight;
+    return massCenter;
+}
+
+// Small on-canvas indicator for the Body<->Leg ratio slider (input.c's
+// hWeightRatioSlider) -- a plain filled dot at wherever
+// computeRockyMassCenterWorld says the combined mass center currently
+// sits, so the effect of those two numbers is visible directly on the
+// robot instead of only showing up later in an exported Rob.txt. Also
+// directly DRAGGABLE (input.c's hoverRockyMassCenter/
+// draggingRockyMassCenter) as an alternative to typing numbers into the
+// two edit boxes -- green normally, matching drawHandle's own red/yellow
+// hover-highlight CONVENTION (not its literal colors, which are already
+// used by every other handle on this robot) so this one reads as its own
+// distinct, recognizable control at a glance.
+static void drawRockyMassCenterMarker(PointF p, int active, float radius, float opacity)
+{
+    const int segments = 32;
+
+    if (active)
+        glColor4f(1.0f, 0.85f, 0.35f, HANDLE_ALPHA * opacity);
+    else
+        glColor4f(0.15f, 0.85f, 0.25f, HANDLE_ALPHA * opacity);
+
+    glBegin(GL_TRIANGLE_FAN);
+
+    glVertex2f(p.x, p.y);
+
+    for (int i = 0; i <= segments; i++)
+    {
+        float t = 2.0f * 3.1415926f * i / segments;
+
+        glVertex2f(
+            p.x + cosf(t) * radius,
+            p.y + sinf(t) * radius
+        );
+    }
+
+    glEnd();
+}
+
+// Dashed green guide line between the two fixed endpoints
+// computeRockyMassCenterEndpointsWorld blends between (body centroid <->
+// leg centroid) -- shows the user the full range the green mass-center
+// handle (drawRockyMassCenterMarker) can be dragged along. Same dashed-
+// line convention drawSemniCircleSegments' unhovered segments use
+// (glLineStipple(1, 0x00FF)), colored to match the handle itself so it
+// reads as "this is that dot's track". View-Segments-gated like the other
+// overlays in drawRocky below, since it's reference info, not a control.
+static void drawRockyMassCenterTrack(Rocky b, float opacity)
+{
+    PointF bodyCentroidWorld, legCentroidWorld;
+    computeRockyMassCenterEndpointsWorld(b, &bodyCentroidWorld, &legCentroidWorld);
+
+    glEnable(GL_LINE_STIPPLE);
+    glLineStipple(1, 0x00FF);
+    glLineWidth(1.5f);
+    glColor4f(0.15f, 0.85f, 0.25f, 0.8f * opacity);
+
+    glBegin(GL_LINES);
+    glVertex2f(bodyCentroidWorld.x, bodyCentroidWorld.y);
+    glVertex2f(legCentroidWorld.x, legCentroidWorld.y);
+    glEnd();
+
+    glLineWidth(1.0f);
+    glDisable(GL_LINE_STIPPLE);
+}
+
+void drawRocky(Rocky b, RenderState* rs, int includeHandles, float opacity)
+{
+    // Testing-only toggles (ID_ROCKY_TOGGLE_LEG_BUTTON/
+    // ID_ROCKY_TOGGLE_BODY_BUTTON, see app.h's Rocky comment) -- drop
+    // either part out of rendering entirely so its behavior (mostly
+    // gravity/collision, see canvas.c's matching guard in
+    // robotCollidesWithEnvironment) can be watched in isolation from the
+    // other part's own geometry.
+    if (!b.bodyHidden)
+        drawRockyBodyRect(b, rs, opacity);
+    if (!b.legHidden)
+        drawRockyLeg(b, rs, opacity);
+
+    // View Segments overlay -- same gating as drawSemni's own
+    // segmentsVisible (rs->showSegments plus actually being in the robot
+    // editor right now), now that Rocky has its own compute/draw pair
+    // mirroring Semni's.
+    BOOL rockySegmentsVisible = rs->showSegments && (editorModeState.currentMode == EDITOR_MODE_SEMNI);
+    if (rockySegmentsVisible)
+    {
+        drawRockyRectSegments(b, rs->hoveredRectSegment, opacity);
+        drawRockyCircleSegments(b, rs->hoveredCircleSegment, opacity);
+        drawRockyBodyCircleHover(b, rs->hoveredBodyCircle, opacity);
+        drawRockyReferencePoint(b, opacity);
+        drawRockyMassCenterTrack(b, opacity);
+    }
+
+    // Body resize/move handle -- same visible-dot treatment drawSemniHandles
+    // gives the hip circle (drawHandle, HIP_HANDLE_RADIUS), at the
+    // rectangle's own center (its rotation pivot -- see getRockyCenter).
+    // Gated on includeHandles/editor mode the same way Semni's own handles
+    // are (see drawSemni's handlesVisible) so it doesn't show up in the
+    // dimmed background copy or an exported frame.
+    BOOL handlesVisible = includeHandles && (editorModeState.currentMode == EDITOR_MODE_SEMNI);
+    if (handlesVisible)
+    {
+        PointF center = getRockyCenter(b);
+        drawHandle(center, rs->draggingRockyBody || rs->hoverRockyBody, HIP_HANDLE_RADIUS, opacity);
+
+        // Body/Leg Weight mass-center dot -- draggable alternative to
+        // dragging hWeightRatioSlider (see input.c's
+        // hoverRockyMassCenter/draggingRockyMassCenter). Gated the same as
+        // every OTHER handle here now that it's a real drag target, not
+        // just an informational overlay -- so it's hidden in an exported
+        // BMP/the dimmed background copy, same as the body/knee/foot dots
+        // above and below.
+        drawRockyMassCenterMarker(computeRockyMassCenterWorld(b), rs->draggingRockyMassCenter || rs->hoverRockyMassCenter, MASS_CENTER_HANDLE_RADIUS, opacity);
+
+        // Knee handle -- where the leg attaches to the rectangle (see
+        // drawRockyLeg's own kneeWorld), same visible-dot treatment as
+        // Semni's own knee handle (drawThigh's drawHandle(kneeWorld, ...)).
+        PointF kneeWorld = rotatePoint(b.kneeCircle, center, b.angle);
+        drawHandle(kneeWorld, rs->draggingRockyKnee || rs->hoverRockyKnee, KNEE_HANDLE_RADIUS, opacity);
+
+        // Foot handle -- far end of the shin, same visible-dot treatment
+        // as Semni's own foot handle (drawShinHandles' drawHandle(footWorld, ...)).
+        PointF footWorld = jointToWorld(b.footCircle, b.kneeCircle, b.kneeAngle, center, b.angle);
+        drawHandle(footWorld, rs->draggingRockyFoot || rs->hoverRockyFoot, FOOT_HANDLE_RADIUS, opacity);
+
+        // Shin connector-arc handles -- same circleAtAxisMid construction
+        // (pinned to the exact middle of the knee->foot axis) Semni's own
+        // drawShinHandles uses for its shin1MidLocal/shin2MidLocal, NOT
+        // drawRockyLeg's own circleTowardPoint bulge point (that one's for
+        // where the curve is actually DRAWN, this one's for where the
+        // handle DOT sits -- Semni keeps that same distinction). Drag-only
+        // highlight, no separate hover state, same as Semni's shin handles.
+        {
+            PointF shinAxisMidLocal = { (b.kneeCircle.x + b.footCircle.x) * 0.5f, (b.kneeCircle.y + b.footCircle.y) * 0.5f };
+
+            Fillet shin1Fillet = filletFromAttachAngle(b.kneeCircle, b.kneeRadius, b.footCircle, b.footRadius, b.shinArc1Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC_R);
+            PointF shin1NearLocal = circleTowardPoint(shin1Fillet.center, shin1Fillet.radius, shinAxisMidLocal);
+            PointF shin1MidLocal = circleAtAxisMid(shin1Fillet.center, shin1Fillet.radius, b.kneeCircle, b.footCircle, shin1NearLocal);
+
+            Fillet shin2Fillet = filletFromAttachAngleConcave(b.kneeCircle, b.kneeRadius, b.footCircle, b.footRadius, b.shinArc2Angle, MIN_SHIN_ARC_R, MAX_SHIN_ARC2_CONCAVE_R);
+            PointF shin2NearLocal = circleTowardPoint(shin2Fillet.center, shin2Fillet.radius, shinAxisMidLocal);
+            PointF shin2MidLocal = circleAtAxisMid(shin2Fillet.center, shin2Fillet.radius, b.kneeCircle, b.footCircle, shin2NearLocal);
+
+            PointF shin1World = jointToWorld(shin1MidLocal, b.kneeCircle, b.kneeAngle, center, b.angle);
+            PointF shin2World = jointToWorld(shin2MidLocal, b.kneeCircle, b.kneeAngle, center, b.angle);
+
+            drawHandle(shin1World, rs->draggingRockyShin1 || rs->hoverRockyShin1, ROCKY_SHIN_HANDLE_RADIUS, opacity);
+            drawHandle(shin2World, rs->draggingRockyShin2 || rs->hoverRockyShin2, ROCKY_SHIN_HANDLE_RADIUS, opacity);
+        }
+
+        // One small handle at the midpoint of each of the 4 edges --
+        // marks where hovering + dragging resizes just that side (see
+        // input.c's hitTestRockyEdge), same idea as the body handle
+        // above but sized down a notch (KNEE_HANDLE_RADIUS) so the two
+        // read as different, less prominent handles.
+        float angle = b.angle;
+
+        PointF leftMid   = rotatePoint((PointF){ b.bodyX - b.bodyHalfWidth, b.bodyY }, center, angle);
+        PointF rightMid  = rotatePoint((PointF){ b.bodyX + b.bodyHalfWidth, b.bodyY }, center, angle);
+        PointF bottomMid = rotatePoint((PointF){ b.bodyX, b.bodyY - b.bodyHalfHeight }, center, angle);
+        PointF topMid    = rotatePoint((PointF){ b.bodyX, b.bodyY + b.bodyHalfHeight }, center, angle);
+
+        drawHandle(leftMid,   rs->draggingRockyEdge == ROCKY_EDGE_LEFT   || rs->hoverRockyEdge == ROCKY_EDGE_LEFT,   KNEE_HANDLE_RADIUS, opacity);
+        drawHandle(rightMid,  rs->draggingRockyEdge == ROCKY_EDGE_RIGHT  || rs->hoverRockyEdge == ROCKY_EDGE_RIGHT,  KNEE_HANDLE_RADIUS, opacity);
+        drawHandle(bottomMid, rs->draggingRockyEdge == ROCKY_EDGE_BOTTOM || rs->hoverRockyEdge == ROCKY_EDGE_BOTTOM, KNEE_HANDLE_RADIUS, opacity);
+        drawHandle(topMid,    rs->draggingRockyEdge == ROCKY_EDGE_TOP    || rs->hoverRockyEdge == ROCKY_EDGE_TOP,    KNEE_HANDLE_RADIUS, opacity);
+    }
+}
+
+// ---- Stilo ----
+//
+// Torso (head/butt circles + two seam arcs, identical construction to
+// drawSemniBody) shared by two independent, two-joint legs -- each just a
+// hip circle directly connected to a feet circle by a pair of thigh fillet
+// arcs, no knee/shin/foot sub-stage. See drawThigh/drawThighHandles above
+// for the derivation of the fillet-arc construction, which applies here
+// unchanged, just reading Stilo's own fields and highlighting via
+// rs->hoverStilo*/draggingStilo* instead of rs->hoverHip/draggingInner etc.
+// Kept as separate functions (rather than reusing drawThigh directly)
+// since that takes a Semni by value, a different C type than Stilo -- same
+// reasoning app.h gives for keeping the two structs distinct.
+
+// Draws Stilo's torso (head/butt circles + seam arcs) plus both legs' hip
+// circles -- identical construction to drawSemniBody for the torso, just
+// reading b's own fields and highlighting via the Stilo-specific rs fields.
+static void drawStiloBody(Stilo b, RenderState* rs, float opacity)
+{
+    PointF center = getStiloCenter(b);
+    float angle = b.angle;
+
+    PointF headCenter = rotatePoint((PointF){ b.headX, b.y }, center, angle);
+    PointF buttCenter = rotatePoint((PointF){ b.buttX, b.y }, center, angle);
+    PointF hip1 = rotatePoint(b.hip1Circle, center, angle);
+
+    setColor(rs, rs->hoverStiloHead, 0.2f, 0.4f, 1.0f, opacity);
+    drawCircle(headCenter, b.headRadius);
+
+    setColor(rs, rs->hoverStiloButt, 0.2f, 0.4f, 1.0f, opacity);
+    drawCircle(buttCenter, b.buttRadius);
+
+    setColor(rs, rs->draggingStiloHip1 || (rs->hoverStiloHip1 && !rs->shiftHeld && !rs->hoveringWhole), 0.2f, 0.4f, 1.0f, opacity);
+    drawCircle(hip1, b.hip1Radius);
+
+    // leg 2's own hip circle -- drawStiloHandles only draws a small
+    // fixed-size DRAG HANDLE dot at hip2Circle (same as it does for leg
+    // 1's hip), it never draws the actual joint circle at hip2Radius the
+    // way leg 1's hip circle is drawn just above -- without this, leg 2's
+    // hip has no visible body, only its handle dot.
+    PointF hip2 = rotatePoint(b.hip2Circle, center, angle);
+
+    setColor(rs, rs->draggingStiloHip2 || (rs->hoverStiloHip2 && !rs->shiftHeld && !rs->hoveringWhole), 0.2f, 0.4f, 1.0f, opacity);
+    drawCircle(hip2, b.hip2Radius);
+
+    PointF headLocal = { b.headX, b.y };
+    PointF buttLocal = { b.buttX, b.y };
+    PointF bodyMidLocal = { (headLocal.x + buttLocal.x) * 0.5f, (headLocal.y + buttLocal.y) * 0.5f };
+
+    Fillet seamArc1Fillet = filletFromAttachAngle(headLocal, b.headRadius, buttLocal, b.buttRadius, b.seamArc1Angle, MIN_ARC_R, MAX_ARC_R);
+    PointF seamArc1HeadTangentLocal = circleEdge(headLocal, b.headRadius, b.seamArc1Angle);
+    PointF seamArc1ButtTangentLocal = internalTangentPoint(seamArc1Fillet.center, seamArc1Fillet.radius, buttLocal, b.buttRadius);
+    PointF seamArc1NearLocal = circleTowardPoint(seamArc1Fillet.center, seamArc1Fillet.radius, bodyMidLocal);
+
+    Fillet seamArc2Fillet = filletFromAttachAngle(headLocal, b.headRadius, buttLocal, b.buttRadius, b.seamArc2Angle, MIN_ARC_R, MAX_ARC_R);
+    PointF seamArc2HeadTangentLocal = circleEdge(headLocal, b.headRadius, b.seamArc2Angle);
+    PointF seamArc2ButtTangentLocal = internalTangentPoint(seamArc2Fillet.center, seamArc2Fillet.radius, buttLocal, b.buttRadius);
+    PointF seamArc2NearLocal = circleTowardPoint(seamArc2Fillet.center, seamArc2Fillet.radius, bodyMidLocal);
+
+    int seamActive = rs->draggingStiloSeamArc1 || rs->draggingStiloSeamArc2;
+
+    setColor(rs, seamActive, 0.2f, 0.4f, 1.0f, opacity);
+    drawArc(rotatePoint(seamArc1HeadTangentLocal, center, angle),
+            rotatePoint(seamArc1NearLocal, center, angle),
+            rotatePoint(seamArc1ButtTangentLocal, center, angle));
+
+    setColor(rs, seamActive, 0.2f, 0.4f, 1.0f, opacity);
+    drawArc(rotatePoint(seamArc2HeadTangentLocal, center, angle),
+            rotatePoint(seamArc2NearLocal, center, angle),
+            rotatePoint(seamArc2ButtTangentLocal, center, angle));
+}
+
+// Draws leg 1's feet circle and thigh arcs (hip1-to-feet1) -- identical
+// fillet-arc construction to drawThigh above, just reading Stilo's own
+// fields; there's no shin/foot stage past this any more, feet1Circle IS
+// the end of the leg.
+static void drawStiloThigh1(Stilo b, RenderState* rs, float opacity)
+{
+    PointF center = getStiloCenter(b);
+    float angle = b.angle;
+
+    PointF feet1World = jointToWorld(b.feet1Circle, b.hip1Circle, b.hip1Angle, center, angle);
+
+    int hipRotateHint = (rs->hoverStiloHip1 && rs->shiftHeld) || rs->draggingStiloHip1;
+
+    setColor(rs, hipRotateHint || (rs->hoverStiloFeet1 && !rs->shiftHeld && !rs->draggingStiloFeet1 && !rs->hoveringWhole), 0.2f, 0.4f, 1.0f, opacity);
+    drawCircle(feet1World, b.feet1Radius);
+
+    PointF axisMidLocal = { (b.hip1Circle.x + b.feet1Circle.x) * 0.5f, (b.hip1Circle.y + b.feet1Circle.y) * 0.5f };
+
+    Fillet thigh1Arc1Fillet = filletFromAttachAngle(b.hip1Circle, b.hip1Radius, b.feet1Circle, b.feet1Radius, b.thigh1Arc1Angle, MIN_THIGH_ARC_R, MAX_SEMNI_THIGH_ARC_R);
+    PointF thigh1Arc1HipTangentLocal = circleEdge(b.hip1Circle, b.hip1Radius, b.thigh1Arc1Angle);
+    PointF thigh1Arc1FeetTangentLocal = internalTangentPoint(thigh1Arc1Fillet.center, thigh1Arc1Fillet.radius, b.feet1Circle, b.feet1Radius);
+    PointF thigh1Arc1NearLocal = circleTowardPoint(thigh1Arc1Fillet.center, thigh1Arc1Fillet.radius, axisMidLocal);
+
+    Fillet thigh1Arc2Fillet = filletFromAttachAngleConcave(b.hip1Circle, b.hip1Radius, b.feet1Circle, b.feet1Radius, b.thigh1Arc2Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC2_CONCAVE_R);
+    PointF thigh1Arc2HipTangentLocal = circleEdge(b.hip1Circle, b.hip1Radius, b.thigh1Arc2Angle);
+    PointF thigh1Arc2FeetTangentLocal = circleTowardPoint(thigh1Arc2Fillet.center, thigh1Arc2Fillet.radius, b.feet1Circle);
+    PointF thigh1Arc2NearLocal = circleTowardPoint(thigh1Arc2Fillet.center, thigh1Arc2Fillet.radius, axisMidLocal);
+
+    setColor(rs, rs->draggingStiloThigh1Arc1 || rs->draggingStiloFeet1 || hipRotateHint, 0.2f, 0.4f, 1.0f, opacity);
+    drawArc(jointToWorld(thigh1Arc1HipTangentLocal, b.hip1Circle, b.hip1Angle, center, angle),
+            jointToWorld(thigh1Arc1NearLocal, b.hip1Circle, b.hip1Angle, center, angle),
+            jointToWorld(thigh1Arc1FeetTangentLocal, b.hip1Circle, b.hip1Angle, center, angle));
+
+    setColor(rs, rs->draggingStiloThigh1Arc2 || rs->draggingStiloFeet1 || hipRotateHint, 0.2f, 0.4f, 1.0f, opacity);
+    drawArc(jointToWorld(thigh1Arc2HipTangentLocal, b.hip1Circle, b.hip1Angle, center, angle),
+            jointToWorld(thigh1Arc2NearLocal, b.hip1Circle, b.hip1Angle, center, angle),
+            jointToWorld(thigh1Arc2FeetTangentLocal, b.hip1Circle, b.hip1Angle, center, angle));
+}
+
+static void drawStiloThigh1Handles(Stilo b, RenderState* rs, float opacity)
+{
+    PointF center = getStiloCenter(b);
+    float angle = b.angle;
+
+    PointF feet1World = jointToWorld(b.feet1Circle, b.hip1Circle, b.hip1Angle, center, angle);
+
+    PointF axisMidLocal = { (b.hip1Circle.x + b.feet1Circle.x) * 0.5f, (b.hip1Circle.y + b.feet1Circle.y) * 0.5f };
+
+    Fillet thigh1Arc1Fillet = filletFromAttachAngle(b.hip1Circle, b.hip1Radius, b.feet1Circle, b.feet1Radius, b.thigh1Arc1Angle, MIN_THIGH_ARC_R, MAX_SEMNI_THIGH_ARC_R);
+    PointF thigh1Arc1NearLocal = circleTowardPoint(thigh1Arc1Fillet.center, thigh1Arc1Fillet.radius, axisMidLocal);
+    PointF thigh1Arc1MidLocal = circleAtAxisMid(thigh1Arc1Fillet.center, thigh1Arc1Fillet.radius, b.hip1Circle, b.feet1Circle, thigh1Arc1NearLocal);
+
+    Fillet thigh1Arc2Fillet = filletFromAttachAngleConcave(b.hip1Circle, b.hip1Radius, b.feet1Circle, b.feet1Radius, b.thigh1Arc2Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC2_CONCAVE_R);
+    PointF thigh1Arc2NearLocal = circleTowardPoint(thigh1Arc2Fillet.center, thigh1Arc2Fillet.radius, axisMidLocal);
+    PointF thigh1Arc2MidLocal = circleAtAxisMid(thigh1Arc2Fillet.center, thigh1Arc2Fillet.radius, b.hip1Circle, b.feet1Circle, thigh1Arc2NearLocal);
+
+    PointF thigh1Arc1World = jointToWorld(thigh1Arc1MidLocal, b.hip1Circle, b.hip1Angle, center, angle);
+    PointF thigh1Arc2World = jointToWorld(thigh1Arc2MidLocal, b.hip1Circle, b.hip1Angle, center, angle);
+
+    drawHandle(feet1World, rs->draggingStiloFeet1 || rs->hoverStiloFeet1, KNEE_HANDLE_RADIUS, opacity);
+    drawHandle(thigh1Arc1World, rs->draggingStiloThigh1Arc1 || rs->hoverStiloThigh1Arc1, THIGH_HANDLE_RADIUS, opacity);
+    drawHandle(thigh1Arc2World, rs->draggingStiloThigh1Arc2 || rs->hoverStiloThigh1Arc2, THIGH_HANDLE_RADIUS, opacity);
+}
+
+// ---- Stilo leg 2 ----
+//
+// Leg 2 is Stilo's second, independent hip->feet chain (see app.h's Stilo
+// comment) -- identical construction to drawStiloThigh1/
+// drawStiloThigh1Handles above, just reading the b.hip2*/feet2*/thigh2*
+// fields and highlighting via rs->*StiloHip2/rs->*StiloFeet2/etc. instead
+// of leg 1's. There's no leg-2 equivalent of drawStiloBody's torso drawing
+// -- both legs hang off the one shared torso, already drawn once (though
+// drawStiloBody DOES draw leg 2's own hip circle, see its comment).
+static void drawStiloThigh2(Stilo b, RenderState* rs, float opacity)
+{
+    PointF center = getStiloCenter(b);
+    float angle = b.angle;
+
+    PointF feet2World = jointToWorld(b.feet2Circle, b.hip2Circle, b.hip2Angle, center, angle);
+
+    int hipRotateHint = (rs->hoverStiloHip2 && rs->shiftHeld) || rs->draggingStiloHip2;
+
+    setColor(rs, hipRotateHint || (rs->hoverStiloFeet2 && !rs->shiftHeld && !rs->draggingStiloFeet2 && !rs->hoveringWhole), 0.2f, 0.4f, 1.0f, opacity);
+    drawCircle(feet2World, b.feet2Radius);
+
+    PointF axisMidLocal = { (b.hip2Circle.x + b.feet2Circle.x) * 0.5f, (b.hip2Circle.y + b.feet2Circle.y) * 0.5f };
+
+    Fillet thigh2Arc1Fillet = filletFromAttachAngle(b.hip2Circle, b.hip2Radius, b.feet2Circle, b.feet2Radius, b.thigh2Arc1Angle, MIN_THIGH_ARC_R, MAX_SEMNI_THIGH_ARC_R);
+    PointF thigh2Arc1HipTangentLocal = circleEdge(b.hip2Circle, b.hip2Radius, b.thigh2Arc1Angle);
+    PointF thigh2Arc1FeetTangentLocal = internalTangentPoint(thigh2Arc1Fillet.center, thigh2Arc1Fillet.radius, b.feet2Circle, b.feet2Radius);
+    PointF thigh2Arc1NearLocal = circleTowardPoint(thigh2Arc1Fillet.center, thigh2Arc1Fillet.radius, axisMidLocal);
+
+    Fillet thigh2Arc2Fillet = filletFromAttachAngleConcave(b.hip2Circle, b.hip2Radius, b.feet2Circle, b.feet2Radius, b.thigh2Arc2Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC2_CONCAVE_R);
+    PointF thigh2Arc2HipTangentLocal = circleEdge(b.hip2Circle, b.hip2Radius, b.thigh2Arc2Angle);
+    PointF thigh2Arc2FeetTangentLocal = circleTowardPoint(thigh2Arc2Fillet.center, thigh2Arc2Fillet.radius, b.feet2Circle);
+    PointF thigh2Arc2NearLocal = circleTowardPoint(thigh2Arc2Fillet.center, thigh2Arc2Fillet.radius, axisMidLocal);
+
+    setColor(rs, rs->draggingStiloThigh2Arc1 || rs->draggingStiloFeet2 || hipRotateHint, 0.2f, 0.4f, 1.0f, opacity);
+    drawArc(jointToWorld(thigh2Arc1HipTangentLocal, b.hip2Circle, b.hip2Angle, center, angle),
+            jointToWorld(thigh2Arc1NearLocal, b.hip2Circle, b.hip2Angle, center, angle),
+            jointToWorld(thigh2Arc1FeetTangentLocal, b.hip2Circle, b.hip2Angle, center, angle));
+
+    setColor(rs, rs->draggingStiloThigh2Arc2 || rs->draggingStiloFeet2 || hipRotateHint, 0.2f, 0.4f, 1.0f, opacity);
+    drawArc(jointToWorld(thigh2Arc2HipTangentLocal, b.hip2Circle, b.hip2Angle, center, angle),
+            jointToWorld(thigh2Arc2NearLocal, b.hip2Circle, b.hip2Angle, center, angle),
+            jointToWorld(thigh2Arc2FeetTangentLocal, b.hip2Circle, b.hip2Angle, center, angle));
+}
+
+static void drawStiloThigh2Handles(Stilo b, RenderState* rs, float opacity)
+{
+    PointF center = getStiloCenter(b);
+    float angle = b.angle;
+
+    PointF feet2World = jointToWorld(b.feet2Circle, b.hip2Circle, b.hip2Angle, center, angle);
+
+    PointF axisMidLocal = { (b.hip2Circle.x + b.feet2Circle.x) * 0.5f, (b.hip2Circle.y + b.feet2Circle.y) * 0.5f };
+
+    Fillet thigh2Arc1Fillet = filletFromAttachAngle(b.hip2Circle, b.hip2Radius, b.feet2Circle, b.feet2Radius, b.thigh2Arc1Angle, MIN_THIGH_ARC_R, MAX_SEMNI_THIGH_ARC_R);
+    PointF thigh2Arc1NearLocal = circleTowardPoint(thigh2Arc1Fillet.center, thigh2Arc1Fillet.radius, axisMidLocal);
+    PointF thigh2Arc1MidLocal = circleAtAxisMid(thigh2Arc1Fillet.center, thigh2Arc1Fillet.radius, b.hip2Circle, b.feet2Circle, thigh2Arc1NearLocal);
+
+    Fillet thigh2Arc2Fillet = filletFromAttachAngleConcave(b.hip2Circle, b.hip2Radius, b.feet2Circle, b.feet2Radius, b.thigh2Arc2Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC2_CONCAVE_R);
+    PointF thigh2Arc2NearLocal = circleTowardPoint(thigh2Arc2Fillet.center, thigh2Arc2Fillet.radius, axisMidLocal);
+    PointF thigh2Arc2MidLocal = circleAtAxisMid(thigh2Arc2Fillet.center, thigh2Arc2Fillet.radius, b.hip2Circle, b.feet2Circle, thigh2Arc2NearLocal);
+
+    PointF thigh2Arc1World = jointToWorld(thigh2Arc1MidLocal, b.hip2Circle, b.hip2Angle, center, angle);
+    PointF thigh2Arc2World = jointToWorld(thigh2Arc2MidLocal, b.hip2Circle, b.hip2Angle, center, angle);
+
+    drawHandle(feet2World, rs->draggingStiloFeet2 || rs->hoverStiloFeet2, KNEE_HANDLE_RADIUS, opacity);
+    drawHandle(thigh2Arc1World, rs->draggingStiloThigh2Arc1 || rs->hoverStiloThigh2Arc1, THIGH_HANDLE_RADIUS, opacity);
+    drawHandle(thigh2Arc2World, rs->draggingStiloThigh2Arc2 || rs->hoverStiloThigh2Arc2, THIGH_HANDLE_RADIUS, opacity);
+}
+
+static void drawStiloHandles(Stilo b, RenderState* rs, float opacity)
+{
+    PointF center = getStiloCenter(b);
+    float angle = b.angle;
+
+    PointF hip1      = rotatePoint(b.hip1Circle, center, angle);
+    PointF hip2       = rotatePoint(b.hip2Circle, center, angle);
+    PointF headHandle = rotatePoint((PointF){b.headX, b.y}, center, angle);
+    PointF buttHandle  = rotatePoint((PointF){b.buttX, b.y}, center, angle);
+
+    PointF headLocal = { b.headX, b.y };
+    PointF buttLocal = { b.buttX, b.y };
+    PointF bodyMidLocal = { (headLocal.x + buttLocal.x) * 0.5f, (headLocal.y + buttLocal.y) * 0.5f };
+
+    Fillet seamArc1Fillet = filletFromAttachAngle(headLocal, b.headRadius, buttLocal, b.buttRadius, b.seamArc1Angle, MIN_ARC_R, MAX_ARC_R);
+    Fillet seamArc2Fillet = filletFromAttachAngle(headLocal, b.headRadius, buttLocal, b.buttRadius, b.seamArc2Angle, MIN_ARC_R, MAX_ARC_R);
+
+    PointF seamArc1NearLocal = circleTowardPoint(seamArc1Fillet.center, seamArc1Fillet.radius, bodyMidLocal);
+    PointF seamArc2NearLocal = circleTowardPoint(seamArc2Fillet.center, seamArc2Fillet.radius, bodyMidLocal);
+
+    PointF seamArc1MidLocal = circleAtX(seamArc1Fillet.center, seamArc1Fillet.radius, bodyMidLocal.x, seamArc1NearLocal);
+    PointF seamArc2MidLocal = circleAtX(seamArc2Fillet.center, seamArc2Fillet.radius, bodyMidLocal.x, seamArc2NearLocal);
+
+    PointF seamArc1Handle = rotatePoint(seamArc1MidLocal, center, angle);
+    PointF seamArc2Handle = rotatePoint(seamArc2MidLocal, center, angle);
+
+    drawHandle(seamArc1Handle, rs->draggingStiloSeamArc1 || rs->hoverStiloSeamArc1, ARC_HANDLE_RADIUS, opacity);
+    drawHandle(seamArc2Handle, rs->draggingStiloSeamArc2 || rs->hoverStiloSeamArc2, ARC_HANDLE_RADIUS, opacity);
+
+    drawHandle(hip1, rs->draggingStiloHip1 || rs->hoverStiloHip1, HIP_HANDLE_RADIUS, opacity);
+    // leg 2's hip handle -- torso (head/butt/seam arcs) is shared and drawn
+    // only once above, but each leg gets its own hip circle handle
+    drawHandle(hip2, rs->draggingStiloHip2 || rs->hoverStiloHip2, HIP_HANDLE_RADIUS, opacity);
+    drawHandle(headHandle, rs->hoverStiloHead, HEAD_BUTT_HANDLE_RADIUS, opacity);
+    drawHandle(buttHandle, rs->hoverStiloButt, HEAD_BUTT_HANDLE_RADIUS, opacity);
+}
+
+// Computes Stilo's 6 fillet circles' world-space center + radius, in a
+// fixed seam1/seam2/thigh1Arc1/thigh1Arc2/thigh2Arc1/thigh2Arc2 order --
+// identical construction to computeSemniCircleSegments' own seam/thigh
+// entries, just reading Stilo's own two-independent-legs fields (hip1/
+// feet1/hip1Angle for leg 1, hip2/feet2/hip2Angle for leg 2 -- see app.h's
+// Stilo comment) instead of Semni's single hip->knee->shin chain. Shared
+// by drawStiloCircleSegments (rendering) and input.c's hover hit-test.
+void computeStiloCircleSegments(Stilo b, CircleSegment out[NUM_STILO_CIRCLE_SEGMENTS])
+{
+    PointF center = getStiloCenter(b);
+    float angle = b.angle;
+
+    PointF headLocal = { b.headX, b.y };
+    PointF buttLocal = { b.buttX, b.y };
+
+    Fillet seamArc1Fillet = filletFromAttachAngle(headLocal, b.headRadius, buttLocal, b.buttRadius, b.seamArc1Angle, MIN_ARC_R, MAX_ARC_R);
+    Fillet seamArc2Fillet = filletFromAttachAngle(headLocal, b.headRadius, buttLocal, b.buttRadius, b.seamArc2Angle, MIN_ARC_R, MAX_ARC_R);
+
+    out[0].center = rotatePoint(seamArc1Fillet.center, center, angle);
+    out[0].radius = seamArc1Fillet.radius;
+
+    out[1].center = rotatePoint(seamArc2Fillet.center, center, angle);
+    out[1].radius = seamArc2Fillet.radius;
+
+    Fillet thigh1Arc1Fillet = filletFromAttachAngle(b.hip1Circle, b.hip1Radius, b.feet1Circle, b.feet1Radius, b.thigh1Arc1Angle, MIN_THIGH_ARC_R, MAX_SEMNI_THIGH_ARC_R);
+    Fillet thigh1Arc2Fillet = filletFromAttachAngleConcave(b.hip1Circle, b.hip1Radius, b.feet1Circle, b.feet1Radius, b.thigh1Arc2Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC2_CONCAVE_R);
+
+    out[2].center = jointToWorld(thigh1Arc1Fillet.center, b.hip1Circle, b.hip1Angle, center, angle);
+    out[2].radius = thigh1Arc1Fillet.radius;
+
+    out[3].center = jointToWorld(thigh1Arc2Fillet.center, b.hip1Circle, b.hip1Angle, center, angle);
+    out[3].radius = thigh1Arc2Fillet.radius;
+
+    Fillet thigh2Arc1Fillet = filletFromAttachAngle(b.hip2Circle, b.hip2Radius, b.feet2Circle, b.feet2Radius, b.thigh2Arc1Angle, MIN_THIGH_ARC_R, MAX_SEMNI_THIGH_ARC_R);
+    Fillet thigh2Arc2Fillet = filletFromAttachAngleConcave(b.hip2Circle, b.hip2Radius, b.feet2Circle, b.feet2Radius, b.thigh2Arc2Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC2_CONCAVE_R);
+
+    out[4].center = jointToWorld(thigh2Arc1Fillet.center, b.hip2Circle, b.hip2Angle, center, angle);
+    out[4].radius = thigh2Arc1Fillet.radius;
+
+    out[5].center = jointToWorld(thigh2Arc2Fillet.center, b.hip2Circle, b.hip2Angle, center, angle);
+    out[5].radius = thigh2Arc2Fillet.radius;
+}
+
+// Computes Stilo's 6 fillet ARCS' actual TRIMMED curve (not the full circle
+// computeStiloCircleSegments above returns), as world-space poly-lines --
+// same p0/p1/p2 derivation drawStiloBody/drawStiloThigh1/drawStiloThigh2's
+// own drawArc calls use, same seam1/seam2/thigh1Arc1/thigh1Arc2/
+// thigh2Arc1/thigh2Arc2 order as computeStiloCircleSegments above.
+void computeStiloArcPoints(Stilo b, PointF out[NUM_STILO_CIRCLE_SEGMENTS][ARC_SAMPLE_COUNT], int outCounts[NUM_STILO_CIRCLE_SEGMENTS])
+{
+    PointF center = getStiloCenter(b);
+    float angle = b.angle;
+
+    PointF headLocal = { b.headX, b.y };
+    PointF buttLocal = { b.buttX, b.y };
+    PointF bodyMidLocal = { (headLocal.x + buttLocal.x) * 0.5f, (headLocal.y + buttLocal.y) * 0.5f };
+
+    Fillet seamArc1Fillet = filletFromAttachAngle(headLocal, b.headRadius, buttLocal, b.buttRadius, b.seamArc1Angle, MIN_ARC_R, MAX_ARC_R);
+    PointF seamArc1P0 = rotatePoint(circleEdge(headLocal, b.headRadius, b.seamArc1Angle), center, angle);
+    PointF seamArc1P1 = rotatePoint(circleTowardPoint(seamArc1Fillet.center, seamArc1Fillet.radius, bodyMidLocal), center, angle);
+    PointF seamArc1P2 = rotatePoint(internalTangentPoint(seamArc1Fillet.center, seamArc1Fillet.radius, buttLocal, b.buttRadius), center, angle);
+    outCounts[0] = computeArcPoints(seamArc1P0, seamArc1P1, seamArc1P2, out[0]);
+
+    Fillet seamArc2Fillet = filletFromAttachAngle(headLocal, b.headRadius, buttLocal, b.buttRadius, b.seamArc2Angle, MIN_ARC_R, MAX_ARC_R);
+    PointF seamArc2P0 = rotatePoint(circleEdge(headLocal, b.headRadius, b.seamArc2Angle), center, angle);
+    PointF seamArc2P1 = rotatePoint(circleTowardPoint(seamArc2Fillet.center, seamArc2Fillet.radius, bodyMidLocal), center, angle);
+    PointF seamArc2P2 = rotatePoint(internalTangentPoint(seamArc2Fillet.center, seamArc2Fillet.radius, buttLocal, b.buttRadius), center, angle);
+    outCounts[1] = computeArcPoints(seamArc2P0, seamArc2P1, seamArc2P2, out[1]);
+
+    PointF axis1MidLocal = { (b.hip1Circle.x + b.feet1Circle.x) * 0.5f, (b.hip1Circle.y + b.feet1Circle.y) * 0.5f };
+
+    Fillet thigh1Arc1Fillet = filletFromAttachAngle(b.hip1Circle, b.hip1Radius, b.feet1Circle, b.feet1Radius, b.thigh1Arc1Angle, MIN_THIGH_ARC_R, MAX_SEMNI_THIGH_ARC_R);
+    PointF thigh1Arc1P0 = jointToWorld(circleEdge(b.hip1Circle, b.hip1Radius, b.thigh1Arc1Angle), b.hip1Circle, b.hip1Angle, center, angle);
+    PointF thigh1Arc1P1 = jointToWorld(circleTowardPoint(thigh1Arc1Fillet.center, thigh1Arc1Fillet.radius, axis1MidLocal), b.hip1Circle, b.hip1Angle, center, angle);
+    PointF thigh1Arc1P2 = jointToWorld(internalTangentPoint(thigh1Arc1Fillet.center, thigh1Arc1Fillet.radius, b.feet1Circle, b.feet1Radius), b.hip1Circle, b.hip1Angle, center, angle);
+    outCounts[2] = computeArcPoints(thigh1Arc1P0, thigh1Arc1P1, thigh1Arc1P2, out[2]);
+
+    Fillet thigh1Arc2Fillet = filletFromAttachAngleConcave(b.hip1Circle, b.hip1Radius, b.feet1Circle, b.feet1Radius, b.thigh1Arc2Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC2_CONCAVE_R);
+    PointF thigh1Arc2P0 = jointToWorld(circleEdge(b.hip1Circle, b.hip1Radius, b.thigh1Arc2Angle), b.hip1Circle, b.hip1Angle, center, angle);
+    PointF thigh1Arc2P1 = jointToWorld(circleTowardPoint(thigh1Arc2Fillet.center, thigh1Arc2Fillet.radius, axis1MidLocal), b.hip1Circle, b.hip1Angle, center, angle);
+    PointF thigh1Arc2P2 = jointToWorld(circleTowardPoint(thigh1Arc2Fillet.center, thigh1Arc2Fillet.radius, b.feet1Circle), b.hip1Circle, b.hip1Angle, center, angle);
+    outCounts[3] = computeArcPoints(thigh1Arc2P0, thigh1Arc2P1, thigh1Arc2P2, out[3]);
+
+    PointF axis2MidLocal = { (b.hip2Circle.x + b.feet2Circle.x) * 0.5f, (b.hip2Circle.y + b.feet2Circle.y) * 0.5f };
+
+    Fillet thigh2Arc1Fillet = filletFromAttachAngle(b.hip2Circle, b.hip2Radius, b.feet2Circle, b.feet2Radius, b.thigh2Arc1Angle, MIN_THIGH_ARC_R, MAX_SEMNI_THIGH_ARC_R);
+    PointF thigh2Arc1P0 = jointToWorld(circleEdge(b.hip2Circle, b.hip2Radius, b.thigh2Arc1Angle), b.hip2Circle, b.hip2Angle, center, angle);
+    PointF thigh2Arc1P1 = jointToWorld(circleTowardPoint(thigh2Arc1Fillet.center, thigh2Arc1Fillet.radius, axis2MidLocal), b.hip2Circle, b.hip2Angle, center, angle);
+    PointF thigh2Arc1P2 = jointToWorld(internalTangentPoint(thigh2Arc1Fillet.center, thigh2Arc1Fillet.radius, b.feet2Circle, b.feet2Radius), b.hip2Circle, b.hip2Angle, center, angle);
+    outCounts[4] = computeArcPoints(thigh2Arc1P0, thigh2Arc1P1, thigh2Arc1P2, out[4]);
+
+    Fillet thigh2Arc2Fillet = filletFromAttachAngleConcave(b.hip2Circle, b.hip2Radius, b.feet2Circle, b.feet2Radius, b.thigh2Arc2Angle, MIN_THIGH_ARC_R, MAX_THIGH_ARC2_CONCAVE_R);
+    PointF thigh2Arc2P0 = jointToWorld(circleEdge(b.hip2Circle, b.hip2Radius, b.thigh2Arc2Angle), b.hip2Circle, b.hip2Angle, center, angle);
+    PointF thigh2Arc2P1 = jointToWorld(circleTowardPoint(thigh2Arc2Fillet.center, thigh2Arc2Fillet.radius, axis2MidLocal), b.hip2Circle, b.hip2Angle, center, angle);
+    PointF thigh2Arc2P2 = jointToWorld(circleTowardPoint(thigh2Arc2Fillet.center, thigh2Arc2Fillet.radius, b.feet2Circle), b.hip2Circle, b.hip2Angle, center, angle);
+    outCounts[5] = computeArcPoints(thigh2Arc2P0, thigh2Arc2P1, thigh2Arc2P2, out[5]);
+}
+
+// Stilo's 6 always-visible body circles, in a fixed order: head, butt,
+// hip1, feet1, hip2, feet2 -- indices into computeStiloBodyCircles' output
+// and into app->hoveredBodyCircle.
+void computeStiloBodyCircles(Stilo b, CircleSegment out[NUM_STILO_BODY_CIRCLES])
+{
+    PointF center = getStiloCenter(b);
+    float angle = b.angle;
+
+    out[0].center = rotatePoint((PointF){b.headX, b.y}, center, angle);
+    out[0].radius = b.headRadius;
+
+    out[1].center = rotatePoint((PointF){b.buttX, b.y}, center, angle);
+    out[1].radius = b.buttRadius;
+
+    out[2].center = rotatePoint(b.hip1Circle, center, angle);
+    out[2].radius = b.hip1Radius;
+
+    out[3].center = jointToWorld(b.feet1Circle, b.hip1Circle, b.hip1Angle, center, angle);
+    out[3].radius = b.feet1Radius;
+
+    out[4].center = rotatePoint(b.hip2Circle, center, angle);
+    out[4].radius = b.hip2Radius;
+
+    out[5].center = jointToWorld(b.feet2Circle, b.hip2Circle, b.hip2Angle, center, angle);
+    out[5].radius = b.feet2Radius;
+}
+
+// Overlays the full circle behind each of Stilo's 6 fillet arcs -- same
+// "ghost circle" idea as drawSemniCircleSegments, reusing the exact same
+// circleSegmentColor palette.
+void drawStiloCircleSegments(Stilo b, int hoveredIndex, float opacity)
+{
+    CircleSegment segs[NUM_STILO_CIRCLE_SEGMENTS];
+    computeStiloCircleSegments(b, segs);
+
+    for (int i = 0; i < NUM_STILO_CIRCLE_SEGMENTS; i++)
+    {
+        float r, g, bl;
+        circleSegmentColor(i, &r, &g, &bl);
+
+        if (i == hoveredIndex)
+        {
+            glDisable(GL_LINE_STIPPLE);
+            glLineWidth(2.5f);
+            glColor4f(r, g, bl, 1.0f * opacity);
+        }
+        else
+        {
+            glEnable(GL_LINE_STIPPLE);
+            glLineStipple(1, 0x00FF);
+            glLineWidth(1.0f);
+            glColor4f(r, g, bl, 0.6f * opacity);
+        }
+
+        drawCircle(segs[i].center, segs[i].radius);
+    }
+
+    glLineWidth(1.0f);
+    glDisable(GL_LINE_STIPPLE);
+}
+
+// Bright/solid hover ring on whichever of Stilo's 6 body circles is
+// currently hovered -- same idea as drawSemniBodyCircleHover, reusing the
+// shared bodyCircleColor palette (now 6 entries deep, see its own comment).
+void drawStiloBodyCircleHover(Stilo b, int hoveredIndex, float opacity)
+{
+    if (hoveredIndex < 0 || hoveredIndex >= NUM_STILO_BODY_CIRCLES)
+        return;
+
+    CircleSegment segs[NUM_STILO_BODY_CIRCLES];
+    computeStiloBodyCircles(b, segs);
+
+    float r, g, bl;
+    bodyCircleColor(hoveredIndex, &r, &g, &bl);
+
+    glDisable(GL_LINE_STIPPLE);
+    glLineWidth(2.5f);
+    glColor4f(r, g, bl, 1.0f * opacity);
+    drawCircle(segs[hoveredIndex].center, segs[hoveredIndex].radius);
+    glLineWidth(1.0f);
+}
+
+void drawStilo(Stilo b, RenderState* rs, int includeHandles, float opacity)
+{
+    drawStiloBody(b, rs, opacity);
+    drawStiloThigh1(b, rs, opacity);
+    drawStiloThigh2(b, rs, opacity);
+
+    // View Segments overlay -- same gating as drawSemni's own
+    // segmentsVisible, now that Stilo has its own compute/draw pair
+    // mirroring Semni's.
+    BOOL stiloSegmentsVisible = rs->showSegments && (editorModeState.currentMode == EDITOR_MODE_SEMNI);
+    if (stiloSegmentsVisible)
+    {
+        drawStiloCircleSegments(b, rs->hoveredCircleSegment, opacity);
+        drawStiloBodyCircleHover(b, rs->hoveredBodyCircle, opacity);
+    }
+
+    // same includeHandles + editor-mode gating as drawSemni's own
+    // handlesVisible/drawRocky's own handlesVisible -- editor UI only,
+    // skipped for the dimmed background copy and any exported frame.
+    BOOL handlesVisible = includeHandles && (editorModeState.currentMode == EDITOR_MODE_SEMNI);
+
+    if (handlesVisible)
+    {
+        drawStiloHandles(b, rs, opacity);
+        drawStiloThigh1Handles(b, rs, opacity);
+        drawStiloThigh2Handles(b, rs, opacity);
+
+        // Body/Leg Weight mass-center dot -- same idea as Semni's own
+        // version just above (drawSemni), reusing the same generic marker
+        // helper. Leg Wt here covers both legs combined (see app.h's own
+        // comment on Stilo's legWeight and computeStiloMassCenterWorld).
+        drawRockyMassCenterMarker(computeStiloMassCenterWorld(b), rs->draggingStiloMassCenter || rs->hoverStiloMassCenter, MASS_CENTER_HANDLE_RADIUS, opacity);
+    }
+}
+
+static void renderRobot(AppState* app, int includeHandles, float opacity)
+{
+    RenderState rs;
+
+    rs.activeHandle = app->activeHandle;
+    rs.draggingSeamArc1 = app->draggingSeamArc1;
+    rs.draggingSeamArc2 = app->draggingSeamArc2;
+    rs.draggingInner = app->draggingInner;
+    rs.draggingKnee = app->draggingKnee;
+    rs.draggingThigh1 = app->draggingThigh1;
+    rs.draggingThigh2 = app->draggingThigh2;
+    rs.draggingFoot = app->draggingFoot;
+    rs.draggingShin1 = app->draggingShin1;
+    rs.draggingShin2 = app->draggingShin2;
+
+    rs.hoverSeamArc1 = app->hoverSeamArc1;
+    rs.hoverSeamArc2 = app->hoverSeamArc2;
+    rs.hoverThigh1 = app->hoverThigh1;
+    rs.hoverThigh2 = app->hoverThigh2;
+    rs.hoverShin1 = app->hoverShin1;
+    rs.hoverShin2 = app->hoverShin2;
+
+    rs.hoverRockyBody = app->hoverRockyBody;
+    rs.draggingRockyBody = app->draggingRockyBody;
+    rs.hoverRockyEdge = app->hoverRockyEdge;
+    rs.draggingRockyEdge = app->draggingRockyEdge;
+    rs.hoverRockyKnee = app->hoverRockyKnee;
+    rs.draggingRockyKnee = app->draggingRockyKnee;
+    rs.hoverRockyFoot = app->hoverRockyFoot;
+    rs.draggingRockyFoot = app->draggingRockyFoot;
+    rs.hoverRockyMassCenter = app->hoverRockyMassCenter;
+    rs.draggingRockyMassCenter = app->draggingRockyMassCenter;
+    rs.hoverSemniMassCenter = app->hoverSemniMassCenter;
+    rs.draggingSemniMassCenter = app->draggingSemniMassCenter;
+    rs.hoverStiloMassCenter = app->hoverStiloMassCenter;
+    rs.draggingStiloMassCenter = app->draggingStiloMassCenter;
+    rs.draggingRockyShin1 = app->draggingRockyShin1;
+    rs.draggingRockyShin2 = app->draggingRockyShin2;
+    rs.hoverRockyShin1 = app->hoverRockyShin1;
+    rs.hoverRockyShin2 = app->hoverRockyShin2;
+
+    rs.hoverHip = app->hoverHip;
+    rs.hoverKnee = app->hoverKnee;
+    rs.hoverFoot = app->hoverFoot;
+    rs.hoverHead = app->hoverHead;
+    rs.hoverButt = app->hoverButt;
+
+    rs.draggingStiloSeamArc1 = app->draggingStiloSeamArc1;
+    rs.draggingStiloSeamArc2 = app->draggingStiloSeamArc2;
+    rs.draggingStiloHip1 = app->draggingStiloHip1;
+    rs.draggingStiloFeet1 = app->draggingStiloFeet1;
+    rs.draggingStiloThigh1Arc1 = app->draggingStiloThigh1Arc1;
+    rs.draggingStiloThigh1Arc2 = app->draggingStiloThigh1Arc2;
+
+    rs.hoverStiloHip1 = app->hoverStiloHip1;
+    rs.hoverStiloFeet1 = app->hoverStiloFeet1;
+    rs.hoverStiloHead = app->hoverStiloHead;
+    rs.hoverStiloButt = app->hoverStiloButt;
+    rs.hoverStiloSeamArc1 = app->hoverStiloSeamArc1;
+    rs.hoverStiloSeamArc2 = app->hoverStiloSeamArc2;
+    rs.hoverStiloThigh1Arc1 = app->hoverStiloThigh1Arc1;
+    rs.hoverStiloThigh1Arc2 = app->hoverStiloThigh1Arc2;
+
+    rs.draggingStiloHip2 = app->draggingStiloHip2;
+    rs.draggingStiloFeet2 = app->draggingStiloFeet2;
+    rs.draggingStiloThigh2Arc1 = app->draggingStiloThigh2Arc1;
+    rs.draggingStiloThigh2Arc2 = app->draggingStiloThigh2Arc2;
+
+    rs.hoverStiloHip2 = app->hoverStiloHip2;
+    rs.hoverStiloFeet2 = app->hoverStiloFeet2;
+    rs.hoverStiloThigh2Arc1 = app->hoverStiloThigh2Arc1;
+    rs.hoverStiloThigh2Arc2 = app->hoverStiloThigh2Arc2;
+
+    rs.showSegments = app->showCircleSegments;
+    rs.hoveredCircleSegment = app->hoveredCircleSegment;
+    rs.hoveredBodyCircle = app->hoveredBodyCircle;
+    rs.hoveredRectSegment = app->hoveredRectSegment;
+    rs.draggingWhole = app->draggingRobotSim;
+    rs.hoveringWhole = app->hoveringRobotSim;
+
+    // sampled live every frame (the render loop runs continuously -- see
+    // main.c) rather than cached from WM_MOUSEMOVE's wParam, which would
+    // only update while the mouse is actively moving -- pressing/releasing
+    // Shift while the cursor sits still over the hip handle needs to
+    // toggle the preview immediately, with no mouse movement required
+    rs.shiftHeld = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
+
+    // Which of the three robots (see app.h's RobotKind) actually gets
+    // drawn -- picked via the hRobotSelector dropdown in the control
+    // panel (input.c). None of the three have a View Segments overlay yet
+    // except Semni (see drawRocky/drawStilo's own comments). rs's Semni-
+    // specific hover/drag fields above are simply unused unless Semni is
+    // active -- harmless, since input.c only ever sets them while
+    // ROBOT_KIND_SEMNI is the active kind (see its own WM_LBUTTONDOWN/
+    // WM_MOUSEMOVE guards). Rocky's own hoverRockyBody/draggingRockyBody
+    // above are set independently, only while Rocky is active.
+    switch (app->robotScene.activeKind)
+    {
+        case ROBOT_KIND_ROCKY:
+            drawRocky(app->robotScene.rocky, &rs, includeHandles, opacity);
+            break;
+
+        case ROBOT_KIND_STILO:
+            drawStilo(app->robotScene.stilo, &rs, includeHandles, opacity);
+            break;
+
+        case ROBOT_KIND_SEMNI:
+        default:
+            drawSemni(app->robotScene.robot, &rs, includeHandles, opacity);
+            break;
+    }
+}
+
+void renderApp(AppState* app, HDC hdc)
+{
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+
+    {
+        float panX, panY;
+        graphicsGetPan(&panX, &panY);
+        glTranslatef(-panX, -panY, 0.0f);
+    }
+
+    // Draw ground reference line at the bottom, low enough to read as a
+    // floor the robot stands/lies on rather than a line cutting through
+    // its body -- see drawDashedHorizontalLine's own comment for how it
+    // pans in lockstep with the robot while staying anchored to it through
+    // "Robot Size" slider changes. Must be GROUND_LINE_DESIGN_Y (config.h)
+    // specifically -- see that function's comment for why.
+    drawDashedHorizontalLine(GROUND_LINE_DESIGN_Y, 1.0f);
+
+    renderRobot(app, 1, 1.0f);
+
+    // Real-world-size bounding box: see drawRobotSizeBox's own comment.
+    // Drawn on top of the robot (after renderRobot, not before) so its
+    // outline reads clearly against the body instead of being drawn under
+    // and potentially traced over by it.
+    {
+        float boxAlpha = robotSizeBoxAlpha(app);
+        if (boxAlpha > 0.0f)
+            drawRobotSizeBox(app, boxAlpha);
+    }
+
+    SwapBuffers(hdc);
+}
+
+// Renders the same scene as renderApp, but without the draggable handles,
+// and without swapping buffers -- this only touches the back buffer, so
+// whatever's currently on screen (with handles) is left completely alone.
+// Meant to be called right before glReadPixels when exporting a frame, so
+// the saved image doesn't include the editor's UI overlay.
+void renderAppForSave(AppState* app)
+{
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+
+    renderRobot(app, 0, 1.0f);
+}
+
+// Draws the live robot scene (with handles) into whatever's already in the
+// color buffer -- no clear, no swap -- so main.c/canvas.c's
+// renderCombinedFrame can composite it alongside the ArcSpline canvas in
+// the same frame instead of the two subsystems taking turns owning the
+// whole window. dimAmount washes out every draw call's own alpha (see
+// setColor/drawHandle/drawDashedHorizontalLine) rather than covering the
+// finished scene with a black overlay -- that would also darken the
+// shared white canvas background underneath it, making an empty scene
+// look grayed out everywhere instead of just this subsystem's own lines
+// fading, which is what "Semni isn't the active editor mode" should
+// actually look like.
+void renderRobotScene(AppState* app, float dimAmount)
+{
+    float opacity = 1.0f - dimAmount;
+
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+
+    {
+        float panX, panY;
+        graphicsGetPan(&panX, &panY);
+        glTranslatef(-panX, -panY, 0.0f);
+    }
+
+    // Ground reference line: a Design > Robot editing aid for laying down
+    // poses (see renderApp's comment) -- hard-gated on actually being in
+    // the Semni editor right now, same reasoning as handlesVisible in
+    // drawSemni below: it's not useful in Simulation (which has the real
+    // traced environment to pose against instead, and the robot may not
+    // even be sitting on this fake line anymore once it's been dragged),
+    // and it's not useful as part of Design > Environment's dimmed
+    // background copy of the robot either, since nothing is being edited
+    // there.
+    if (editorModeState.currentMode == EDITOR_MODE_SEMNI)
+        drawDashedHorizontalLine(GROUND_LINE_DESIGN_Y, opacity);
+
+    renderRobot(app, 1, opacity);
+
+    // Real-world-size bounding box overlay while the "Robot Size" slider
+    // is being (or was just) dragged -- see drawRobotSizeBox's own
+    // comment. Same currentMode gate as the ground reference line just
+    // above: the slider only exists in Design > Robot's own control panel,
+    // so this has nothing meaningful to show as part of Design >
+    // Environment's dimmed background copy of the robot, or in Simulation.
+    // Drawn after renderRobot so its outline sits on top of the body.
+    if (editorModeState.currentMode == EDITOR_MODE_SEMNI)
+    {
+        float boxAlpha = robotSizeBoxAlpha(app) * opacity;
+        if (boxAlpha > 0.0f)
+            drawRobotSizeBox(app, boxAlpha);
+    }
+}

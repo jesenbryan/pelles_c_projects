@@ -85,6 +85,22 @@ void applyEditorModeVisibility(EditorModeState* modeState)
     if (app.ui.hMirrorButton2)
         ShowWindow(app.ui.hMirrorButton2,
                    (semniActive && app.robotScene.activeKind == ROBOT_KIND_STILO) ? SW_SHOW : SW_HIDE);
+    // Rocky-only testing toggles (ID_ROCKY_TOGGLE_LEG_BUTTON/
+    // ID_ROCKY_TOGGLE_BODY_BUTTON) -- same ANDed-with-semniActive
+    // treatment as hMirrorButton2 just above, just gated on ROCKY
+    // instead of STILO. Missing this is exactly the bug this function's
+    // own hWeightRatioLabel/etc. comment already describes further
+    // down: gate on activeKind alone (input.c's ID_ROBOT_SELECTOR
+    // handler, which only fires on a KIND switch) and the button stays
+    // visible in every EDITOR MODE too, including the ArcSpline
+    // ("Environment") canvas, since nothing here was hiding it on a
+    // MODE switch.
+    if (app.ui.hRockyToggleLegButton)
+        ShowWindow(app.ui.hRockyToggleLegButton,
+                   (semniActive && app.robotScene.activeKind == ROBOT_KIND_ROCKY) ? SW_SHOW : SW_HIDE);
+    if (app.ui.hRockyToggleBodyButton)
+        ShowWindow(app.ui.hRockyToggleBodyButton,
+                   (semniActive && app.robotScene.activeKind == ROBOT_KIND_ROCKY) ? SW_SHOW : SW_HIDE);
     if (app.ui.hScaleLabel)
         ShowWindow(app.ui.hScaleLabel, semniActive ? SW_SHOW : SW_HIDE);
     if (app.ui.hScaleSlider)
