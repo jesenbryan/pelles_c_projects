@@ -1861,21 +1861,6 @@ static BOOL rockySettleConverged = FALSE;
 static float rockyKneeSettleStep = 0.0f;
 static float rockyBodySettleStep = 0.0f;
 
-// Set TRUE for the duration of an E/Q-triggered settle pass (see the
-// WM_KEYDOWN kickoff below) to stop Probe 1 (knee-bending) from firing
-// while the USER is the one actively driving kneeAngle -- without this,
-// Probe 1's own "improve the resting fit" search runs every 16ms via the
-// postRotateSettleActive timer and directly fights the player's own E/Q
-// presses (LEGPUSH lifts the body to clear the leg the user just bent,
-// then Probe 1 bends it back and drops the body again a tick later),
-// which is what read as the body visibly jittering up and down while
-// holding E or Q. Probe 2 (body-rotate/topple) and the plain gravity
-// drop are NOT suppressed -- neither one touches kneeAngle, so neither
-// one fights the user, and a genuinely unstable rotate still topples.
-// Left FALSE (the normal case) for VK_LEFT/RIGHT's own topple kickoff,
-// where nothing else is driving kneeAngle and Probe 1 is safe to run.
-static BOOL rockyKneeSettleSuppressed = FALSE;
-
 static void advanceRockySettle(void)
 {
     if (app.robotScene.activeKind != ROBOT_KIND_ROCKY)
@@ -1903,7 +1888,7 @@ static void advanceRockySettle(void)
     // getRockyCenter), so this used to just spin kneeAngle through
     // hundreds of degrees for no visible effect, flooding the console
     // with [SETTLE] lines about a foot nobody can see or collide with.
-    if (!r->legHidden && !rockyKneeSettleSuppressed && rockyKneeSettleStep >= SIMULATION_LEG_SETTLE_MIN_STEP_DEG)
+    if (!r->legHidden && rockyKneeSettleStep >= SIMULATION_LEG_SETTLE_MIN_STEP_DEG)
     {
         float baseKneeAngle = r->kneeAngle;
         float bestDrop = 0.0f;
@@ -2805,7 +2790,6 @@ static void advancePostRotateSettle(HWND hWnd)
     if (atRest)
     {
         postRotateSettleActive = FALSE;
-        rockyKneeSettleSuppressed = FALSE; // this session (E/Q or rotate) is over either way
 
         // Don't rip the timer out from under a separately-active Auto
         // Gravity session -- only stop it if this was the only reason it
@@ -4747,135 +4731,103 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             // hair-embedded one.
             rockyEscapeLegPenetration();
 
-            // Resolved as several small sub-rotations, not one 2-degree
-            // jump -- see SIMULATION_JOINT_ROTATE_SUBSTEP_DEG's own
-            // comment (config.h) for why: the knee itself can't tunnel at
-            // this size, but the LEGPUSH lift a full-size step can
-            // trigger is not small, and doing that whole lift in one
-            // binary-searched jump made the rectangle visibly snap
-            // upward in a single frame. Each substep repeats the exact
-            // same "rotate, and if that buries the leg push the body up
-            // (or fall back to a hard stop)" resolution the old single-
-            // step version did, just against a much smaller rotation each
-            // time, so any needed lift accumulates gradually instead of
-            // arriving all at once.
-            int numSubsteps = (int)(SIMULATION_JOINT_ROTATE_STEP_DEG / SIMULATION_JOINT_ROTATE_SUBSTEP_DEG + 0.5f);
-            if (numSubsteps < 1) numSubsteps = 1;
-            float subStep = step / numSubsteps;
+            float oldKneeAngle = r->kneeAngle;
+            r->kneeAngle = oldKneeAngle + step;
 
-            for (int sub = 0; sub < numSubsteps; sub++)
+            if (robotCollidesWithEnvironment())
             {
-                float oldKneeAngle = r->kneeAngle;
-                r->kneeAngle = oldKneeAngle + subStep;
+                // Grow the push distance (doubling from
+                // SIMULATION_LEG_PUSH_SEARCH_START) until lifting the body
+                // by that much actually clears the leg, or the sanity cap
+                // SIMULATION_LEG_PUSH_SEARCH_MAX is reached -- there's no
+                // way to know in advance how far a deliberate leg
+                // extension needs to lift the torso, so this starts small
+                // and keeps doubling instead of guessing one fixed number
+                // (unlike resolveUpwardIfPenetrating's own small fixed
+                // budget, meant only for tiny post-rotation residuals).
+                float blocked = 0.0f;   // push=0 already collides -- we just tested that above
+                float clear = -1.0f;    // first push amount confirmed to clear, if any
+                float push = SIMULATION_LEG_PUSH_SEARCH_START;
 
-                if (robotCollidesWithEnvironment())
+                for (;;)
                 {
-                    // Grow the push distance (doubling from
-                    // SIMULATION_LEG_PUSH_SEARCH_START) until lifting the
-                    // body by that much actually clears the leg, or the
-                    // sanity cap SIMULATION_LEG_PUSH_SEARCH_MAX is reached
-                    // -- there's no way to know in advance how far a
-                    // deliberate leg extension needs to lift the torso,
-                    // so this starts small and keeps doubling instead of
-                    // guessing one fixed number (unlike
-                    // resolveUpwardIfPenetrating's own small fixed
-                    // budget, meant only for tiny post-rotation
-                    // residuals).
-                    float blocked = 0.0f;   // push=0 already collides -- we just tested that above
-                    float clear = -1.0f;    // first push amount confirmed to clear, if any
-                    float push = SIMULATION_LEG_PUSH_SEARCH_START;
+                    if (push > SIMULATION_LEG_PUSH_SEARCH_MAX)
+                        push = SIMULATION_LEG_PUSH_SEARCH_MAX;
 
-                    for (;;)
+                    translateActiveRobot(0.0f, push);
+                    BOOL stillHits = robotCollidesWithEnvironment();
+                    translateActiveRobot(0.0f, -push);
+
+                    if (!stillHits) { clear = push; break; }
+
+                    blocked = push;
+                    if (push >= SIMULATION_LEG_PUSH_SEARCH_MAX)
+                        break; // exhausted the budget -- no escape found by pushing up
+
+                    push *= 2.0f;
+                }
+
+                if (clear >= 0.0f)
+                {
+                    // Binary-search within [blocked, clear] for the exact
+                    // push that first clears the leg, same
+                    // GRAVITY_CONTACT_SEARCH_ITERATIONS idiom
+                    // applyGravityStep's own downward search uses.
+                    for (int i = 0; i < GRAVITY_CONTACT_SEARCH_ITERATIONS; i++)
                     {
-                        if (push > SIMULATION_LEG_PUSH_SEARCH_MAX)
-                            push = SIMULATION_LEG_PUSH_SEARCH_MAX;
-
-                        translateActiveRobot(0.0f, push);
+                        float mid = (blocked + clear) * 0.5f;
+                        translateActiveRobot(0.0f, mid);
                         BOOL stillHits = robotCollidesWithEnvironment();
-                        translateActiveRobot(0.0f, -push);
+                        translateActiveRobot(0.0f, -mid);
 
-                        if (!stillHits) { clear = push; break; }
-
-                        blocked = push;
-                        if (push >= SIMULATION_LEG_PUSH_SEARCH_MAX)
-                            break; // exhausted the budget -- no escape found by pushing up
-
-                        push *= 2.0f;
+                        if (stillHits) blocked = mid; else clear = mid;
                     }
 
-                    if (clear >= 0.0f)
+                    translateActiveRobot(0.0f, clear);
+                    printf("[LEGPUSH] kneeAngle=%.2f pushed body up by %.5f to keep the leg clear\n",
+                           r->kneeAngle, clear);
+
+                    // Re-arming rockySettleConverged/both step sizes (a
+                    // real report showed the body ending up visibly
+                    // floating after a long run of E/Q presses -- see the
+                    // unconditional kickoff below this whole if/else for
+                    // the full reasoning) and actually starting the
+                    // settle/topple driver now happen unconditionally
+                    // after this if/else, not just here in the LEGPUSH
+                    // branch -- a knee rotation that never collides with
+                    // anything can still leave the robot unstable, so it
+                    // needs the same check every other outcome gets too.
+                }
+                else
+                {
+                    // Even SIMULATION_LEG_PUSH_SEARCH_MAX of lift doesn't
+                    // clear it -- fall back to the OLD hard-stop: undo
+                    // however much of THIS rotation still buries the leg,
+                    // binary-searching the largest fraction of
+                    // (oldKneeAngle -> proposed angle) that stays clear at
+                    // the CURRENT (unlifted) body position, same as this
+                    // handler did before push-up existed.
+                    //
+                    // rockyEscapeLegPenetration already guarantees
+                    // oldKneeAngle itself is collision-free (or leaves it
+                    // alone if the WHOLE circle is blocked, an extreme
+                    // edge case), so this binary search always has a
+                    // genuinely safe point at fraction=0 to shrink toward.
+                    float proposedKneeAngle = r->kneeAngle;
+                    float safeFrac = 0.0f;
+                    float blockedFrac = 1.0f;
+
+                    for (int i = 0; i < GRAVITY_CONTACT_SEARCH_ITERATIONS; i++)
                     {
-                        // Binary-search within [blocked, clear] for the
-                        // exact push that first clears the leg, same
-                        // GRAVITY_CONTACT_SEARCH_ITERATIONS idiom
-                        // applyGravityStep's own downward search uses.
-                        for (int i = 0; i < GRAVITY_CONTACT_SEARCH_ITERATIONS; i++)
-                        {
-                            float mid = (blocked + clear) * 0.5f;
-                            translateActiveRobot(0.0f, mid);
-                            BOOL stillHits = robotCollidesWithEnvironment();
-                            translateActiveRobot(0.0f, -mid);
-
-                            if (stillHits) blocked = mid; else clear = mid;
-                        }
-
-                        translateActiveRobot(0.0f, clear);
-                        printf("[LEGPUSH] kneeAngle=%.2f pushed body up by %.5f to keep the leg clear (substep %d/%d)\n",
-                               r->kneeAngle, clear, sub + 1, numSubsteps);
-
-                        // Re-arming rockySettleConverged/both step sizes
-                        // (a real report showed the body ending up
-                        // visibly floating after a long run of E/Q
-                        // presses -- see the unconditional kickoff below
-                        // this whole loop for the full reasoning) and
-                        // actually starting the settle/topple driver now
-                        // happen unconditionally after this loop, not
-                        // just here in the LEGPUSH branch -- a knee
-                        // rotation that never collides with anything can
-                        // still leave the robot unstable, so it needs the
-                        // same check every other outcome gets too.
+                        float midFrac = (safeFrac + blockedFrac) * 0.5f;
+                        r->kneeAngle = oldKneeAngle + (proposedKneeAngle - oldKneeAngle) * midFrac;
+                        if (robotCollidesWithEnvironment()) blockedFrac = midFrac; else safeFrac = midFrac;
                     }
-                    else
-                    {
-                        // Even SIMULATION_LEG_PUSH_SEARCH_MAX of lift
-                        // doesn't clear it -- fall back to the OLD hard-
-                        // stop: undo however much of THIS substep still
-                        // buries the leg, binary-searching the largest
-                        // fraction of (oldKneeAngle -> this substep's
-                        // proposed angle) that stays clear at the CURRENT
-                        // (unlifted) body position, same as the original
-                        // single-step handler did before push-up existed,
-                        // just bounded to one substep's much smaller
-                        // range now.
-                        //
-                        // rockyEscapeLegPenetration already guarantees
-                        // oldKneeAngle itself is collision-free (or
-                        // leaves it alone if the WHOLE circle is blocked,
-                        // an extreme edge case), so this binary search
-                        // always has a genuinely safe point at fraction=0
-                        // to shrink toward.
-                        float proposedKneeAngle = r->kneeAngle;
-                        float safeFrac = 0.0f;
-                        float blockedFrac = 1.0f;
 
-                        for (int i = 0; i < GRAVITY_CONTACT_SEARCH_ITERATIONS; i++)
-                        {
-                            float midFrac = (safeFrac + blockedFrac) * 0.5f;
-                            r->kneeAngle = oldKneeAngle + (proposedKneeAngle - oldKneeAngle) * midFrac;
-                            if (robotCollidesWithEnvironment()) blockedFrac = midFrac; else safeFrac = midFrac;
-                        }
+                    r->kneeAngle = oldKneeAngle + (proposedKneeAngle - oldKneeAngle) * safeFrac;
 
-                        r->kneeAngle = oldKneeAngle + (proposedKneeAngle - oldKneeAngle) * safeFrac;
-
-                        printf("[STUCK] E/Q: leg still buried even after pushing up by SIMULATION_LEG_PUSH_SEARCH_MAX=%.3f -- held at kneeAngle=%.2f (substep %d/%d)\n",
-                               (float)SIMULATION_LEG_PUSH_SEARCH_MAX, r->kneeAngle, sub + 1, numSubsteps);
-
-                        // Genuinely stuck at this substep's start angle --
-                        // every further substep would just immediately
-                        // re-fail the same way, so there's no point
-                        // grinding through the rest of them.
-                        break;
-                    }
+                    printf("[STUCK] E/Q: leg still buried even after pushing up by SIMULATION_LEG_PUSH_SEARCH_MAX=%.3f -- held at kneeAngle=%.2f\n",
+                           (float)SIMULATION_LEG_PUSH_SEARCH_MAX, r->kneeAngle);
                 }
             }
 
@@ -4901,7 +4853,6 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             rockySettleConverged = FALSE;
             rockyKneeSettleStep = SIMULATION_LEG_SETTLE_STEP_DEG;
             rockyBodySettleStep = SIMULATION_BODY_SETTLE_STEP_DEG;
-            rockyKneeSettleSuppressed = TRUE; // see its own comment -- don't let Probe 1 fight this E/Q press
             postRotateSettleActive = TRUE;
             SetTimer(hWnd, AUTO_GRAVITY_TIMER_ID, SIMULATION_AUTO_GRAVITY_INTERVAL_MS, NULL);
 
@@ -5025,7 +4976,6 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             rockySettleConverged = FALSE;
             rockyKneeSettleStep = SIMULATION_LEG_SETTLE_STEP_DEG;
             rockyBodySettleStep = SIMULATION_BODY_SETTLE_STEP_DEG;
-            rockyKneeSettleSuppressed = FALSE; // whole-body rotate: nothing else drives kneeAngle, Probe 1 is safe here
 
             postRotateSettleActive = TRUE;
             SetTimer(hWnd, AUTO_GRAVITY_TIMER_ID, SIMULATION_AUTO_GRAVITY_INTERVAL_MS, NULL);

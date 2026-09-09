@@ -1861,21 +1861,6 @@ static BOOL rockySettleConverged = FALSE;
 static float rockyKneeSettleStep = 0.0f;
 static float rockyBodySettleStep = 0.0f;
 
-// Set TRUE for the duration of an E/Q-triggered settle pass (see the
-// WM_KEYDOWN kickoff below) to stop Probe 1 (knee-bending) from firing
-// while the USER is the one actively driving kneeAngle -- without this,
-// Probe 1's own "improve the resting fit" search runs every 16ms via the
-// postRotateSettleActive timer and directly fights the player's own E/Q
-// presses (LEGPUSH lifts the body to clear the leg the user just bent,
-// then Probe 1 bends it back and drops the body again a tick later),
-// which is what read as the body visibly jittering up and down while
-// holding E or Q. Probe 2 (body-rotate/topple) and the plain gravity
-// drop are NOT suppressed -- neither one touches kneeAngle, so neither
-// one fights the user, and a genuinely unstable rotate still topples.
-// Left FALSE (the normal case) for VK_LEFT/RIGHT's own topple kickoff,
-// where nothing else is driving kneeAngle and Probe 1 is safe to run.
-static BOOL rockyKneeSettleSuppressed = FALSE;
-
 static void advanceRockySettle(void)
 {
     if (app.robotScene.activeKind != ROBOT_KIND_ROCKY)
@@ -1903,7 +1888,7 @@ static void advanceRockySettle(void)
     // getRockyCenter), so this used to just spin kneeAngle through
     // hundreds of degrees for no visible effect, flooding the console
     // with [SETTLE] lines about a foot nobody can see or collide with.
-    if (!r->legHidden && !rockyKneeSettleSuppressed && rockyKneeSettleStep >= SIMULATION_LEG_SETTLE_MIN_STEP_DEG)
+    if (!r->legHidden && rockyKneeSettleStep >= SIMULATION_LEG_SETTLE_MIN_STEP_DEG)
     {
         float baseKneeAngle = r->kneeAngle;
         float bestDrop = 0.0f;
@@ -2805,7 +2790,6 @@ static void advancePostRotateSettle(HWND hWnd)
     if (atRest)
     {
         postRotateSettleActive = FALSE;
-        rockyKneeSettleSuppressed = FALSE; // this session (E/Q or rotate) is over either way
 
         // Don't rip the timer out from under a separately-active Auto
         // Gravity session -- only stop it if this was the only reason it
@@ -4901,7 +4885,6 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             rockySettleConverged = FALSE;
             rockyKneeSettleStep = SIMULATION_LEG_SETTLE_STEP_DEG;
             rockyBodySettleStep = SIMULATION_BODY_SETTLE_STEP_DEG;
-            rockyKneeSettleSuppressed = TRUE; // see its own comment -- don't let Probe 1 fight this E/Q press
             postRotateSettleActive = TRUE;
             SetTimer(hWnd, AUTO_GRAVITY_TIMER_ID, SIMULATION_AUTO_GRAVITY_INTERVAL_MS, NULL);
 
@@ -5025,7 +5008,6 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             rockySettleConverged = FALSE;
             rockyKneeSettleStep = SIMULATION_LEG_SETTLE_STEP_DEG;
             rockyBodySettleStep = SIMULATION_BODY_SETTLE_STEP_DEG;
-            rockyKneeSettleSuppressed = FALSE; // whole-body rotate: nothing else drives kneeAngle, Probe 1 is safe here
 
             postRotateSettleActive = TRUE;
             SetTimer(hWnd, AUTO_GRAVITY_TIMER_ID, SIMULATION_AUTO_GRAVITY_INTERVAL_MS, NULL);

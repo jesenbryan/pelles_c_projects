@@ -1861,21 +1861,6 @@ static BOOL rockySettleConverged = FALSE;
 static float rockyKneeSettleStep = 0.0f;
 static float rockyBodySettleStep = 0.0f;
 
-// Set TRUE for the duration of an E/Q-triggered settle pass (see the
-// WM_KEYDOWN kickoff below) to stop Probe 1 (knee-bending) from firing
-// while the USER is the one actively driving kneeAngle -- without this,
-// Probe 1's own "improve the resting fit" search runs every 16ms via the
-// postRotateSettleActive timer and directly fights the player's own E/Q
-// presses (LEGPUSH lifts the body to clear the leg the user just bent,
-// then Probe 1 bends it back and drops the body again a tick later),
-// which is what read as the body visibly jittering up and down while
-// holding E or Q. Probe 2 (body-rotate/topple) and the plain gravity
-// drop are NOT suppressed -- neither one touches kneeAngle, so neither
-// one fights the user, and a genuinely unstable rotate still topples.
-// Left FALSE (the normal case) for VK_LEFT/RIGHT's own topple kickoff,
-// where nothing else is driving kneeAngle and Probe 1 is safe to run.
-static BOOL rockyKneeSettleSuppressed = FALSE;
-
 static void advanceRockySettle(void)
 {
     if (app.robotScene.activeKind != ROBOT_KIND_ROCKY)
@@ -1903,7 +1888,7 @@ static void advanceRockySettle(void)
     // getRockyCenter), so this used to just spin kneeAngle through
     // hundreds of degrees for no visible effect, flooding the console
     // with [SETTLE] lines about a foot nobody can see or collide with.
-    if (!r->legHidden && !rockyKneeSettleSuppressed && rockyKneeSettleStep >= SIMULATION_LEG_SETTLE_MIN_STEP_DEG)
+    if (!r->legHidden && rockyKneeSettleStep >= SIMULATION_LEG_SETTLE_MIN_STEP_DEG)
     {
         float baseKneeAngle = r->kneeAngle;
         float bestDrop = 0.0f;
@@ -2547,6 +2532,28 @@ static BOOL autoGravityActive = FALSE;
 // for why this needed its own flag instead of just flipping that one on.
 static BOOL postRotateSettleActive = FALSE;
 
+// E/Q's knee rotation used to resolve an entire SIMULATION_JOINT_ROTATE_
+// STEP_DEG press synchronously, inside the WM_KEYDOWN handler itself,
+// before ever returning control to main.c's render loop -- so no matter
+// how finely THAT resolution was sub-stepped internally, only the single
+// FINAL state after every substep ever actually got drawn (the render
+// loop only sees state again once the handler returns), which is exactly
+// what still read as one visible jump per keypress. TRUE while a knee
+// rotation still has degrees left to animate through -- see
+// advanceKneeRotateAnim below, which now applies one substep per timer
+// tick instead, so the render loop (main.c's free-running PeekMessage
+// loop, which redraws every single iteration) actually gets to draw
+// every intermediate substep on its own frame.
+static BOOL kneeRotateAnimActive = FALSE;
+
+// Signed degrees still owed to the knee by an in-progress E/Q animation
+// (see kneeRotateAnimActive/advanceKneeRotateAnim) -- positive queues
+// more Q (CCW) rotation, negative more E (CW). A fresh key press ADDS its
+// full step to whatever's already queued rather than replacing it, so
+// tapping E again while a Q rotation is still animating smoothly reverses
+// direction from wherever the knee currently is, instead of snapping.
+static float kneeRotateAnimRemainingDeg = 0.0f;
+
 // simTimeScale/hSlowMotionBtn ("Slow Motion") are declared up near hRC/hDC
 // instead of here -- applyGravityStep, defined earlier in this file, needs
 // to read simTimeScale already. See that declaration's comment.
@@ -2805,7 +2812,6 @@ static void advancePostRotateSettle(HWND hWnd)
     if (atRest)
     {
         postRotateSettleActive = FALSE;
-        rockyKneeSettleSuppressed = FALSE; // this session (E/Q or rotate) is over either way
 
         // Don't rip the timer out from under a separately-active Auto
         // Gravity session -- only stop it if this was the only reason it
@@ -2813,6 +2819,161 @@ static void advancePostRotateSettle(HWND hWnd)
         if (!autoGravityActive)
             KillTimer(hWnd, AUTO_GRAVITY_TIMER_ID);
     }
+}
+
+// E/Q's knee rotation, animated -- see kneeRotateAnimActive/
+// kneeRotateAnimRemainingDeg's own comments for why this replaced doing
+// the whole press synchronously inside WM_KEYDOWN. One
+// SIMULATION_JOINT_ROTATE_SUBSTEP_DEG sliver per tick, same cadence
+// (AUTO_GRAVITY_TIMER_ID, SIMULATION_AUTO_GRAVITY_INTERVAL_MS) as auto
+// gravity and the post-rotate topple, so all three read as the same
+// smoothness of motion. Each sliver repeats the exact same "rotate, and
+// if that buries the leg push the body up (or fall back to a hard stop)"
+// resolution the old single-call version did -- just one sliver at a
+// time now, actually rendered on its own frame instead of all of them
+// collapsing into whatever was left after the whole press already ran.
+static void advanceKneeRotateAnim(HWND hWnd)
+{
+    if (!kneeRotateAnimActive || appMode != APP_MODE_SIMULATION) return;
+
+    // Same reasoning as advanceAutoGravity/advancePostRotateSettle's own
+    // checks -- don't fight a manual drag in progress.
+    if (app.draggingRobotSim) return;
+
+    if (fabsf(kneeRotateAnimRemainingDeg) < 1e-4f)
+    {
+        // Nothing left to animate -- done. Kick off the same topple check
+        // VK_LEFT/RIGHT's WM_KEYUP uses (see advancePostRotateSettle's
+        // own comment for the full reasoning): a knee rotation that never
+        // collided with anything can still leave the robot's center of
+        // mass somewhere it can no longer balance, so this always re-arms
+        // and starts that driver once the animation itself is finished,
+        // not just when a LEGPUSH happened along the way.
+        kneeRotateAnimRemainingDeg = 0.0f;
+        kneeRotateAnimActive = FALSE;
+
+        rockySettleConverged = FALSE;
+        rockyKneeSettleStep = SIMULATION_LEG_SETTLE_STEP_DEG;
+        rockyBodySettleStep = SIMULATION_BODY_SETTLE_STEP_DEG;
+        postRotateSettleActive = TRUE;
+        return; // AUTO_GRAVITY_TIMER_ID keeps running -- postRotateSettleActive needs it
+    }
+
+    Rocky* r = &app.robotScene.rocky;
+
+    // Self-healing step -- see rockyEscapeLegPenetration's own comment --
+    // right before EVERY sliver now (not just once at the start of the
+    // whole press), so each one always starts from a genuinely safe
+    // kneeAngle instead of possibly a hair-embedded one.
+    rockyEscapeLegPenetration();
+
+    float subStep;
+    if (kneeRotateAnimRemainingDeg > 0.0f)
+        subStep = (kneeRotateAnimRemainingDeg < SIMULATION_JOINT_ROTATE_SUBSTEP_DEG)
+                      ? kneeRotateAnimRemainingDeg : SIMULATION_JOINT_ROTATE_SUBSTEP_DEG;
+    else
+        subStep = (kneeRotateAnimRemainingDeg > -SIMULATION_JOINT_ROTATE_SUBSTEP_DEG)
+                      ? kneeRotateAnimRemainingDeg : -SIMULATION_JOINT_ROTATE_SUBSTEP_DEG;
+
+    float oldKneeAngle = r->kneeAngle;
+    r->kneeAngle = oldKneeAngle + subStep;
+    kneeRotateAnimRemainingDeg -= subStep;
+
+    if (robotCollidesWithEnvironment())
+    {
+        // Grow the push distance (doubling from
+        // SIMULATION_LEG_PUSH_SEARCH_START) until lifting the body by
+        // that much actually clears the leg, or the sanity cap
+        // SIMULATION_LEG_PUSH_SEARCH_MAX is reached -- same search
+        // E/Q's own single-call version used, just against one sliver's
+        // much smaller rotation now, so the push it finds is typically
+        // much smaller too, spreading a big total lift across many
+        // ticks instead of one.
+        float blocked = 0.0f;
+        float clear = -1.0f;
+        float push = SIMULATION_LEG_PUSH_SEARCH_START;
+
+        for (;;)
+        {
+            if (push > SIMULATION_LEG_PUSH_SEARCH_MAX)
+                push = SIMULATION_LEG_PUSH_SEARCH_MAX;
+
+            translateActiveRobot(0.0f, push);
+            BOOL stillHits = robotCollidesWithEnvironment();
+            translateActiveRobot(0.0f, -push);
+
+            if (!stillHits) { clear = push; break; }
+
+            blocked = push;
+            if (push >= SIMULATION_LEG_PUSH_SEARCH_MAX)
+                break; // exhausted the budget -- no escape found by pushing up
+
+            push *= 2.0f;
+        }
+
+        if (clear >= 0.0f)
+        {
+            // Binary-search within [blocked, clear] for the exact push
+            // that first clears the leg, same GRAVITY_CONTACT_SEARCH_
+            // ITERATIONS idiom applyGravityStep's own downward search uses.
+            for (int i = 0; i < GRAVITY_CONTACT_SEARCH_ITERATIONS; i++)
+            {
+                float mid = (blocked + clear) * 0.5f;
+                translateActiveRobot(0.0f, mid);
+                BOOL stillHits = robotCollidesWithEnvironment();
+                translateActiveRobot(0.0f, -mid);
+
+                if (stillHits) blocked = mid; else clear = mid;
+            }
+
+            translateActiveRobot(0.0f, clear);
+            if (fabsf(clear) > 1e-5f)
+                printf("[LEGPUSH] kneeAngle=%.2f pushed body up by %.5f to keep the leg clear\n",
+                       r->kneeAngle, clear);
+        }
+        else
+        {
+            // Even SIMULATION_LEG_PUSH_SEARCH_MAX of lift doesn't clear
+            // it -- fall back to the OLD hard-stop: undo however much of
+            // THIS sliver still buries the leg, binary-searching the
+            // largest fraction of (oldKneeAngle -> this sliver's proposed
+            // angle) that stays clear at the CURRENT (unlifted) body
+            // position.
+            //
+            // rockyEscapeLegPenetration already guarantees oldKneeAngle
+            // itself is collision-free (or leaves it alone if the WHOLE
+            // circle is blocked, an extreme edge case), so this binary
+            // search always has a genuinely safe point at fraction=0 to
+            // shrink toward.
+            float proposedKneeAngle = r->kneeAngle;
+            float safeFrac = 0.0f;
+            float blockedFrac = 1.0f;
+
+            for (int i = 0; i < GRAVITY_CONTACT_SEARCH_ITERATIONS; i++)
+            {
+                float midFrac = (safeFrac + blockedFrac) * 0.5f;
+                r->kneeAngle = oldKneeAngle + (proposedKneeAngle - oldKneeAngle) * midFrac;
+                if (robotCollidesWithEnvironment()) blockedFrac = midFrac; else safeFrac = midFrac;
+            }
+
+            r->kneeAngle = oldKneeAngle + (proposedKneeAngle - oldKneeAngle) * safeFrac;
+
+            printf("[STUCK] E/Q: leg still buried even after pushing up by SIMULATION_LEG_PUSH_SEARCH_MAX=%.3f -- held at kneeAngle=%.2f\n",
+                   (float)SIMULATION_LEG_PUSH_SEARCH_MAX, r->kneeAngle);
+
+            // Genuinely stuck -- every further sliver in this direction
+            // would just immediately re-fail the same way, so stop
+            // animating (drop whatever's still queued) instead of
+            // grinding through it tick after tick.
+            kneeRotateAnimRemainingDeg = 0.0f;
+        }
+    }
+
+    // Re-arm the [CONTACT] one-shot dump (see drawSimulationContactDebug)
+    // so the very next paint prints a fresh point/hit count reflecting
+    // this sliver -- same reasoning as the old single-call version's own
+    // re-arm, just now happening once per tick instead of once per press.
+    contactDebugLoggedThisToggle = FALSE;
 }
 
 // ---- Scripted gait ("Walk" toggle, Shift+W -- see config.h's
@@ -4901,7 +5062,6 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             rockySettleConverged = FALSE;
             rockyKneeSettleStep = SIMULATION_LEG_SETTLE_STEP_DEG;
             rockyBodySettleStep = SIMULATION_BODY_SETTLE_STEP_DEG;
-            rockyKneeSettleSuppressed = TRUE; // see its own comment -- don't let Probe 1 fight this E/Q press
             postRotateSettleActive = TRUE;
             SetTimer(hWnd, AUTO_GRAVITY_TIMER_ID, SIMULATION_AUTO_GRAVITY_INTERVAL_MS, NULL);
 
@@ -5025,7 +5185,6 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             rockySettleConverged = FALSE;
             rockyKneeSettleStep = SIMULATION_LEG_SETTLE_STEP_DEG;
             rockyBodySettleStep = SIMULATION_BODY_SETTLE_STEP_DEG;
-            rockyKneeSettleSuppressed = FALSE; // whole-body rotate: nothing else drives kneeAngle, Probe 1 is safe here
 
             postRotateSettleActive = TRUE;
             SetTimer(hWnd, AUTO_GRAVITY_TIMER_ID, SIMULATION_AUTO_GRAVITY_INTERVAL_MS, NULL);

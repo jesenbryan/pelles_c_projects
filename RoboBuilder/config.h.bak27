@@ -642,23 +642,6 @@
 // two places it's available.
 #define SIMULATION_JOINT_ROTATE_STEP_DEG 2.0f
 
-// E/Q resolves the whole SIMULATION_JOINT_ROTATE_STEP_DEG press as
-// several of these smaller sub-rotations instead of one single jump --
-// same "smooth instead of one big jump" fix as
-// SIMULATION_WHOLE_BODY_ROTATE_SUBSTEP_DEG's own, but for a different
-// symptom: the knee circle itself is far too small to ever tunnel
-// through anything at a 2-degree step, but the LEGPUSH lift that step
-// can trigger (see SIMULATION_LEG_PUSH_SEARCH_MAX below) is NOT small,
-// and doing that entire lift in one binary-searched jump made the whole
-// rectangle visibly snap upward in a single frame instead of rising
-// smoothly. Resolving one sliver of the knee rotation at a time means
-// whatever lift is needed accumulates gradually across several small
-// pushes within one press instead of arriving all at once. Same value as
-// the whole-body one so a held key reads at a similar smoothness either
-// way; SIMULATION_JOINT_ROTATE_STEP_DEG divides evenly by this (2.0 / 0.2
-// = 10 substeps per press).
-#define SIMULATION_JOINT_ROTATE_SUBSTEP_DEG 0.2f
-
 // E/Q's "glide over an obstruction" behavior (sweeping past a contact and
 // jumping to clear ground on the far side) was removed by explicit
 // request -- the foot was technically still passing through solid ground
