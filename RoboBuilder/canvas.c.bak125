@@ -1200,20 +1200,17 @@ static void drawSimulationContactDebug(void)
                     // Sampled around the circle's own circumference --
                     // same idea as the arc points just below and the
                     // rectangle-edge samples further down -- instead of
-                    // one analytic center+radius test. Padded with
-                    // eArcThickness (NOT zero) for the same reason arcs
-                    // need it: a fixed 41-point ring can leave the true
-                    // tangent point sitting in the gap between two
-                    // samples, and testing at zero radius made a
-                    // genuinely-touching circle show no red dot at all
-                    // (every sample individually reading "too far," even
-                    // though the circle really is resting on the line).
-                    // This is what lets BOTH knee and foot show their own
-                    // dots when both are genuinely resting on the ground
-                    // at once, and lets a single circle resting in a
-                    // notch/corner show two separate lit-up clusters
-                    // instead of one synthesized "nearest point" that
-                    // could only ever pick one.
+                    // one analytic center+radius test. Each sample point
+                    // already sits ON the circle's real boundary, so
+                    // (same "real filled boundary, no extra padding"
+                    // reasoning as a rectangle edge's own eRadius=0.0f)
+                    // it's tested with zero extra radius, not the
+                    // circle's own radius again. This is what lets BOTH
+                    // knee and foot show their own dots when both are
+                    // genuinely resting on the ground at once, and lets a
+                    // single circle resting in a notch/corner show two
+                    // separate lit-up clusters instead of one synthesized
+                    // "nearest point" that could only ever pick one.
                     PointF circlePts[ARC_SAMPLE_COUNT];
                     computeCircleSamplePoints(bodyCircles[c].center, bodyCircles[c].radius, circlePts);
 
@@ -1221,7 +1218,7 @@ static void drawSimulationContactDebug(void)
                     {
                         float ecx, ecy;
                         robotPointToEnvWorld(circlePts[i].x, circlePts[i].y, &ecx, &ecy);
-                        BOOL hit = pointVisuallyContactsEnvironmentStroke(ecx, ecy, eArcThickness);
+                        BOOL hit = pointVisuallyContactsEnvironmentStroke(ecx, ecy, 0.0f);
                         drawMarkerDisc(circlePts[i].x, circlePts[i].y, hit ? smallDotRadius * 3.0f : smallDotRadius,
                                        hit ? 0.95f : 0.15f, hit ? 0.15f : 0.85f, 0.15f, hit ? 1.0f : 0.7f);
                         if (logThisPass) { dbgPointCount++; if (hit) dbgHitCount++; }
@@ -1410,27 +1407,27 @@ static void drawSimulationLiveContactDots(void)
 
                 for (int c = 0; c < NUM_ROCKY_BODY_CIRCLES; c++)
                 {
-                    float ecx, ecy;
-                    robotPointToEnvWorld(bodyCircles[c].center.x, bodyCircles[c].center.y, &ecx, &ecy);
-                    float eRadius = robotLengthToEnvWorld(bodyCircles[c].radius);
+                    // Sampled around the circle's own circumference, same
+                    // as the arc points just below -- each sample sits ON
+                    // the circle's real boundary so it's tested with zero
+                    // extra radius (real filled boundary, no extra
+                    // padding, same reasoning as a rectangle edge's own
+                    // eRadius=0.0f) and only samples that actually hit get
+                    // a dot, mirroring the arc loop's own hit-only style.
+                    // Replaces the single synthesized "nearest point"
+                    // direction, which could only ever describe ONE
+                    // contact and made knee/foot independently going
+                    // missing (or flickering between two nearly-tied
+                    // candidate points every frame) possible.
+                    PointF circlePts[ARC_SAMPLE_COUNT];
+                    computeCircleSamplePoints(bodyCircles[c].center, bodyCircles[c].radius, circlePts);
 
-                    // EXACT test (findCircleContactDirections), not the
-                    // debug overlay's sampled ring above -- this renderer
-                    // is always on, so it can't afford the sampled ring's
-                    // discretization gap (a fixed 41-point ring can leave
-                    // the true tangent point sitting between two samples,
-                    // making a genuinely-touching circle show NO dot at
-                    // all). Finds every distinct contact this circle
-                    // actually has (handles knee+foot both touching at
-                    // once, and a single circle touching in two places)
-                    // with zero discretization error at any zoom.
-                    float contactDirX[MAX_CIRCLE_CONTACT_POINTS], contactDirY[MAX_CIRCLE_CONTACT_POINTS];
-                    int contactCount = findCircleContactDirections(ecx, ecy, eRadius, contactDirX, contactDirY, MAX_CIRCLE_CONTACT_POINTS);
-                    for (int k = 0; k < contactCount; k++)
+                    for (int i = 0; i < ARC_SAMPLE_COUNT; i++)
                     {
-                        float rx = bodyCircles[c].center.x + contactDirX[k] * bodyCircles[c].radius;
-                        float ry = bodyCircles[c].center.y + contactDirY[k] * bodyCircles[c].radius;
-                        drawMarkerDisc(rx, ry, liveContactDotRadius, 0.95f, 0.1f, 0.1f, 1.0f);
+                        float ecx, ecy;
+                        robotPointToEnvWorld(circlePts[i].x, circlePts[i].y, &ecx, &ecy);
+                        if (pointVisuallyContactsEnvironmentStroke(ecx, ecy, 0.0f))
+                            drawMarkerDisc(circlePts[i].x, circlePts[i].y, liveContactDotRadius, 0.95f, 0.1f, 0.1f, 1.0f);
                     }
                 }
 

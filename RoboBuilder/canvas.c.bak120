@@ -775,41 +775,6 @@ static float nearestEnvDistance(float ecx, float ecy)
     return best; // -1.0f if there are no traced segments at all
 }
 
-// Rocky's knee/foot circles used to be tested as a single analytic point
-// (the circle's own center, radius folded into the collision padding) --
-// exact for a bare yes/no, but for DRAWING it meant synthesizing one
-// "nearest point" direction and hoping it was the only contact. That
-// broke down for exactly the case a resting/settled robot actually hits:
-// the knee AND foot circles can BOTH be genuinely touching the ground at
-// once, and picking a single global "closest point" per circle has no
-// way to represent two separate circles' contacts independently going
-// missing from view, nor a single circle touching in two places (a
-// notch/corner).
-//
-// Used ONLY for the illustrative debug overlay (drawSimulationContactDebug,
-// the 'C'-toggle one) -- samples the circle's own circumference, exactly
-// like Rocky's shin fillet arcs already do (computeRockyArcPoints/
-// ARC_SAMPLE_COUNT), purely so that overlay can show a green/red ring the
-// same way it already shows arcs and rectangle-edge samples. This is
-// NOT used for the real-time indicator (drawSimulationLiveContactDots,
-// see findCircleContactDirections below for that) -- a fixed 41-point
-// ring has the exact same coarse-discretization problem the rectangle
-// edges originally had (see edgeCollidesWithAnyEnvironmentStroke's own
-// comment): a genuinely tangent contact point can fall in the gap
-// between two adjacent samples, at high zoom, with EVERY sample reading
-// as "too far," which is why callers must pad each sample's own test
-// with eArcThickness (the same forgiving stand-in thickness arcs already
-// use for exactly this reason), not test them at zero radius.
-static void computeCircleSamplePoints(PointF center, float radius, PointF outPts[ARC_SAMPLE_COUNT])
-{
-    for (int i = 0; i < ARC_SAMPLE_COUNT; i++)
-    {
-        float theta = (2.0f * 3.14159265f * i) / ARC_SAMPLE_COUNT;
-        outPts[i].x = center.x + radius * cosf(theta);
-        outPts[i].y = center.y + radius * sinf(theta);
-    }
-}
-
 // Max distinct simultaneous contact points findCircleContactDirections
 // (below) will ever report for one circle -- a robot's leg circle only
 // realistically touches a small handful of separate places at once (a
@@ -817,25 +782,32 @@ static void computeCircleSamplePoints(PointF center, float radius, PointF outPts
 // hand-drawn environment), so this is a generous cap, not a tuned limit.
 #define MAX_CIRCLE_CONTACT_POINTS 4
 
-// EXACT (no sampling, no discretization gap at any zoom) counterpart to
-// computeCircleSamplePoints, used by the always-on live-dot renderer
-// (drawSimulationLiveContactDots) where reliability matters more than
-// illustrative detail. Walks every environment piece directly and groups
-// consecutive in-range pieces (within combinedRadius -- eRadius here is
-// the circle's OWN real radius, same padding formula
+// Finds EVERY distinct place a circle (env-space center ecx,ecy, ROBOT-
+// space-derived radius eRadius already converted to env-world units by
+// the caller) is touching the drawn environment, not just the single
+// closest one. This matters because a circle resting in a notch/corner,
+// or straddling two separate traced pieces, can genuinely be touching in
+// two (or more) different places AT ONCE -- the earlier single-point
+// version of this (circleVisuallyContactsEnvironmentStroke, since
+// removed) always reported only whichever contact happened to be
+// marginally closer, silently dropping any other equally-real contact,
+// which is exactly the "only one dot shows even though both circle
+// edges are touching" bug this replaces.
+//
+// Walks every environment piece directly and groups consecutive
+// in-range pieces (within combinedRadius, same padding formula
 // pointCollidesWithAnyEnvironmentStroke and its visual-tolerance wrapper
-// use) into one "run" per stroke -- an ORDINARY single contact against a
-// long or gently curved line, in-range across many consecutive pieces,
-// still collapses to exactly one reported point (a run only ends when a
-// piece goes OUT of range, or the pieces belong to a different traced
-// stroke); only a genuinely separate contact area starts a second run.
-// Each run contributes its own single closest point. Returns the number
-// of contacts found (0 if none), filling up to maxContacts slots in
-// outDirX/outDirY with unit directions from (ecx,ecy) toward each
-// contact point, so the caller can place each dot by re-applying that
-// direction, scaled by the shape's OWN robot-space radius, to its own
-// robot-space center -- same reasoning already used for the rectangle
-// edges' parametric t.
+// use) into one "run" per stroke -- so an ORDINARY single contact
+// against a long or gently curved line, which is in-range across many
+// consecutive pieces, still collapses to exactly one reported point (a
+// run only ends when a piece goes OUT of range, or the pieces belong to
+// a different traced stroke); only a genuinely separate contact area
+// starts a second run. Each run contributes its own single closest
+// point. Returns the number of contacts found (0 if none), filling up to
+// maxContacts slots in outDirX/outDirY with unit directions from
+// (ecx,ecy) toward each contact point -- same convention the old
+// circleVisuallyContactsEnvironmentStroke used, so callers still place
+// each dot the same way: center + dir * the shape's OWN radius.
 static int findCircleContactDirections(float ecx, float ecy, float eRadius,
                                         float outDirX[], float outDirY[], int maxContacts)
 {
@@ -1197,35 +1169,36 @@ static void drawSimulationContactDebug(void)
 
                 for (int c = 0; c < NUM_ROCKY_BODY_CIRCLES; c++)
                 {
-                    // Sampled around the circle's own circumference --
-                    // same idea as the arc points just below and the
-                    // rectangle-edge samples further down -- instead of
-                    // one analytic center+radius test. Padded with
-                    // eArcThickness (NOT zero) for the same reason arcs
-                    // need it: a fixed 41-point ring can leave the true
-                    // tangent point sitting in the gap between two
-                    // samples, and testing at zero radius made a
-                    // genuinely-touching circle show no red dot at all
-                    // (every sample individually reading "too far," even
-                    // though the circle really is resting on the line).
-                    // This is what lets BOTH knee and foot show their own
-                    // dots when both are genuinely resting on the ground
-                    // at once, and lets a single circle resting in a
-                    // notch/corner show two separate lit-up clusters
-                    // instead of one synthesized "nearest point" that
-                    // could only ever pick one.
-                    PointF circlePts[ARC_SAMPLE_COUNT];
-                    computeCircleSamplePoints(bodyCircles[c].center, bodyCircles[c].radius, circlePts);
-
-                    for (int i = 0; i < ARC_SAMPLE_COUNT; i++)
+                    float ecx, ecy;
+                    robotPointToEnvWorld(bodyCircles[c].center.x, bodyCircles[c].center.y, &ecx, &ecy);
+                    float eRadius = robotLengthToEnvWorld(bodyCircles[c].radius);
+                    float dirX, dirY;
+                    BOOL hit = circleVisuallyContactsEnvironmentStroke(ecx, ecy, eRadius, &dirX, &dirY);
+                    // Colliding points draw noticeably BIGGER (2.5x), not just
+                    // a different color -- a same-size color swap on an
+                    // already-small marker is easy to miss at a glance,
+                    // especially sitting right at ground contact where the
+                    // environment's own line is drawn close by. Size is the
+                    // primary signal here; color is secondary. On a hit this
+                    // now also draws ON THE CIRCUMFERENCE, at the true
+                    // contact point (same fix as drawSimulationLiveContactDots'
+                    // own knee/foot loop) instead of at the circle's center --
+                    // this overlay defaults to on (showContactDebug = TRUE),
+                    // so it was the actual dot being seen at the center, not
+                    // the live-dot renderer's already-fixed one. The miss dot
+                    // still draws at the center since there's no single
+                    // meaningful "contact point" to show when nothing is
+                    // actually touching.
+                    float markerX = bodyCircles[c].center.x;
+                    float markerY = bodyCircles[c].center.y;
+                    if (hit)
                     {
-                        float ecx, ecy;
-                        robotPointToEnvWorld(circlePts[i].x, circlePts[i].y, &ecx, &ecy);
-                        BOOL hit = pointVisuallyContactsEnvironmentStroke(ecx, ecy, eArcThickness);
-                        drawMarkerDisc(circlePts[i].x, circlePts[i].y, hit ? smallDotRadius * 3.0f : smallDotRadius,
-                                       hit ? 0.95f : 0.15f, hit ? 0.15f : 0.85f, 0.15f, hit ? 1.0f : 0.7f);
-                        if (logThisPass) { dbgPointCount++; if (hit) dbgHitCount++; }
+                        markerX += dirX * bodyCircles[c].radius;
+                        markerY += dirY * bodyCircles[c].radius;
                     }
+                    drawMarkerDisc(markerX, markerY, hit ? dotRadius * 2.5f : dotRadius,
+                                   hit ? 0.95f : 0.15f, hit ? 0.15f : 0.85f, 0.15f, hit ? 1.0f : 0.9f);
+                    if (logThisPass) { dbgPointCount++; if (hit) dbgHitCount++; }
                 }
 
                 PointF arcPts[NUM_ROCKY_CIRCLE_SEGMENTS][ARC_SAMPLE_COUNT];
@@ -1414,22 +1387,21 @@ static void drawSimulationLiveContactDots(void)
                     robotPointToEnvWorld(bodyCircles[c].center.x, bodyCircles[c].center.y, &ecx, &ecy);
                     float eRadius = robotLengthToEnvWorld(bodyCircles[c].radius);
 
-                    // EXACT test (findCircleContactDirections), not the
-                    // debug overlay's sampled ring above -- this renderer
-                    // is always on, so it can't afford the sampled ring's
-                    // discretization gap (a fixed 41-point ring can leave
-                    // the true tangent point sitting between two samples,
-                    // making a genuinely-touching circle show NO dot at
-                    // all). Finds every distinct contact this circle
-                    // actually has (handles knee+foot both touching at
-                    // once, and a single circle touching in two places)
-                    // with zero discretization error at any zoom.
-                    float contactDirX[MAX_CIRCLE_CONTACT_POINTS], contactDirY[MAX_CIRCLE_CONTACT_POINTS];
-                    int contactCount = findCircleContactDirections(ecx, ecy, eRadius, contactDirX, contactDirY, MAX_CIRCLE_CONTACT_POINTS);
-                    for (int k = 0; k < contactCount; k++)
+                    // Same "was drawn at the shape's own reference point
+                    // instead of the true contact point" bug the
+                    // rectangle edges had, just for a circle instead of
+                    // an edge -- dirX/dirY is the unit direction (env-
+                    // space, but directions survive the robot<->env
+                    // uniform-scale mapping unchanged) from this circle's
+                    // center toward the environment line, so scaling it
+                    // by the circle's own ROBOT-space radius and adding
+                    // it to the ROBOT-space center lands the dot exactly
+                    // on the circumference, at the real contact point.
+                    float dirX, dirY;
+                    if (circleVisuallyContactsEnvironmentStroke(ecx, ecy, eRadius, &dirX, &dirY))
                     {
-                        float rx = bodyCircles[c].center.x + contactDirX[k] * bodyCircles[c].radius;
-                        float ry = bodyCircles[c].center.y + contactDirY[k] * bodyCircles[c].radius;
+                        float rx = bodyCircles[c].center.x + dirX * bodyCircles[c].radius;
+                        float ry = bodyCircles[c].center.y + dirY * bodyCircles[c].radius;
                         drawMarkerDisc(rx, ry, liveContactDotRadius, 0.95f, 0.1f, 0.1f, 1.0f);
                     }
                 }

@@ -327,7 +327,7 @@ static float distPointToSegment(float px, float py, float ax, float ay, float bx
 // caller wants to draw a marker at the contact point, not just test a
 // distance.
 static float closestPointOnSegment(float px, float py, float ax, float ay, float bx, float by,
-                                    float* outX, float* outY, float* outT)
+                                    float* outX, float* outY)
 {
     float dx = bx - ax;
     float dy = by - ay;
@@ -346,7 +346,6 @@ static float closestPointOnSegment(float px, float py, float ax, float ay, float
     float projY = ay + t * dy;
     if (outX) *outX = projX;
     if (outY) *outY = projY;
-    if (outT) *outT = t;
 
     float ddx = px - projX, ddy = py - projY;
     return sqrtf(ddx * ddx + ddy * ddy);
@@ -387,7 +386,7 @@ static BOOL segmentsProperlyIntersect(float p1x, float p1y, float p2x, float p2y
 // before this function replaced that sampling loop entirely).
 static float distSegmentToSegment(float ax0, float ay0, float ax1, float ay1,
                                    float bx0, float by0, float bx1, float by1,
-                                   float* outAX, float* outAY, float* outAT)
+                                   float* outAX, float* outAY)
 {
     if (segmentsProperlyIntersect(ax0, ay0, ax1, ay1, bx0, by0, bx1, by1))
     {
@@ -397,38 +396,36 @@ static float distSegmentToSegment(float ax0, float ay0, float ax1, float ay1,
         // the contact" closely enough.
         if (outAX) *outAX = (ax0 + ax1) * 0.5f;
         if (outAY) *outAY = (ay0 + ay1) * 0.5f;
-        if (outAT) *outAT = 0.5f;
         return 0.0f;
     }
 
-    float bestDist, bestX, bestY, bestT;
+    float bestDist, bestX, bestY;
 
     // A's own endpoints against segment B -- the closest point ON A is
-    // trivially the endpoint itself (t=0 or t=1).
+    // trivially the endpoint itself.
     bestDist = distPointToSegment(ax0, ay0, bx0, by0, bx1, by1);
-    bestX = ax0; bestY = ay0; bestT = 0.0f;
+    bestX = ax0; bestY = ay0;
 
     {
         float d = distPointToSegment(ax1, ay1, bx0, by0, bx1, by1);
-        if (d < bestDist) { bestDist = d; bestX = ax1; bestY = ay1; bestT = 1.0f; }
+        if (d < bestDist) { bestDist = d; bestX = ax1; bestY = ay1; }
     }
 
     // B's endpoints against segment A -- the closest point ON A here is
-    // wherever that endpoint projects onto A, t included.
+    // wherever that endpoint projects onto A.
     {
-        float projX, projY, projT;
-        float d = closestPointOnSegment(bx0, by0, ax0, ay0, ax1, ay1, &projX, &projY, &projT);
-        if (d < bestDist) { bestDist = d; bestX = projX; bestY = projY; bestT = projT; }
+        float projX, projY;
+        float d = closestPointOnSegment(bx0, by0, ax0, ay0, ax1, ay1, &projX, &projY);
+        if (d < bestDist) { bestDist = d; bestX = projX; bestY = projY; }
     }
     {
-        float projX, projY, projT;
-        float d = closestPointOnSegment(bx1, by1, ax0, ay0, ax1, ay1, &projX, &projY, &projT);
-        if (d < bestDist) { bestDist = d; bestX = projX; bestY = projY; bestT = projT; }
+        float projX, projY;
+        float d = closestPointOnSegment(bx1, by1, ax0, ay0, ax1, ay1, &projX, &projY);
+        if (d < bestDist) { bestDist = d; bestX = projX; bestY = projY; }
     }
 
     if (outAX) *outAX = bestX;
     if (outAY) *outAY = bestY;
-    if (outAT) *outAT = bestT;
     return bestDist;
 }
 
@@ -670,21 +667,18 @@ static BOOL pointVisuallyContactsEnvironmentStroke(float ecx, float ecy, float e
 // shape, same as a circle's own surface, so eRadius is always 0.0f here
 // -- see the original per-sample call site's own comment on why edges
 // need zero extra robot-side padding). Exact via distSegmentToSegment,
-// not sampled: replaces what used to be a per-edge point-sampling loop
-// (fixed, then adaptively grown up to a several-thousand-sample safety
-// cap -- see git history for that attempt) with ONE closed-form distance
-// check per environment piece -- both correct at any zoom (no
+// not sampled: replaces what used to be up to SIMULATION_ROCKY_EDGE_MAX_
+// SAMPLES individual point tests along the edge with ONE closed-form
+// distance check per environment piece -- both correct at any zoom (no
 // discretization gap for a fast/long edge to slip through) and far
 // cheaper (a piece is now tested once instead of up to thousands of
-// times). If outT is non-NULL and this returns TRUE, it's filled with
-// the parametric position (0=caller's A start, 1=A's end) of the closest
-// point ON THE CALLER'S EDGE -- callers that only need yes/no
-// (robotCollidesWithEnvironment) pass NULL; callers drawing a contact
-// marker (the live/debug dot overlays) use it to place a single dot
-// exactly where contact is happening, by re-applying this same t to
-// their own robot-space edge endpoints.
+// times). If outNearX/outNearY are non-NULL and this returns TRUE,
+// they're filled with the closest point ON THE ROBOT EDGE -- callers
+// that only need yes/no (robotCollidesWithEnvironment) pass NULL;
+// callers drawing a contact marker (the live/debug dot overlays) use it
+// to place a single dot exactly where contact is happening.
 static BOOL edgeCollidesWithAnyEnvironmentStroke(float ax, float ay, float bx, float by,
-                                                  float eRadius, float* outT)
+                                                  float eRadius, float* outNearX, float* outNearY)
 {
     float envHalfWidth = simEnvLineHalfWidthWorld();
     float combinedRadius = eRadius + envHalfWidth;
@@ -702,22 +696,16 @@ static BOOL edgeCollidesWithAnyEnvironmentStroke(float ax, float ay, float bx, f
             float ex1 = segmentPointsWorld[(start + (i + 1)) * 2];
             float ey1 = segmentPointsWorld[(start + (i + 1)) * 2 + 1];
 
-            float t;
-            float dist = distSegmentToSegment(ax, ay, bx, by, ex0, ey0, ex1, ey1, NULL, NULL, &t);
+            float nearX, nearY;
+            float dist = distSegmentToSegment(ax, ay, bx, by, ex0, ey0, ex1, ey1, &nearX, &nearY);
 
             if (dist < combinedRadius)
             {
                 if (!gSuppressGravityDebug)
                     printf("[COLLIDE] seg=%d line=(%.5f,%.5f)-(%.5f,%.5f) edge=(%.5f,%.5f)-(%.5f,%.5f) dist=%.5f eRadius=%.5f combined=%.5f\n",
                            s, ex0, ey0, ex1, ey1, ax, ay, bx, by, dist, eRadius, combinedRadius);
-                // t is the parametric position (0=A's start, 1=A's end)
-                // of the closest point ON THE CALLER'S EDGE -- handed
-                // back instead of raw env-space coordinates so a caller
-                // that wants to draw a marker in ROBOT-space can just
-                // re-apply this same t to its own robot-space endpoints
-                // (rectEdges[e].start/end) rather than having to invert
-                // the robot<->env world mapping.
-                if (outT) *outT = t;
+                if (outNearX) *outNearX = nearX;
+                if (outNearY) *outNearY = nearY;
                 return TRUE;
             }
         }
@@ -730,9 +718,10 @@ static BOOL edgeCollidesWithAnyEnvironmentStroke(float ax, float ay, float bx, f
 // same reasoning as pointVisuallyContactsEnvironmentStroke just above --
 // display-only, never used by anything that actually moves the robot.
 static BOOL edgeVisuallyContactsEnvironmentStroke(float ax, float ay, float bx, float by,
-                                                   float eRadius, float* outT)
+                                                   float eRadius, float* outNearX, float* outNearY)
 {
-    return edgeCollidesWithAnyEnvironmentStroke(ax, ay, bx, by, eRadius + simContactVisualToleranceWorld(), outT);
+    return edgeCollidesWithAnyEnvironmentStroke(ax, ay, bx, by, eRadius + simContactVisualToleranceWorld(),
+                                                 outNearX, outNearY);
 }
 
 // Debug-only companion to pointCollidesWithAnyEnvironmentStroke: returns
@@ -773,129 +762,6 @@ static float nearestEnvDistance(float ecx, float ecy)
     }
 
     return best; // -1.0f if there are no traced segments at all
-}
-
-// Rocky's knee/foot circles used to be tested as a single analytic point
-// (the circle's own center, radius folded into the collision padding) --
-// exact for a bare yes/no, but for DRAWING it meant synthesizing one
-// "nearest point" direction and hoping it was the only contact. That
-// broke down for exactly the case a resting/settled robot actually hits:
-// the knee AND foot circles can BOTH be genuinely touching the ground at
-// once, and picking a single global "closest point" per circle has no
-// way to represent two separate circles' contacts independently going
-// missing from view, nor a single circle touching in two places (a
-// notch/corner).
-//
-// Used ONLY for the illustrative debug overlay (drawSimulationContactDebug,
-// the 'C'-toggle one) -- samples the circle's own circumference, exactly
-// like Rocky's shin fillet arcs already do (computeRockyArcPoints/
-// ARC_SAMPLE_COUNT), purely so that overlay can show a green/red ring the
-// same way it already shows arcs and rectangle-edge samples. This is
-// NOT used for the real-time indicator (drawSimulationLiveContactDots,
-// see findCircleContactDirections below for that) -- a fixed 41-point
-// ring has the exact same coarse-discretization problem the rectangle
-// edges originally had (see edgeCollidesWithAnyEnvironmentStroke's own
-// comment): a genuinely tangent contact point can fall in the gap
-// between two adjacent samples, at high zoom, with EVERY sample reading
-// as "too far," which is why callers must pad each sample's own test
-// with eArcThickness (the same forgiving stand-in thickness arcs already
-// use for exactly this reason), not test them at zero radius.
-static void computeCircleSamplePoints(PointF center, float radius, PointF outPts[ARC_SAMPLE_COUNT])
-{
-    for (int i = 0; i < ARC_SAMPLE_COUNT; i++)
-    {
-        float theta = (2.0f * 3.14159265f * i) / ARC_SAMPLE_COUNT;
-        outPts[i].x = center.x + radius * cosf(theta);
-        outPts[i].y = center.y + radius * sinf(theta);
-    }
-}
-
-// Max distinct simultaneous contact points findCircleContactDirections
-// (below) will ever report for one circle -- a robot's leg circle only
-// realistically touches a small handful of separate places at once (a
-// V-shaped notch is 2; more than that would mean an extremely jagged
-// hand-drawn environment), so this is a generous cap, not a tuned limit.
-#define MAX_CIRCLE_CONTACT_POINTS 4
-
-// EXACT (no sampling, no discretization gap at any zoom) counterpart to
-// computeCircleSamplePoints, used by the always-on live-dot renderer
-// (drawSimulationLiveContactDots) where reliability matters more than
-// illustrative detail. Walks every environment piece directly and groups
-// consecutive in-range pieces (within combinedRadius -- eRadius here is
-// the circle's OWN real radius, same padding formula
-// pointCollidesWithAnyEnvironmentStroke and its visual-tolerance wrapper
-// use) into one "run" per stroke -- an ORDINARY single contact against a
-// long or gently curved line, in-range across many consecutive pieces,
-// still collapses to exactly one reported point (a run only ends when a
-// piece goes OUT of range, or the pieces belong to a different traced
-// stroke); only a genuinely separate contact area starts a second run.
-// Each run contributes its own single closest point. Returns the number
-// of contacts found (0 if none), filling up to maxContacts slots in
-// outDirX/outDirY with unit directions from (ecx,ecy) toward each
-// contact point, so the caller can place each dot by re-applying that
-// direction, scaled by the shape's OWN robot-space radius, to its own
-// robot-space center -- same reasoning already used for the rectangle
-// edges' parametric t.
-static int findCircleContactDirections(float ecx, float ecy, float eRadius,
-                                        float outDirX[], float outDirY[], int maxContacts)
-{
-    float combinedRadius = eRadius + simContactVisualToleranceWorld() + simEnvLineHalfWidthWorld();
-    int count = 0;
-
-    for (int s = 0; s < canvas.segmentResultCount && count < maxContacts; s++)
-    {
-        int start = segmentStarts[s];
-        int pieceCount = segmentCounts[s];
-        if (pieceCount < 2) continue;
-
-        BOOL inRun = FALSE;
-        float bestDist = 0.0f, bestX = 0.0f, bestY = 0.0f;
-
-        for (int i = 0; i < pieceCount - 1; i++)
-        {
-            float ax = segmentPointsWorld[(start + i) * 2];
-            float ay = segmentPointsWorld[(start + i) * 2 + 1];
-            float bx = segmentPointsWorld[(start + (i + 1)) * 2];
-            float by = segmentPointsWorld[(start + (i + 1)) * 2 + 1];
-
-            float px, py;
-            float dist = closestPointOnSegment(ecx, ecy, ax, ay, bx, by, &px, &py, NULL);
-
-            if (dist < combinedRadius)
-            {
-                if (!inRun || dist < bestDist)
-                {
-                    bestDist = dist;
-                    bestX = px;
-                    bestY = py;
-                }
-                inRun = TRUE;
-            }
-            else if (inRun)
-            {
-                if (count < maxContacts)
-                {
-                    float dx = bestX - ecx, dy = bestY - ecy;
-                    float len = sqrtf(dx * dx + dy * dy);
-                    outDirX[count] = (len > 1e-6f) ? dx / len : 0.0f;
-                    outDirY[count] = (len > 1e-6f) ? dy / len : -1.0f;
-                    count++;
-                }
-                inRun = FALSE;
-            }
-        }
-
-        if (inRun && count < maxContacts)
-        {
-            float dx = bestX - ecx, dy = bestY - ecy;
-            float len = sqrtf(dx * dx + dy * dy);
-            outDirX[count] = (len > 1e-6f) ? dx / len : 0.0f;
-            outDirY[count] = (len > 1e-6f) ? dy / len : -1.0f;
-            count++;
-        }
-    }
-
-    return count;
 }
 
 // TRUE if any of the robot's 5 body circles (head/butt/hip/knee/foot --
@@ -999,33 +865,60 @@ static BOOL robotCollidesWithEnvironment(void)
                 RockyEdgeSegment rectEdges[NUM_ROCKY_RECT_SEGMENTS];
                 computeRockyRectSegments(app.robotScene.rocky, rectEdges);
 
-                // Was a per-edge point-sampling loop (ARC_SAMPLE_COUNT,
-                // later grown adaptively -- see git history/backups for
-                // that attempt's own comment) -- both versions could,
-                // even at their densest, only ever narrow the odds of a
-                // fast/long edge slipping through a thinned-out collision
-                // band between two samples, never fully rule it out, and
-                // the adaptive version's sample counts (needed to even
-                // approach "fully ruled out" at high sim-camera zoom)
-                // made this the single most expensive check in the whole
-                // gravity tick -- visible as real lag once the sample
-                // count climbed into the hundreds or thousands per edge,
-                // computed up to GRAVITY_CONTACT_SEARCH_ITERATIONS times
-                // per tick. A straight robot edge and a straight
-                // environment line piece are both plain line segments,
-                // so their true minimum distance has an exact closed-form
-                // answer (edgeCollidesWithAnyEnvironmentStroke) -- zero
-                // sampling, zero discretization gap at ANY zoom, and each
-                // environment piece is now tested exactly once instead of
-                // up to thousands of times.
+                // ARC_SAMPLE_COUNT (41) points spread across a WHOLE edge
+                // (which can be long -- Rocky's full body height/width)
+                // leaves consecutive samples spaced roughly edgeLength/40
+                // apart. simEnvLineHalfWidthWorld's own comment explains
+                // its collision band SHRINKS in world units as sim-camera
+                // zoom increases (it's held to a constant size in SCREEN
+                // pixels instead) -- so at high enough zoom, that fixed
+                // spacing ends up LARGER than the band's own width, and
+                // the true continuous edge can pass straight through the
+                // line, undetected, between two samples that each land
+                // just outside the band on opposite sides. That's a real,
+                // reproducible way for "the rectangle passes through the
+                // ground line" to happen with NO rotation and NO oversized
+                // gravity step at all -- just an edge long enough, and a
+                // line thin enough, for 41 fixed samples to under-cover
+                // it. Growing the sample count here so consecutive
+                // spacing always stays under the CURRENT band width (not
+                // just using a bigger fixed constant, since halfW itself
+                // keeps shrinking the more you zoom in) closes that gap
+                // at any zoom, up to SIMULATION_ROCKY_EDGE_MAX_SAMPLES'
+                // own safety cap (see its comment for why one exists).
+                float halfW = simEnvLineHalfWidthWorld();
+
                 for (int e = 0; e < NUM_ROCKY_RECT_SEGMENTS; e++)
                 {
-                    float esx, esy, eex, eey;
-                    robotPointToEnvWorld(rectEdges[e].start.x, rectEdges[e].start.y, &esx, &esy);
-                    robotPointToEnvWorld(rectEdges[e].end.x, rectEdges[e].end.y, &eex, &eey);
+                    float dx = rectEdges[e].end.x - rectEdges[e].start.x;
+                    float dy = rectEdges[e].end.y - rectEdges[e].start.y;
+                    float edgeLenWorld = robotLengthToEnvWorld(sqrtf(dx * dx + dy * dy));
 
-                    if (edgeCollidesWithAnyEnvironmentStroke(esx, esy, eex, eey, 0.0f, NULL))
-                        return TRUE;
+                    int sampleCount = ARC_SAMPLE_COUNT;
+                    if (halfW > 0.0f)
+                    {
+                        // +2 (not +1): asks for enough INTERVALS that each
+                        // one is comfortably under halfW, not just equal
+                        // to it -- a spacing exactly equal to the band
+                        // width can still slip through right at its edge.
+                        int needed = (int)(edgeLenWorld / halfW) + 2;
+                        if (needed > sampleCount) sampleCount = needed;
+                    }
+                    if (sampleCount > SIMULATION_ROCKY_EDGE_MAX_SAMPLES)
+                        sampleCount = SIMULATION_ROCKY_EDGE_MAX_SAMPLES;
+
+                    for (int i = 0; i < sampleCount; i++)
+                    {
+                        float t = (float)i / (float)(sampleCount - 1);
+                        float lx = rectEdges[e].start.x + dx * t;
+                        float ly = rectEdges[e].start.y + dy * t;
+
+                        float ecx, ecy;
+                        robotPointToEnvWorld(lx, ly, &ecx, &ecy);
+
+                        if (pointCollidesWithAnyEnvironmentStroke(ecx, ecy, 0.0f))
+                            return TRUE;
+                    }
                 }
             }
 
@@ -1197,35 +1090,19 @@ static void drawSimulationContactDebug(void)
 
                 for (int c = 0; c < NUM_ROCKY_BODY_CIRCLES; c++)
                 {
-                    // Sampled around the circle's own circumference --
-                    // same idea as the arc points just below and the
-                    // rectangle-edge samples further down -- instead of
-                    // one analytic center+radius test. Padded with
-                    // eArcThickness (NOT zero) for the same reason arcs
-                    // need it: a fixed 41-point ring can leave the true
-                    // tangent point sitting in the gap between two
-                    // samples, and testing at zero radius made a
-                    // genuinely-touching circle show no red dot at all
-                    // (every sample individually reading "too far," even
-                    // though the circle really is resting on the line).
-                    // This is what lets BOTH knee and foot show their own
-                    // dots when both are genuinely resting on the ground
-                    // at once, and lets a single circle resting in a
-                    // notch/corner show two separate lit-up clusters
-                    // instead of one synthesized "nearest point" that
-                    // could only ever pick one.
-                    PointF circlePts[ARC_SAMPLE_COUNT];
-                    computeCircleSamplePoints(bodyCircles[c].center, bodyCircles[c].radius, circlePts);
-
-                    for (int i = 0; i < ARC_SAMPLE_COUNT; i++)
-                    {
-                        float ecx, ecy;
-                        robotPointToEnvWorld(circlePts[i].x, circlePts[i].y, &ecx, &ecy);
-                        BOOL hit = pointVisuallyContactsEnvironmentStroke(ecx, ecy, eArcThickness);
-                        drawMarkerDisc(circlePts[i].x, circlePts[i].y, hit ? smallDotRadius * 3.0f : smallDotRadius,
-                                       hit ? 0.95f : 0.15f, hit ? 0.15f : 0.85f, 0.15f, hit ? 1.0f : 0.7f);
-                        if (logThisPass) { dbgPointCount++; if (hit) dbgHitCount++; }
-                    }
+                    float ecx, ecy;
+                    robotPointToEnvWorld(bodyCircles[c].center.x, bodyCircles[c].center.y, &ecx, &ecy);
+                    float eRadius = robotLengthToEnvWorld(bodyCircles[c].radius);
+                    BOOL hit = pointVisuallyContactsEnvironmentStroke(ecx, ecy, eRadius);
+                    // Colliding points draw noticeably BIGGER (2.5x), not just
+                    // a different color -- a same-size color swap on an
+                    // already-small marker is easy to miss at a glance,
+                    // especially sitting right at ground contact where the
+                    // environment's own line is drawn close by. Size is the
+                    // primary signal here; color is secondary.
+                    drawMarkerDisc(bodyCircles[c].center.x, bodyCircles[c].center.y, hit ? dotRadius * 2.5f : dotRadius,
+                                   hit ? 0.95f : 0.15f, hit ? 0.15f : 0.85f, 0.15f, hit ? 1.0f : 0.9f);
+                    if (logThisPass) { dbgPointCount++; if (hit) dbgHitCount++; }
                 }
 
                 PointF arcPts[NUM_ROCKY_CIRCLE_SEGMENTS][ARC_SAMPLE_COUNT];
@@ -1413,25 +1290,8 @@ static void drawSimulationLiveContactDots(void)
                     float ecx, ecy;
                     robotPointToEnvWorld(bodyCircles[c].center.x, bodyCircles[c].center.y, &ecx, &ecy);
                     float eRadius = robotLengthToEnvWorld(bodyCircles[c].radius);
-
-                    // EXACT test (findCircleContactDirections), not the
-                    // debug overlay's sampled ring above -- this renderer
-                    // is always on, so it can't afford the sampled ring's
-                    // discretization gap (a fixed 41-point ring can leave
-                    // the true tangent point sitting between two samples,
-                    // making a genuinely-touching circle show NO dot at
-                    // all). Finds every distinct contact this circle
-                    // actually has (handles knee+foot both touching at
-                    // once, and a single circle touching in two places)
-                    // with zero discretization error at any zoom.
-                    float contactDirX[MAX_CIRCLE_CONTACT_POINTS], contactDirY[MAX_CIRCLE_CONTACT_POINTS];
-                    int contactCount = findCircleContactDirections(ecx, ecy, eRadius, contactDirX, contactDirY, MAX_CIRCLE_CONTACT_POINTS);
-                    for (int k = 0; k < contactCount; k++)
-                    {
-                        float rx = bodyCircles[c].center.x + contactDirX[k] * bodyCircles[c].radius;
-                        float ry = bodyCircles[c].center.y + contactDirY[k] * bodyCircles[c].radius;
-                        drawMarkerDisc(rx, ry, liveContactDotRadius, 0.95f, 0.1f, 0.1f, 1.0f);
-                    }
+                    if (pointVisuallyContactsEnvironmentStroke(ecx, ecy, eRadius))
+                        drawMarkerDisc(bodyCircles[c].center.x, bodyCircles[c].center.y, liveContactDotRadius, 0.95f, 0.1f, 0.1f, 1.0f);
                 }
 
                 PointF arcPts[NUM_ROCKY_CIRCLE_SEGMENTS][ARC_SAMPLE_COUNT];
@@ -1455,39 +1315,18 @@ static void drawSimulationLiveContactDots(void)
                 RockyEdgeSegment rectEdges[NUM_ROCKY_RECT_SEGMENTS];
                 computeRockyRectSegments(app.robotScene.rocky, rectEdges);
 
-                // Was a per-edge ARC_SAMPLE_COUNT point-sampling loop --
-                // this runs EVERY FRAME, unconditionally, so it was both
-                // the main source of the occasional dropped/missing red
-                // dot (a thin collision band at high zoom could fall
-                // between two fixed samples, same bug as
-                // robotCollidesWithEnvironment's own -- see that
-                // function's comment) AND, if grown denser to fix that,
-                // a real per-frame cost. edgeVisuallyContactsEnvironmentStroke
-                // is exact (no sampling at any zoom) and hands back the
-                // one true closest point on this edge, so this now draws
-                // at most a single, always-correctly-placed dot per edge
-                // instead of looping over many candidate points hoping
-                // one of them landed close enough.
                 for (int e = 0; e < NUM_ROCKY_RECT_SEGMENTS; e++)
                 {
-                    float esx, esy, eex, eey;
-                    robotPointToEnvWorld(rectEdges[e].start.x, rectEdges[e].start.y, &esx, &esy);
-                    robotPointToEnvWorld(rectEdges[e].end.x, rectEdges[e].end.y, &eex, &eey);
-
-                    // t comes back as the parametric position (0=start,
-                    // 1=end) of the closest point along THIS edge -- the
-                    // robot<->env mapping is affine (see
-                    // robotPointToEnvWorld's own comment), so re-applying
-                    // the same t to the ORIGINAL robot-space endpoints
-                    // lands exactly on the matching robot-space point,
-                    // with no inverse transform (and no risk of dividing
-                    // by a near-zero axis on an axis-aligned edge) needed.
-                    float t;
-                    if (edgeVisuallyContactsEnvironmentStroke(esx, esy, eex, eey, 0.0f, &t))
+                    for (int i = 0; i < ARC_SAMPLE_COUNT; i++)
                     {
-                        float rx = rectEdges[e].start.x + (rectEdges[e].end.x - rectEdges[e].start.x) * t;
-                        float ry = rectEdges[e].start.y + (rectEdges[e].end.y - rectEdges[e].start.y) * t;
-                        drawMarkerDisc(rx, ry, liveContactDotRadius, 0.95f, 0.1f, 0.1f, 1.0f);
+                        float t = (float)i / (float)(ARC_SAMPLE_COUNT - 1);
+                        float lx = rectEdges[e].start.x + (rectEdges[e].end.x - rectEdges[e].start.x) * t;
+                        float ly = rectEdges[e].start.y + (rectEdges[e].end.y - rectEdges[e].start.y) * t;
+
+                        float ecx, ecy;
+                        robotPointToEnvWorld(lx, ly, &ecx, &ecy);
+                        if (pointVisuallyContactsEnvironmentStroke(ecx, ecy, 0.0f))
+                            drawMarkerDisc(lx, ly, liveContactDotRadius, 0.95f, 0.1f, 0.1f, 1.0f);
                     }
                 }
             }
