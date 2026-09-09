@@ -4787,16 +4787,28 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
                     printf("[LEGPUSH] kneeAngle=%.2f pushed body up by %.5f to keep the leg clear\n",
                            r->kneeAngle, clear);
 
-                    // Re-arming rockySettleConverged/both step sizes (a
-                    // real report showed the body ending up visibly
-                    // floating after a long run of E/Q presses -- see the
-                    // unconditional kickoff below this whole if/else for
-                    // the full reasoning) and actually starting the
-                    // settle/topple driver now happen unconditionally
-                    // after this if/else, not just here in the LEGPUSH
-                    // branch -- a knee rotation that never collides with
-                    // anything can still leave the robot unstable, so it
-                    // needs the same check every other outcome gets too.
+                    // Re-arm advanceRockySettle -- a real report showed
+                    // the body ending up visibly floating after a long
+                    // run of E/Q presses, each individually a small
+                    // necessary lift, none of them ever given back. The
+                    // reason: this lift keeps the body just barely clear
+                    // (same as a normal resting contact), so gravity's own
+                    // wasLanded/suppressThisCall bookkeeping in
+                    // applyGravityStep never sees a fresh "was airborne,
+                    // now landed" transition here -- it just looks like
+                    // the SAME landing continuing -- so rockySettleConverged
+                    // (already TRUE from settling once before) is never
+                    // reset, and advanceRockySettle keeps a no-op return
+                    // forever after, leaving every one of these small
+                    // pushes permanently un-settled. Resetting both flags
+                    // right here, the same way a fresh landing does,
+                    // means the very next gravity tick (auto-gravity's
+                    // timer, or a plain G press) gets a full-resolution
+                    // settle pass that can pull the body back down as far
+                    // as this new knee angle actually allows.
+                    rockySettleConverged = FALSE;
+                    rockyKneeSettleStep = SIMULATION_LEG_SETTLE_STEP_DEG;
+                    rockyBodySettleStep = SIMULATION_BODY_SETTLE_STEP_DEG;
                 }
                 else
                 {
@@ -4830,31 +4842,6 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
                            (float)SIMULATION_LEG_PUSH_SEARCH_MAX, r->kneeAngle);
                 }
             }
-
-            // Kick off a topple check after EVERY E/Q knee rotation, not
-            // just the LEGPUSH case above -- a rotation that changes the
-            // leg's geometry without ever colliding with anything can
-            // still leave the robot's center of mass somewhere it can no
-            // longer actually balance (straightening the leg into more
-            // of a "standing" pose shifts weight forward/back over the
-            // foot, for instance), and until now nothing re-checked that
-            // on its own: rockySettleConverged getting reset only re-arms
-            // advanceRockySettle's OWN probes for the next time something
-            // else calls applyGravityStep, it doesn't make anything call
-            // it -- so a robot left unstable by E/Q just sat there frozen
-            // until the user manually pressed G or already had Auto
-            // Gravity on. Same kickoff VK_LEFT/RIGHT's own WM_KEYUP uses
-            // (see advancePostRotateSettle's own comment for the full
-            // reasoning) -- re-arm first, exactly like that handler does
-            // and for the same reason (a robot that had already fully
-            // settled before this rotate would otherwise leave
-            // rockySettleConverged still TRUE and the driver would just
-            // no-op forever), then start the actual driver.
-            rockySettleConverged = FALSE;
-            rockyKneeSettleStep = SIMULATION_LEG_SETTLE_STEP_DEG;
-            rockyBodySettleStep = SIMULATION_BODY_SETTLE_STEP_DEG;
-            postRotateSettleActive = TRUE;
-            SetTimer(hWnd, AUTO_GRAVITY_TIMER_ID, SIMULATION_AUTO_GRAVITY_INTERVAL_MS, NULL);
 
             // Re-arm the [CONTACT] one-shot dump (see drawSimulationContactDebug)
             // so the very next paint prints a fresh point/hit count reflecting
