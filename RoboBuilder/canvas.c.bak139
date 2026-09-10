@@ -4918,13 +4918,7 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             // no-op forever), then start the actual driver.
             rockySettleConverged = FALSE;
             rockyKneeSettleStep = SIMULATION_LEG_SETTLE_STEP_DEG;
-            // Deliberately finer than VK_LEFT/RIGHT's own kickoff below uses
-            // -- see SIMULATION_BODY_SETTLE_STEP_AFTER_KNEE_DEG's own comment
-            // for why: at the full-size step, Probe 2 was snapping the whole
-            // rectangle a full degree for even a thousandth-of-a-unit gain,
-            // which is what read as the body jumping right after an
-            // otherwise smooth E/Q knee rotation.
-            rockyBodySettleStep = SIMULATION_BODY_SETTLE_STEP_AFTER_KNEE_DEG;
+            rockyBodySettleStep = SIMULATION_BODY_SETTLE_STEP_DEG;
             rockyKneeSettleSuppressed = TRUE; // see its own comment -- don't let Probe 1 fight this E/Q press
             postRotateSettleActive = TRUE;
             SetTimer(hWnd, AUTO_GRAVITY_TIMER_ID, SIMULATION_AUTO_GRAVITY_INTERVAL_MS, NULL);

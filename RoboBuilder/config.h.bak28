@@ -728,25 +728,6 @@
 #define SIMULATION_LEG_SETTLE_STEP_DEG 1.0f
 #define SIMULATION_BODY_SETTLE_STEP_DEG 1.0f
 
-// Body-rotate probe's STARTING step size specifically after an E/Q knee
-// press (canvas.c's WM_KEYDOWN kickoff), instead of the full
-// SIMULATION_BODY_SETTLE_STEP_DEG above -- a real report showed that
-// full-size step committing after nearly every single E/Q press, even
-// when the pose was barely (if at all) genuinely unstable: the "did this
-// help" test only checks bestDrop > SIMULATION_LEG_SETTLE_MIN_DROP
-// (0.001f, deliberately tiny -- see its own comment), and ordinary
-// binary-search noise from any knee-angle change routinely clears that
-// bar, so the probe would confidently commit a full one-degree snap of
-// the WHOLE rectangle for a gain as small as a thousandth of a unit --
-// read as the body visibly "jumping" right after an otherwise smooth
-// knee rotation. Starting this probe an order of magnitude finer after
-// E/Q specifically (VK_LEFT/RIGHT's own kickoff still uses the full-size
-// step, unchanged) means the very same tiny noise-level "improvement"
-// only ever commits a proportionally tiny, effectively invisible nudge;
-// a genuinely unstable pose still topples just as surely, it just
-// accumulates over more, smaller ticks instead of one visible pop.
-#define SIMULATION_BODY_SETTLE_STEP_AFTER_KNEE_DEG 0.1f
-
 // The smallest drop advanceRockySettle will actually treat as "this step
 // helped." dropActiveRobotToRest's own binary search (GRAVITY_CONTACT_
 // SEARCH_ITERATIONS above) only converges to within roughly 1/2^12 of
