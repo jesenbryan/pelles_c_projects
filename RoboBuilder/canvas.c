@@ -127,7 +127,7 @@ static void HideUIPanelImmediately(void)
 
 // Environment autosave (Feature: whatever is drawn in the Environment
 // design layer is saved automatically, so closing and reopening the app
-// restores the last drawn environment). Distinct from the EnvExport\
+// restores the last drawn environment). Distinct from the EnvExport
 // Env.txt/Env.bmp files File > Save writes (env_export.c's
 // saveEnvironmentSegmentsAsTxt) -- those are a lossy, SCALED arc-fit
 // export meant for an external consumer to read, not a faithful
