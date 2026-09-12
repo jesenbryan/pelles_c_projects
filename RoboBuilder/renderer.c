@@ -2551,6 +2551,55 @@ void renderAppForSave(AppState* app)
     renderRobot(app, 0, 1.0f);
 }
 
+// Simulation mode's center-of-mass indicator: a small solid green arrow
+// pointing straight down, its tip sitting exactly at `tip` (the active
+// robot kind's own mass center, see the dispatch in renderRobotScene
+// below). Deliberately its own distinct green from drawRockyMassCenterMarker's
+// handle-convention green above -- this isn't a draggable handle, just a
+// read-only marker, so there's no hover/active state to color for.
+static void drawSimulationMassCenterArrow(PointF tip, float opacity)
+{
+    float shaftTopY    = tip.y + SIM_MASS_CENTER_ARROW_LENGTH;
+    float shaftBottomY = tip.y + SIM_MASS_CENTER_ARROW_HEAD_SIZE * 0.9f; // stop just shy of the arrowhead's base so the shaft and head don't visibly overlap/double up on alpha
+
+    glColor4f(0.15f, 0.75f, 0.2f, opacity);
+
+    glLineWidth(2.0f);
+    glBegin(GL_LINES);
+        glVertex2f(tip.x, shaftTopY);
+        glVertex2f(tip.x, shaftBottomY);
+    glEnd();
+    glLineWidth(1.0f);
+
+    float headHalfWidth = SIM_MASS_CENTER_ARROW_HEAD_SIZE * 0.5f;
+    glBegin(GL_TRIANGLES);
+        glVertex2f(tip.x, tip.y);                                                    // point, exactly at the mass center
+        glVertex2f(tip.x - headHalfWidth, tip.y + SIM_MASS_CENTER_ARROW_HEAD_SIZE);   // base, left
+        glVertex2f(tip.x + headHalfWidth, tip.y + SIM_MASS_CENTER_ARROW_HEAD_SIZE);   // base, right
+    glEnd();
+}
+
+// Dispatches to whichever robot kind is currently active (app->robotScene.
+// activeKind) to find where ITS mass center currently is -- reusing the
+// exact same compute*MassCenterWorld functions that already drive each
+// kind's draggable Design-mode mass-center handle (computeSemniMassCenterWorld/
+// computeRockyMassCenterWorld/computeStiloMassCenterWorld, all above), so
+// the Simulation-mode arrow can never disagree with whatever Design mode
+// itself considers the mass center to be.
+static PointF computeSimulationMassCenterWorld(AppState* app)
+{
+    switch (app->robotScene.activeKind)
+    {
+        case ROBOT_KIND_ROCKY:
+            return computeRockyMassCenterWorld(app->robotScene.rocky);
+        case ROBOT_KIND_STILO:
+            return computeStiloMassCenterWorld(app->robotScene.stilo);
+        case ROBOT_KIND_SEMNI:
+        default:
+            return computeSemniMassCenterWorld(app->robotScene.robot);
+    }
+}
+
 // Draws the live robot scene (with handles) into whatever's already in the
 // color buffer -- no clear, no swap -- so main.c/canvas.c's
 // renderCombinedFrame can composite it alongside the ArcSpline canvas in
@@ -2588,6 +2637,18 @@ void renderRobotScene(AppState* app, float dimAmount)
         drawDashedHorizontalLine(GROUND_LINE_DESIGN_Y, opacity);
 
     renderRobot(app, 1, opacity);
+
+    // Simulation mode: small green downward-pointing arrow marking the
+    // active robot's (approximate) current center of mass -- see
+    // computeSimulationMassCenterWorld/drawSimulationMassCenterArrow above.
+    // Gated on appMode (not editorModeState.currentMode) since it's
+    // meaningful specifically in Simulation, unlike the ground line/size
+    // box below, which are Design > Robot editing aids.
+    if (appMode == APP_MODE_SIMULATION)
+    {
+        PointF massCenter = computeSimulationMassCenterWorld(app);
+        drawSimulationMassCenterArrow(massCenter, opacity);
+    }
 
     // Real-world-size bounding box overlay while the "Robot Size" slider
     // is being (or was just) dragged -- see drawRobotSizeBox's own

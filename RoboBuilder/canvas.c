@@ -18,6 +18,7 @@
 #include <string.h>
 #include <stdlib.h>        // For wcstod (Rocky's Body/Leg Weight edit boxes, read in ID_SAVE below)
 #include <wchar.h>
+#include <stdio.h>         // For fopen/fprintf/fscanf -- Environment autosave (saveEnvironmentAutosave/loadEnvironmentAutosave below)
 
 HWND hWndGL = NULL;
 int glWindowWidth = 800;
@@ -124,6 +125,104 @@ static void HideUIPanelImmediately(void)
     hotZoneHighlighted = FALSE;
 }
 
+// Environment autosave (Feature: whatever is drawn in the Environment
+// design layer is saved automatically, so closing and reopening the app
+// restores the last drawn environment). Distinct from the EnvExport\
+// Env.txt/Env.bmp files File > Save writes (env_export.c's
+// saveEnvironmentSegmentsAsTxt) -- those are a lossy, SCALED arc-fit
+// export meant for an external consumer to read, not a faithful
+// round-trippable copy of the raw strokes. This instead dumps the exact
+// raw stroke data (strokeStarts/strokeThickness/strokeColor/strokeLayer/
+// points) needed to reconstruct canvas's drawing state byte-for-byte, in
+// canvas.c's own native (unscaled) world units.
+//
+// Written to Autosave\Environment.txt, its own top-level folder separate
+// from EnvExport/RockyExport/etc, so it's obviously not one of the
+// exported files meant for another program to read -- it's this app's own
+// internal save-state.
+#define ENV_AUTOSAVE_FOLDER "Autosave"
+#define ENV_AUTOSAVE_PATH   "Autosave\\Environment.txt"
+
+// Writes the CURRENT drawing (every stroke/point in strokeStarts/
+// strokeThickness/strokeColor/strokeLayer/points) to ENV_AUTOSAVE_PATH.
+// Called automatically whenever the drawing actually changes (WM_LBUTTONUP
+// finishing a stroke, ResetCanvas clearing everything) rather than only on
+// an explicit File > Save, so the app can restore whatever was last drawn
+// even if it's closed without ever touching File > Save.
+static void saveEnvironmentAutosave(void)
+{
+    CreateDirectoryA(ENV_AUTOSAVE_FOLDER, NULL);
+
+    FILE* f = fopen(ENV_AUTOSAVE_PATH, "w");
+    if (!f) return; // best-effort -- a failed autosave shouldn't interrupt drawing
+
+    fprintf(f, "%d\n", canvas.strokeCount);
+    for (int s = 0; s < canvas.strokeCount; s++)
+    {
+        fprintf(f, "%d %.6f %lu %d\n", strokeStarts[s], strokeThickness[s],
+                (unsigned long)strokeColor[s], (int)strokeLayer[s]);
+    }
+
+    fprintf(f, "%d\n", canvas.pointCount);
+    for (int i = 0; i < canvas.pointCount; i += 2)
+        fprintf(f, "%.6f %.6f\n", points[i], points[i + 1]);
+
+    fclose(f);
+}
+
+// Restores whatever saveEnvironmentAutosave last wrote, straight into the
+// same strokeStarts/strokeThickness/strokeColor/strokeLayer/points/canvas
+// state it was read from -- called once, from WM_CREATE, right as the app
+// starts up. If ENV_AUTOSAVE_PATH doesn't exist yet (first ever launch) or
+// is malformed/truncated, this just leaves the canvas in its normal empty
+// startup state instead of partially applying a corrupt read -- every
+// early-return below happens BEFORE canvas.strokeCount/pointCount are
+// ever touched, so a bad file can't leave the canvas in a half-loaded,
+// inconsistent state.
+static void loadEnvironmentAutosave(void)
+{
+    FILE* f = fopen(ENV_AUTOSAVE_PATH, "r");
+    if (!f) return;
+
+    int strokeCountRead = 0;
+    if (fscanf(f, "%d", &strokeCountRead) != 1) { fclose(f); return; }
+    if (strokeCountRead < 0) strokeCountRead = 0;
+    if (strokeCountRead > MAX_STROKES) strokeCountRead = MAX_STROKES;
+
+    for (int s = 0; s < strokeCountRead; s++)
+    {
+        int start, layer;
+        float thick;
+        unsigned long colorVal;
+        if (fscanf(f, "%d %f %lu %d", &start, &thick, &colorVal, &layer) != 4) { fclose(f); return; }
+        strokeStarts[s] = start;
+        strokeThickness[s] = thick;
+        strokeColor[s] = (COLORREF)colorVal;
+        strokeLayer[s] = (DesignLayer)layer;
+    }
+
+    int pointCountRead = 0;
+    if (fscanf(f, "%d", &pointCountRead) != 1) { fclose(f); return; }
+    if (pointCountRead < 0) pointCountRead = 0;
+    if (pointCountRead > MAX_POINTS) pointCountRead = MAX_POINTS;
+
+    for (int i = 0; i < pointCountRead; i += 2)
+    {
+        float x, y;
+        if (fscanf(f, "%f %f", &x, &y) != 2) { fclose(f); return; }
+        points[i] = x;
+        points[i + 1] = y;
+    }
+
+    fclose(f);
+
+    // Only commit the counts once every point/stroke has been read
+    // successfully -- see this function's own comment on why every
+    // early-return above happens before this line.
+    canvas.strokeCount = strokeCountRead;
+    canvas.pointCount = pointCountRead;
+}
+
 void ResetCanvas(void)
 {
     canvas.pointCount = 0;
@@ -139,6 +238,11 @@ void ResetCanvas(void)
     snapEndpointAvailable = FALSE;      // NEW: avoid a stale endpoint-snap highlight
     branchMarkerCount = 0;              // NEW: avoid stale branch-point markers
 	UpdateProjection();
+
+	// Persist the cleared state too, so hitting Clear right before closing
+	// the app is remembered as "empty" on next launch instead of the
+	// autosave silently keeping whatever was drawn before the Clear.
+	saveEnvironmentAutosave();
 }
 
 GLuint canvasTexture = 0;
@@ -4173,6 +4277,12 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
                             WS_CHILD | BS_PUSHBUTTON,
                             10, 78, 120, 28, hWnd, (HMENU)ID_RESET_ROBOT,
                             GetModuleHandle(NULL), NULL);
+
+        // Environment autosave: restore whatever was last drawn before the
+        // app was closed, so a fresh launch shows the last environment
+        // instead of always starting blank. See loadEnvironmentAutosave's
+        // own comment -- a no-op if nothing was ever autosaved yet.
+        loadEnvironmentAutosave();
         return 0;
     }
     case WM_TIMER:
@@ -5137,6 +5247,17 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         return 0;
     }
     case WM_LBUTTONUP:
+        // Environment autosave: a stroke was just finished drawing (see
+        // WM_LBUTTONDOWN -- `drawing` can only ever be TRUE here for an
+        // Environment-layer stroke, since Simulation mode and the Robot
+        // layer both return early there before it's ever set). Persist the
+        // drawing right away so it's never more than one stroke stale if
+        // the app is closed unexpectedly. Checked BEFORE `drawing` is
+        // reset below, since that's what this check is testing.
+        if (drawing)
+        {
+            saveEnvironmentAutosave();
+        }
         drawing = FALSE;
         shiftHoldActive  = FALSE;   // NEW: end any in-progress dwell-snap tracking
         shiftHoldSnapped = FALSE;   // NEW

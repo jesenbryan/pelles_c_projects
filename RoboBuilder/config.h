@@ -44,6 +44,19 @@
 // of why the marker was unusably hard to spot on screen.
 #define MASS_CENTER_HANDLE_RADIUS 0.014f
 
+// Simulation mode's center-of-mass indicator (renderer.c's
+// drawSimulationMassCenterArrow) -- a small solid green arrow pointing
+// straight down at wherever the active robot kind's own
+// compute*MassCenterWorld (computeSemniMassCenterWorld/
+// computeRockyMassCenterWorld/computeStiloMassCenterWorld, all above)
+// currently places its mass center. LENGTH is the shaft's length (world
+// units, tip sitting exactly at the mass center, tail extending upward
+// from it); HEAD_SIZE is the width/height of the triangular arrowhead at
+// the tip. Sized to read clearly against the robot's own body-circle
+// scale (MIN_R/MAX_R above) without dwarfing it.
+#define SIM_MASS_CENTER_ARROW_LENGTH   0.09f
+#define SIM_MASS_CENTER_ARROW_HEAD_SIZE 0.035f
+
 // handle for the top/bottom seam fillet arcs -- sits at each arc's
 // outward peak point; dragging it changes that arc's fillet radius
 #define ARC_HANDLE_RADIUS 0.018f
