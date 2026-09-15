@@ -1980,6 +1980,72 @@ static float rockyBodySettleStep = 0.0f;
 // where nothing else is driving kneeAngle and Probe 1 is safe to run.
 static BOOL rockyKneeSettleSuppressed = FALSE;
 
+// Which of the leg's two joint circles (knee, foot) is currently closer
+// to resting on the environment -- same clearance measurement Probe 1's
+// own baseFootClearance already uses (nearestEnvDistance minus the
+// combined radius), just checking the knee too -- and returns THAT
+// point's current world position (robot-scene space, same as
+// bodyX/bodyY/translateActiveRobot, not env-pixel space). Probe 2 below
+// pivots its rotation around whichever point this returns, instead of
+// around Rocky's own rectangle center: a real object balanced on one
+// point doesn't spin in place around its own centroid when gravity tips
+// it, it rotates around whatever's actually touching the ground -- see
+// rotateRockyBodyAroundPivot's own comment just below for the mechanics.
+// Falls back to the rectangle's own center when the leg is hidden
+// (nothing else to check, same as Probe 1 skipping entirely in that
+// case) -- there is no meaningful "contact point" left to pivot around,
+// so this just preserves the old center-pivot behavior for a legless
+// Rocky.
+static PointF rockyTopplePivotWorld(const Rocky* r)
+{
+    PointF center = getRockyCenter(*r);
+
+    if (r->legHidden)
+        return center;
+
+    PointF kneeWorld = rotatePoint(r->kneeCircle, center, r->angle);
+    PointF footWorld = jointToWorld(r->footCircle, r->kneeCircle, r->kneeAngle, center, r->angle);
+
+    float kecx, kecy, fecx, fecy;
+    robotPointToEnvWorld(kneeWorld.x, kneeWorld.y, &kecx, &kecy);
+    robotPointToEnvWorld(footWorld.x, footWorld.y, &fecx, &fecy);
+
+    float kneeCombinedRadius = robotLengthToEnvWorld(r->kneeRadius) + simEnvLineHalfWidthWorld();
+    float footCombinedRadius = robotLengthToEnvWorld(r->footRadius) + simEnvLineHalfWidthWorld();
+
+    float kneeClearance = nearestEnvDistance(kecx, kecy) - kneeCombinedRadius;
+    float footClearance = nearestEnvDistance(fecx, fecy) - footCombinedRadius;
+
+    return (kneeClearance < footClearance) ? kneeWorld : footWorld;
+}
+
+// Changes r->angle by deltaAngle the way a real object actually topples:
+// pivoted around `pivot` (a world point in robot-scene space, captured
+// BEFORE this call -- normally from rockyTopplePivotWorld above, taken
+// once at the start of a probe pass so both candidate directions pivot
+// around the SAME point) rather than around Rocky's own rectangle
+// center. A plain r->angle change alone only ever rotates around
+// (bodyX, bodyY) -- see jointToWorld/rotatePoint's own use throughout
+// this file. Following that with a compensating translateActiveRobot so
+// `pivot` lands back exactly where it started turns that into a
+// rotation about `pivot` instead: the standard "rotate about center,
+// then translate" trick for getting an arbitrary pivot out of a
+// fixed-pivot primitive. Returns the (dx, dy) shift it applied, so the
+// caller can undo this exactly (translateActiveRobot by its negation,
+// then r->angle -= deltaAngle) without needing to recompute anything --
+// safer than re-deriving the pivot's new position a second time, which
+// could drift by a hair from floating-point rounding.
+static PointF rotateRockyBodyAroundPivot(Rocky* r, PointF pivot, float deltaAngle)
+{
+    PointF center = getRockyCenter(*r);
+    PointF pivotAfterSpin = rotatePoint(pivot, center, deltaAngle);
+    PointF shift = { pivot.x - pivotAfterSpin.x, pivot.y - pivotAfterSpin.y };
+
+    r->angle += deltaAngle;
+    translateActiveRobot(shift.x, shift.y);
+    return shift;
+}
+
 static void advanceRockySettle(void)
 {
     if (app.robotScene.activeKind != ROBOT_KIND_ROCKY)
@@ -2216,49 +2282,73 @@ static void advanceRockySettle(void)
         }
     }
 
-    // Probe 2: rotate the rectangle itself. Rotating r->angle turns the
-    // WHOLE robot (rectangle, kneeCircle, and footCircle-after-kneeAngle)
-    // around (bodyX, bodyY) -- see jointToWorld/rotatePoint -- so unlike
-    // bending the knee, this can also shift the foot sideways along the
-    // ground, exactly like a real object tipping over while one point of
-    // it stays roughly planted. dropActiveRobotToRest only re-tests
-    // straight-down clearance afterward, so a rotation only ever commits
-    // if it genuinely opens up more room to fall, same guarantee as the
-    // knee probe above.
+    // Probe 2: rotate the rectangle itself. This used to just change
+    // r->angle directly, which always rotates around (bodyX, bodyY) --
+    // Rocky's own rectangle center -- no matter what's actually touching
+    // the ground. That's why a real report showed the body permanently
+    // stuck hovering next to a planted foot (screenshot: only the foot
+    // circle on the ground, the knee circle and rectangle floating well
+    // above it, [SETTLE] converged and never moving again): rotating
+    // around the CENTER swings the foot along its own arc too, and once
+    // that arc reaches its lowest point, further rotation in the same
+    // direction starts lifting the foot back up, so the confirmed drop
+    // shrinks toward zero and the probe "correctly" (by its own narrow
+    // measure) concludes there's nothing left to gain -- even though the
+    // rectangle is still plainly floating. A real object balanced on one
+    // point doesn't spin around its own centroid when gravity tips it;
+    // it pivots around whatever's actually touching the ground, and keeps
+    // doing so until either its center of mass swings over that point or
+    // something else comes down to meet it. rockyTopplePivotWorld picks
+    // that contact point (knee or foot, whichever is closer to the
+    // ground) once, before either direction is tried, and
+    // rotateRockyBodyAroundPivot rotates around THAT instead of the
+    // center -- see both their own comments above for the mechanics.
+    // dropActiveRobotToRest still only re-tests straight-down clearance
+    // afterward, on top of the pivot, so a candidate only ever commits if
+    // it genuinely opens up more room to fall, same guarantee as before.
     if (rockyBodySettleStep >= SIMULATION_LEG_SETTLE_MIN_STEP_DEG)
     {
         float baseBodyAngle = r->angle;
+        PointF pivot = rockyTopplePivotWorld(r); // same contact point for both directions below
         float bestDrop = 0.0f;
         float bestBodyAngle = baseBodyAngle;
+        PointF bestShift = { 0.0f, 0.0f };
 
         for (int dir = -1; dir <= 1; dir += 2)
         {
-            r->angle = baseBodyAngle + dir * rockyBodySettleStep;
+            float deltaAngle = dir * rockyBodySettleStep;
+            PointF shift = rotateRockyBodyAroundPivot(r, pivot, deltaAngle);
 
             float drop = dropActiveRobotToRest();
             if (drop > 0.0f)
-                translateActiveRobot(0.0f, drop); // undo the probe's own move
+                translateActiveRobot(0.0f, drop); // undo the probe's own vertical move
 
             if (drop > bestDrop)
             {
                 bestDrop = drop;
                 bestBodyAngle = r->angle;
+                bestShift = shift;
             }
-        }
 
-        r->angle = baseBodyAngle;
+            translateActiveRobot(-shift.x, -shift.y); // undo this candidate's pivot rotation
+            r->angle = baseBodyAngle;
+        }
 
         if (bestDrop > SIMULATION_LEG_SETTLE_MIN_DROP)
         {
             // Same per-tick cap as the knee probe above, same reason --
-            // see SIMULATION_LEG_SETTLE_MAX_DROP_PER_TICK's comment.
+            // see SIMULATION_LEG_SETTLE_MAX_DROP_PER_TICK's comment. The
+            // pivot shift itself is applied in full (it's what makes this
+            // a real pivot instead of a center-spin) -- only the LEFTOVER
+            // straight-down settling on top of it is capped/gradual.
             float appliedDrop = bestDrop;
             if (appliedDrop > SIMULATION_LEG_SETTLE_MAX_DROP_PER_TICK)
                 appliedDrop = SIMULATION_LEG_SETTLE_MAX_DROP_PER_TICK;
 
             r->angle = bestBodyAngle;
+            translateActiveRobot(bestShift.x, bestShift.y);
             translateActiveRobot(0.0f, -appliedDrop);
-            printf("[SETTLE] bodyAngle=%.2f rotated the rectangle %.4f deg, body fell %.5f further this tick (of %.5f available)\n",
+            printf("[SETTLE] bodyAngle=%.2f pivoted the rectangle %.4f deg around its ground contact, body fell %.5f further this tick (of %.5f available)\n",
                    r->angle, rockyBodySettleStep, appliedDrop, bestDrop);
         }
         else
@@ -2266,36 +2356,38 @@ static void advanceRockySettle(void)
             // Same scouting idea as the knee probe above, same reason --
             // just the drop-based criterion (rotating the whole body has
             // no separate "dangling part" fallback of its own; a big body
-            // rotation either opens up a real drop or it doesn't).
+            // rotation either opens up a real drop or it doesn't). Same
+            // contact-point pivot as the direct branch above, not a
+            // center-spin.
             BOOL scoutedBody = FALSE;
 
             for (int dir = -1; dir <= 1 && !scoutedBody; dir += 2)
             {
-                r->angle = baseBodyAngle + dir * SIMULATION_LEG_SETTLE_SCOUT_STEP_DEG;
+                float scoutDelta = dir * SIMULATION_LEG_SETTLE_SCOUT_STEP_DEG;
+                PointF scoutShift = rotateRockyBodyAroundPivot(r, pivot, scoutDelta);
 
                 float scoutDrop = dropActiveRobotToRest();
                 if (scoutDrop > 0.0f)
-                    translateActiveRobot(0.0f, scoutDrop); // undo the probe's own move
+                    translateActiveRobot(0.0f, scoutDrop); // undo the probe's own vertical move
+
+                translateActiveRobot(-scoutShift.x, -scoutShift.y); // undo the scout's pivot rotation
+                r->angle = baseBodyAngle;
 
                 if (scoutDrop > SIMULATION_LEG_SETTLE_MIN_DROP)
                 {
-                    r->angle = baseBodyAngle + dir * rockyBodySettleStep;
+                    float nudgeDelta = dir * rockyBodySettleStep;
+                    PointF nudgeShift = rotateRockyBodyAroundPivot(r, pivot, nudgeDelta);
 
                     // Same follow-up as the knee probe's scout branch: the
                     // scout only confirms a real drop exists further out,
                     // it says nothing about how much is already available
-                    // AT the small nudged angle. Check directly and apply
-                    // it (capped, same as the real bestDrop branch above)
-                    // so the body's height keeps pace with its rotation
-                    // instead of sitting frozen in Y for potentially dozens
-                    // of ticks -- see SIMULATION_LEG_SETTLE_SCOUT_STEP_DEG's
-                    // own comment in config.h for why this scout exists.
-                    // Spend straight from scoutDrop itself instead of
-                    // re-probing at the tiny nudge angle -- see the knee
-                    // probe's scout branch above for why. Apply it
-                    // optimistically (capped as usual), then fall back to
-                    // the old always-safe re-probe if the nudge angle's
-                    // actual geometry still collides at that depth.
+                    // AT the small nudged angle. Spend straight from
+                    // scoutDrop itself instead of re-probing at the tiny
+                    // nudge angle -- see the knee probe's scout branch
+                    // above for why -- applied optimistically (capped as
+                    // usual), then fall back to the old always-safe
+                    // re-probe if the nudge angle's actual geometry still
+                    // collides at that depth.
                     float nudgeAppliedDrop = scoutDrop;
                     if (nudgeAppliedDrop > SIMULATION_LEG_SETTLE_MAX_DROP_PER_TICK)
                         nudgeAppliedDrop = SIMULATION_LEG_SETTLE_MAX_DROP_PER_TICK;
@@ -2317,7 +2409,9 @@ static void advanceRockySettle(void)
                         }
                     }
 
-                    printf("[SETTLE] bodyAngle=%.2f scouted real improvement %.1f deg out (drop=%.5f), fell %.5f this tick -- nudging that way instead of shrinking\n",
+                    (void)nudgeShift; // already applied by rotateRockyBodyAroundPivot; kept committed, nothing left to undo on this path
+
+                    printf("[SETTLE] bodyAngle=%.2f pivoted around its ground contact, scouted real improvement %.1f deg out (drop=%.5f), fell %.5f this tick -- nudging that way instead of shrinking\n",
                            r->angle, dir * SIMULATION_LEG_SETTLE_SCOUT_STEP_DEG, scoutDrop, nudgeAppliedDrop);
                     scoutedBody = TRUE;
                 }
@@ -2325,7 +2419,6 @@ static void advanceRockySettle(void)
 
             if (!scoutedBody)
             {
-                r->angle = baseBodyAngle;
                 rockyBodySettleStep *= 0.5f;
             }
         }
