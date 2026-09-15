@@ -2148,8 +2148,62 @@ static void advanceRockySettle(void)
                     || (scoutClear && scoutGain > SIMULATION_LEG_SETTLE_MIN_DROP))
                 {
                     r->kneeAngle = baseKneeAngle + dir * rockyKneeSettleStep;
-                    printf("[SETTLE] kneeAngle=%.2f scouted real improvement %.1f deg out (drop=%.5f clearanceGain=%.5f) -- nudging that way instead of shrinking\n",
-                           r->kneeAngle, dir * SIMULATION_LEG_SETTLE_SCOUT_STEP_DEG, scoutDrop, scoutGain);
+
+                    // The scout only confirms a real resting improvement
+                    // exists somewhere out past this nudge -- it says
+                    // nothing about how much of that is already available
+                    // AT the small nudged angle itself. Check that
+                    // directly and apply whatever's there (capped, same
+                    // as the real bestDrop branch above), so the body's
+                    // height keeps pace with the knee bending instead of
+                    // only rotating for potentially dozens of ticks while
+                    // Y sits frozen -- see SIMULATION_LEG_SETTLE_SCOUT_STEP_DEG's
+                    // own comment in config.h for why this scout exists in
+                    // the first place. Skipped when this nudge was only
+                    // the clearanceGain (dangling-foot) case, matching the
+                    // real branch above: the body genuinely isn't meant to
+                    // move there, only the foot swings.
+                    float nudgeAppliedDrop = 0.0f;
+                    if (scoutDrop > SIMULATION_LEG_SETTLE_MIN_DROP)
+                    {
+                        // Spend straight from scoutDrop itself -- it's
+                        // already known collision-free, measured at the
+                        // full SIMULATION_LEG_SETTLE_SCOUT_STEP_DEG angle,
+                        // and is almost always far larger than what a
+                        // re-probe at the tiny nudge angle finds (ground
+                        // clearance opens up gradually across the scout
+                        // range, not right at the first small step) --
+                        // that under-delivered on the promised improvement
+                        // and left the body crawling in Y while still
+                        // rotating through tens of degrees. Apply it
+                        // optimistically here (capped as usual), then
+                        // verify: the nudge angle's geometry isn't the
+                        // angle scoutDrop was measured at, so fall back to
+                        // the old, always-safe re-probe if this happens to
+                        // still collide.
+                        nudgeAppliedDrop = scoutDrop;
+                        if (nudgeAppliedDrop > SIMULATION_LEG_SETTLE_MAX_DROP_PER_TICK)
+                            nudgeAppliedDrop = SIMULATION_LEG_SETTLE_MAX_DROP_PER_TICK;
+                        translateActiveRobot(0.0f, -nudgeAppliedDrop);
+
+                        if (robotCollidesWithEnvironment())
+                        {
+                            translateActiveRobot(0.0f, nudgeAppliedDrop); // undo, fall back below
+                            nudgeAppliedDrop = 0.0f;
+
+                            float nudgeDrop = dropActiveRobotToRest();
+                            if (nudgeDrop > 0.0f)
+                            {
+                                nudgeAppliedDrop = nudgeDrop;
+                                if (nudgeAppliedDrop > SIMULATION_LEG_SETTLE_MAX_DROP_PER_TICK)
+                                    nudgeAppliedDrop = SIMULATION_LEG_SETTLE_MAX_DROP_PER_TICK;
+                                translateActiveRobot(0.0f, -nudgeAppliedDrop);
+                            }
+                        }
+                    }
+
+                    printf("[SETTLE] kneeAngle=%.2f scouted real improvement %.1f deg out (drop=%.5f clearanceGain=%.5f), fell %.5f this tick -- nudging that way instead of shrinking\n",
+                           r->kneeAngle, dir * SIMULATION_LEG_SETTLE_SCOUT_STEP_DEG, scoutDrop, scoutGain, nudgeAppliedDrop);
                     scoutedKnee = TRUE;
                 }
             }
@@ -2226,8 +2280,45 @@ static void advanceRockySettle(void)
                 if (scoutDrop > SIMULATION_LEG_SETTLE_MIN_DROP)
                 {
                     r->angle = baseBodyAngle + dir * rockyBodySettleStep;
-                    printf("[SETTLE] bodyAngle=%.2f scouted real improvement %.1f deg out (drop=%.5f) -- nudging that way instead of shrinking\n",
-                           r->angle, dir * SIMULATION_LEG_SETTLE_SCOUT_STEP_DEG, scoutDrop);
+
+                    // Same follow-up as the knee probe's scout branch: the
+                    // scout only confirms a real drop exists further out,
+                    // it says nothing about how much is already available
+                    // AT the small nudged angle. Check directly and apply
+                    // it (capped, same as the real bestDrop branch above)
+                    // so the body's height keeps pace with its rotation
+                    // instead of sitting frozen in Y for potentially dozens
+                    // of ticks -- see SIMULATION_LEG_SETTLE_SCOUT_STEP_DEG's
+                    // own comment in config.h for why this scout exists.
+                    // Spend straight from scoutDrop itself instead of
+                    // re-probing at the tiny nudge angle -- see the knee
+                    // probe's scout branch above for why. Apply it
+                    // optimistically (capped as usual), then fall back to
+                    // the old always-safe re-probe if the nudge angle's
+                    // actual geometry still collides at that depth.
+                    float nudgeAppliedDrop = scoutDrop;
+                    if (nudgeAppliedDrop > SIMULATION_LEG_SETTLE_MAX_DROP_PER_TICK)
+                        nudgeAppliedDrop = SIMULATION_LEG_SETTLE_MAX_DROP_PER_TICK;
+                    translateActiveRobot(0.0f, -nudgeAppliedDrop);
+
+                    if (robotCollidesWithEnvironment())
+                    {
+                        translateActiveRobot(0.0f, nudgeAppliedDrop); // undo, fall back below
+                        nudgeAppliedDrop = dropActiveRobotToRest();
+                        if (nudgeAppliedDrop > 0.0f)
+                        {
+                            if (nudgeAppliedDrop > SIMULATION_LEG_SETTLE_MAX_DROP_PER_TICK)
+                                nudgeAppliedDrop = SIMULATION_LEG_SETTLE_MAX_DROP_PER_TICK;
+                            translateActiveRobot(0.0f, -nudgeAppliedDrop);
+                        }
+                        else
+                        {
+                            nudgeAppliedDrop = 0.0f;
+                        }
+                    }
+
+                    printf("[SETTLE] bodyAngle=%.2f scouted real improvement %.1f deg out (drop=%.5f), fell %.5f this tick -- nudging that way instead of shrinking\n",
+                           r->angle, dir * SIMULATION_LEG_SETTLE_SCOUT_STEP_DEG, scoutDrop, nudgeAppliedDrop);
                     scoutedBody = TRUE;
                 }
             }
@@ -5163,6 +5254,36 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
             postRotateSettleActive = TRUE;
             SetTimer(hWnd, AUTO_GRAVITY_TIMER_ID, SIMULATION_AUTO_GRAVITY_INTERVAL_MS, NULL);
+        }
+
+        // A single E/Q tap (or a held one, via Windows auto-repeat
+        // re-arming rockyKneeSettleSuppressed on every WM_KEYDOWN) leaves
+        // Probe 1 (knee-bending) suppressed for the whole settle session
+        // that follows it -- see rockyKneeSettleSuppressed's own comment.
+        // Nothing else ever clears it back to FALSE for Rocky: the
+        // "normal" path (advancePostRotateSettle's atRest branch, right
+        // above) can only fire once BOTH rockyKneeSettleStep and
+        // rockyBodySettleStep have shrunk below
+        // SIMULATION_LEG_SETTLE_MIN_STEP_DEG, but Probe 1's own step-
+        // shrinking code lives entirely inside the block this suppression
+        // skips -- so while suppressed, rockyKneeSettleStep never moves,
+        // convergence can never happen, and un-suppression (which only
+        // happens inside that same atRest branch) can't either. That's a
+        // permanent deadlock: after just one E/Q tap, Probe 1 stays dead
+        // for the rest of the session, and if closing some residual gap
+        // genuinely needed knee bending (not just the body rotate Probe 2
+        // still runs) rather than a plain vertical drop, the robot is
+        // left visibly floating with nothing left able to fix it. This is
+        // what a real report described as "i only pressed e once and the
+        // robot is already floating". Releasing the key is the real
+        // signal that the user is done driving kneeAngle by hand, so
+        // mirror VK_LEFT/VK_RIGHT's own keyup handling just above and
+        // clear the suppression here -- the settle timer this key's own
+        // keydown handler already started picks Probe 1 back up on its
+        // very next tick.
+        if ((wParam == 'E' || wParam == 'Q') && appMode == APP_MODE_SIMULATION && app.robotScene.activeKind == ROBOT_KIND_ROCKY)
+        {
+            rockyKneeSettleSuppressed = FALSE;
         }
         return 0;
     }
