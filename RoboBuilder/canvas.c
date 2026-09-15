@@ -128,7 +128,7 @@ static void HideUIPanelImmediately(void)
 // Environment autosave (Feature: whatever is drawn in the Environment
 // design layer is saved automatically, so closing and reopening the app
 // restores the last drawn environment). Distinct from the EnvExport
-// Env.txt/Env.bmp files File > Save writes (env_export.c's
+// folder's Env.txt/Env.bmp files File > Save writes (env_export.c's
 // saveEnvironmentSegmentsAsTxt) -- those are a lossy, SCALED arc-fit
 // export meant for an external consumer to read, not a faithful
 // round-trippable copy of the raw strokes. This instead dumps the exact
@@ -1062,14 +1062,35 @@ static BOOL robotCollidesWithEnvironment(void)
                 int arcCounts[NUM_ROCKY_CIRCLE_SEGMENTS];
                 computeRockyArcPoints(app.robotScene.rocky, arcPts, arcCounts);
 
+                // Was a per-SAMPLE-POINT test (each of the ARC_SAMPLE_COUNT
+                // points making up the arc's polyline, individually padded
+                // by eArcThickness and checked in isolation) -- a real
+                // report showed the shin arc visibly resting against the
+                // ground with NO contact point marked there at all, because
+                // the true touch point fell between two consecutive
+                // samples: neither sample's own tiny padded circle happened
+                // to overlap the ground line, even though the polyline
+                // SEGMENT connecting them clearly did. Exactly the same
+                // discretization gap the rectangle edges used to have (see
+                // edgeCollidesWithAnyEnvironmentStroke's own comment) --
+                // fixed there by testing exact edges instead of sampled
+                // points, so it's fixed here the same way: test each
+                // consecutive PAIR of arc samples as a line segment via
+                // edgeCollidesWithAnyEnvironmentStroke (still padded by
+                // eArcThickness, same as before -- the curve still has no
+                // real thickness of its own), instead of each sample alone.
+                // drawArc renders this exact same polyline, so this now
+                // tests precisely what's actually drawn on screen, with no
+                // gap for a touch point to hide in between samples.
                 for (int a = 0; a < NUM_ROCKY_CIRCLE_SEGMENTS; a++)
                 {
-                    for (int i = 0; i < arcCounts[a]; i++)
+                    for (int i = 0; i + 1 < arcCounts[a]; i++)
                     {
-                        float ecx, ecy;
-                        robotPointToEnvWorld(arcPts[a][i].x, arcPts[a][i].y, &ecx, &ecy);
+                        float ax, ay, bx, by;
+                        robotPointToEnvWorld(arcPts[a][i].x, arcPts[a][i].y, &ax, &ay);
+                        robotPointToEnvWorld(arcPts[a][i + 1].x, arcPts[a][i + 1].y, &bx, &by);
 
-                        if (pointCollidesWithAnyEnvironmentStroke(ecx, ecy, eArcThickness))
+                        if (edgeCollidesWithAnyEnvironmentStroke(ax, ay, bx, by, eArcThickness, NULL))
                             return TRUE;
                     }
                 }
@@ -2046,6 +2067,54 @@ static PointF rotateRockyBodyAroundPivot(Rocky* r, PointF pivot, float deltaAngl
     return shift;
 }
 
+// Same idea as resolveUpwardIfPenetrating (further up), but as a plain
+// probe that returns how much correction it applied instead of always
+// committing/repainting -- called right after rotateRockyBodyAroundPivot
+// above, every time Probe 2 below tries a candidate rotation. `pivot` is
+// picked as whichever point is ALREADY closest to the ground (gap close
+// to, or exactly, 0 -- see rockyTopplePivotWorld), and the whole point of
+// pivoting around it is to hold it EXACTLY fixed through the rotation --
+// but floating-point rounding in the rotate-then-compensate math
+// (rotatePoint, then a translate built from the difference of two
+// rotated points) can leave that same point a hair embedded afterward,
+// even though it's mathematically meant to land back exactly where it
+// started. That's exactly the scenario SIMULATION_SLOPE_CORRECTION_MAX's
+// own comment describes: "rotating a rigid body... can push a limb a
+// hair into the ground even though the body as a whole was already
+// settled." Left uncorrected, dropActiveRobotToRest's own very first
+// check (robotCollidesWithEnvironment -> return 0.0f immediately) would
+// silently report EVERY candidate direction as "no improvement" no
+// matter how much genuine room exists elsewhere -- which is exactly what
+// a real report showed: Probe 2 never committing a single rotation,
+// scout included, across multiple different poses, once its pivot point
+// was sitting at gap ~ 0 (which is the common case -- that's what makes
+// it the pivot in the first place). Bounded to the same tiny budget
+// resolveUpwardIfPenetrating uses, since this is meant to erase a
+// sub-precision rounding residual, not resolve a genuine collision -- a
+// real block still comes back as "no improvement" afterward, it's just
+// no longer drowned out by this false one first.
+static float clearPivotRoundingResidual(void)
+{
+    if (!robotCollidesWithEnvironment()) return 0.0f;
+
+    float safe = SIMULATION_SLOPE_CORRECTION_MAX;
+    float blocked = 0.0f;
+
+    for (int i = 0; i < GRAVITY_CONTACT_SEARCH_ITERATIONS; i++)
+    {
+        float mid = (safe + blocked) * 0.5f;
+
+        translateActiveRobot(0.0f, mid);
+        BOOL hit = robotCollidesWithEnvironment();
+        translateActiveRobot(0.0f, -mid);
+
+        if (hit) blocked = mid; else safe = mid;
+    }
+
+    translateActiveRobot(0.0f, safe);
+    return safe;
+}
+
 static void advanceRockySettle(void)
 {
     if (app.robotScene.activeKind != ROBOT_KIND_ROCKY)
@@ -2215,38 +2284,33 @@ static void advanceRockySettle(void)
                 {
                     r->kneeAngle = baseKneeAngle + dir * rockyKneeSettleStep;
 
-                    // The scout only confirms a real resting improvement
-                    // exists somewhere out past this nudge -- it says
-                    // nothing about how much of that is already available
-                    // AT the small nudged angle itself. Check that
-                    // directly and apply whatever's there (capped, same
-                    // as the real bestDrop branch above), so the body's
-                    // height keeps pace with the knee bending instead of
-                    // only rotating for potentially dozens of ticks while
-                    // Y sits frozen -- see SIMULATION_LEG_SETTLE_SCOUT_STEP_DEG's
-                    // own comment in config.h for why this scout exists in
-                    // the first place. Skipped when this nudge was only
-                    // the clearanceGain (dangling-foot) case, matching the
-                    // real branch above: the body genuinely isn't meant to
-                    // move there, only the foot swings.
+                    // The scout already measured a real, collision-safe
+                    // drop (scoutDrop) -- but it measured it OUT AT the
+                    // full scouted angle, not here at the small nudge. Re-
+                    // probing dropActiveRobotToRest() at the nudge angle
+                    // (the previous version of this fix) mostly finds
+                    // almost nothing, because the ground clearance opens up
+                    // gradually across the whole scouted range, not right at
+                    // its very start -- that read as the body creeping down
+                    // by a few thousandths per tick while still rotating
+                    // through tens of degrees, i.e. still visibly "floating"
+                    // for a long time, just no longer perfectly frozen.
+                    // Instead, spend from the SAME per-tick budget
+                    // (SIMULATION_LEG_SETTLE_MAX_DROP_PER_TICK) the real
+                    // bestDrop branch above already uses, straight out of
+                    // scoutDrop, so the body catches up in only a handful of
+                    // ticks instead of dozens. This is optimistic -- the
+                    // clearance at the nudge angle isn't actually the same
+                    // clearance measured at the scouted angle -- so verify
+                    // afterward and fall back to whatever's genuinely safe
+                    // right here if it turns out to overshoot into the
+                    // environment. Skipped when this nudge was only the
+                    // clearanceGain (dangling-foot) case, matching the real
+                    // branch above: the body genuinely isn't meant to move
+                    // there, only the foot swings.
                     float nudgeAppliedDrop = 0.0f;
                     if (scoutDrop > SIMULATION_LEG_SETTLE_MIN_DROP)
                     {
-                        // Spend straight from scoutDrop itself -- it's
-                        // already known collision-free, measured at the
-                        // full SIMULATION_LEG_SETTLE_SCOUT_STEP_DEG angle,
-                        // and is almost always far larger than what a
-                        // re-probe at the tiny nudge angle finds (ground
-                        // clearance opens up gradually across the scout
-                        // range, not right at the first small step) --
-                        // that under-delivered on the promised improvement
-                        // and left the body crawling in Y while still
-                        // rotating through tens of degrees. Apply it
-                        // optimistically here (capped as usual), then
-                        // verify: the nudge angle's geometry isn't the
-                        // angle scoutDrop was measured at, so fall back to
-                        // the old, always-safe re-probe if this happens to
-                        // still collide.
                         nudgeAppliedDrop = scoutDrop;
                         if (nudgeAppliedDrop > SIMULATION_LEG_SETTLE_MAX_DROP_PER_TICK)
                             nudgeAppliedDrop = SIMULATION_LEG_SETTLE_MAX_DROP_PER_TICK;
@@ -2254,17 +2318,19 @@ static void advanceRockySettle(void)
 
                         if (robotCollidesWithEnvironment())
                         {
-                            translateActiveRobot(0.0f, nudgeAppliedDrop); // undo, fall back below
-                            nudgeAppliedDrop = 0.0f;
-
-                            float nudgeDrop = dropActiveRobotToRest();
-                            if (nudgeDrop > 0.0f)
-                            {
-                                nudgeAppliedDrop = nudgeDrop;
-                                if (nudgeAppliedDrop > SIMULATION_LEG_SETTLE_MAX_DROP_PER_TICK)
-                                    nudgeAppliedDrop = SIMULATION_LEG_SETTLE_MAX_DROP_PER_TICK;
+                            // Optimistic budget didn't actually fit at this
+                            // angle -- undo it and fall back to the old,
+                            // always-safe approach: whatever's genuinely
+                            // available right here, found the same way
+                            // dropActiveRobotToRest already searches.
+                            translateActiveRobot(0.0f, nudgeAppliedDrop);
+                            nudgeAppliedDrop = dropActiveRobotToRest();
+                            if (nudgeAppliedDrop > SIMULATION_LEG_SETTLE_MAX_DROP_PER_TICK)
+                                nudgeAppliedDrop = SIMULATION_LEG_SETTLE_MAX_DROP_PER_TICK;
+                            if (nudgeAppliedDrop > 0.0f)
                                 translateActiveRobot(0.0f, -nudgeAppliedDrop);
-                            }
+                            else
+                                nudgeAppliedDrop = 0.0f;
                         }
                     }
 
@@ -2313,11 +2379,20 @@ static void advanceRockySettle(void)
         float bestDrop = 0.0f;
         float bestBodyAngle = baseBodyAngle;
         PointF bestShift = { 0.0f, 0.0f };
+        float bestResidual = 0.0f;
 
         for (int dir = -1; dir <= 1; dir += 2)
         {
             float deltaAngle = dir * rockyBodySettleStep;
             PointF shift = rotateRockyBodyAroundPivot(r, pivot, deltaAngle);
+
+            // Clears a possible sub-precision rounding residual left by
+            // the pivot rotation itself (see clearPivotRoundingResidual's
+            // own comment) BEFORE asking dropActiveRobotToRest whether
+            // this candidate helps -- otherwise its very first check
+            // would see the pivot point as still (falsely) colliding and
+            // report 0.0f no matter what.
+            float residual = clearPivotRoundingResidual();
 
             float drop = dropActiveRobotToRest();
             if (drop > 0.0f)
@@ -2328,8 +2403,11 @@ static void advanceRockySettle(void)
                 bestDrop = drop;
                 bestBodyAngle = r->angle;
                 bestShift = shift;
+                bestResidual = residual;
             }
 
+            if (residual > 0.0f)
+                translateActiveRobot(0.0f, -residual); // undo the residual correction too
             translateActiveRobot(-shift.x, -shift.y); // undo this candidate's pivot rotation
             r->angle = baseBodyAngle;
         }
@@ -2338,15 +2416,19 @@ static void advanceRockySettle(void)
         {
             // Same per-tick cap as the knee probe above, same reason --
             // see SIMULATION_LEG_SETTLE_MAX_DROP_PER_TICK's comment. The
-            // pivot shift itself is applied in full (it's what makes this
-            // a real pivot instead of a center-spin) -- only the LEFTOVER
-            // straight-down settling on top of it is capped/gradual.
+            // pivot shift AND its residual correction are applied in full
+            // (they're what makes this a real pivot instead of a
+            // center-spin, and what keeps it there without a false
+            // self-collision) -- only the LEFTOVER straight-down settling
+            // on top of them is capped/gradual.
             float appliedDrop = bestDrop;
             if (appliedDrop > SIMULATION_LEG_SETTLE_MAX_DROP_PER_TICK)
                 appliedDrop = SIMULATION_LEG_SETTLE_MAX_DROP_PER_TICK;
 
             r->angle = bestBodyAngle;
             translateActiveRobot(bestShift.x, bestShift.y);
+            if (bestResidual > 0.0f)
+                translateActiveRobot(0.0f, bestResidual);
             translateActiveRobot(0.0f, -appliedDrop);
             printf("[SETTLE] bodyAngle=%.2f pivoted the rectangle %.4f deg around its ground contact, body fell %.5f further this tick (of %.5f available)\n",
                    r->angle, rockyBodySettleStep, appliedDrop, bestDrop);
@@ -2366,28 +2448,36 @@ static void advanceRockySettle(void)
                 float scoutDelta = dir * SIMULATION_LEG_SETTLE_SCOUT_STEP_DEG;
                 PointF scoutShift = rotateRockyBodyAroundPivot(r, pivot, scoutDelta);
 
+                // Same false-self-collision fix as the direct branch above
+                // -- see clearPivotRoundingResidual's own comment -- needed
+                // here too, since the scout's OWN pivot rotation has the
+                // exact same rounding-residual risk.
+                float scoutResidual = clearPivotRoundingResidual();
+
                 float scoutDrop = dropActiveRobotToRest();
                 if (scoutDrop > 0.0f)
                     translateActiveRobot(0.0f, scoutDrop); // undo the probe's own vertical move
 
+                if (scoutResidual > 0.0f)
+                    translateActiveRobot(0.0f, -scoutResidual); // undo the scout's residual correction too
                 translateActiveRobot(-scoutShift.x, -scoutShift.y); // undo the scout's pivot rotation
                 r->angle = baseBodyAngle;
 
                 if (scoutDrop > SIMULATION_LEG_SETTLE_MIN_DROP)
                 {
                     float nudgeDelta = dir * rockyBodySettleStep;
-                    PointF nudgeShift = rotateRockyBodyAroundPivot(r, pivot, nudgeDelta);
+                    rotateRockyBodyAroundPivot(r, pivot, nudgeDelta); // committed, kept below
+                    clearPivotRoundingResidual(); // same fix, also kept -- see above
 
-                    // Same follow-up as the knee probe's scout branch: the
-                    // scout only confirms a real drop exists further out,
-                    // it says nothing about how much is already available
-                    // AT the small nudged angle. Spend straight from
-                    // scoutDrop itself instead of re-probing at the tiny
-                    // nudge angle -- see the knee probe's scout branch
-                    // above for why -- applied optimistically (capped as
-                    // usual), then fall back to the old always-safe
-                    // re-probe if the nudge angle's actual geometry still
-                    // collides at that depth.
+                    // Same follow-up as the knee probe's scout branch, same
+                    // reasoning -- see its comment for the full explanation:
+                    // spend straight from scoutDrop (already known safe out
+                    // at the full scouted angle), capped to the same per-
+                    // tick budget the real bestDrop branch above uses,
+                    // rather than re-measuring the (usually tiny) clearance
+                    // actually available at the small nudge angle. Verified
+                    // afterward and pulled back to whatever's genuinely safe
+                    // here if the optimistic amount doesn't actually fit.
                     float nudgeAppliedDrop = scoutDrop;
                     if (nudgeAppliedDrop > SIMULATION_LEG_SETTLE_MAX_DROP_PER_TICK)
                         nudgeAppliedDrop = SIMULATION_LEG_SETTLE_MAX_DROP_PER_TICK;
@@ -2395,21 +2485,15 @@ static void advanceRockySettle(void)
 
                     if (robotCollidesWithEnvironment())
                     {
-                        translateActiveRobot(0.0f, nudgeAppliedDrop); // undo, fall back below
+                        translateActiveRobot(0.0f, nudgeAppliedDrop);
                         nudgeAppliedDrop = dropActiveRobotToRest();
+                        if (nudgeAppliedDrop > SIMULATION_LEG_SETTLE_MAX_DROP_PER_TICK)
+                            nudgeAppliedDrop = SIMULATION_LEG_SETTLE_MAX_DROP_PER_TICK;
                         if (nudgeAppliedDrop > 0.0f)
-                        {
-                            if (nudgeAppliedDrop > SIMULATION_LEG_SETTLE_MAX_DROP_PER_TICK)
-                                nudgeAppliedDrop = SIMULATION_LEG_SETTLE_MAX_DROP_PER_TICK;
                             translateActiveRobot(0.0f, -nudgeAppliedDrop);
-                        }
                         else
-                        {
                             nudgeAppliedDrop = 0.0f;
-                        }
                     }
-
-                    (void)nudgeShift; // already applied by rotateRockyBodyAroundPivot; kept committed, nothing left to undo on this path
 
                     printf("[SETTLE] bodyAngle=%.2f pivoted around its ground contact, scouted real improvement %.1f deg out (drop=%.5f), fell %.5f this tick -- nudging that way instead of shrinking\n",
                            r->angle, dir * SIMULATION_LEG_SETTLE_SCOUT_STEP_DEG, scoutDrop, nudgeAppliedDrop);
@@ -4435,32 +4519,33 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
         SetTimer(hWnd, UI_HOTZONE_TIMER_ID, UI_HOTZONE_INTERVAL_MS, NULL); // NEW
 
-        // Slow Motion toggle -- see hSlowMotionBtn's own comment above.
-        // Same BS_AUTOCHECKBOX | BS_PUSHLIKE "checkbox that looks/behaves
-        // like a toggle button" style ui.c's Trace/Comparison Mode buttons
-        // use. Created without WS_VISIBLE -- appMode starts in Design, not
-        // Simulation, so it should start hidden; WM_COMMAND's
-        // ID_MODE_SIMULATION handling shows/hides it from then on.
-        hSlowMotionBtn = CreateWindowEx(0, L"BUTTON", L"Slow Motion",
-                            WS_CHILD | BS_AUTOCHECKBOX | BS_PUSHLIKE,
-                            10, 10, 120, 28, hWnd, (HMENU)ID_SLOW_MOTION,
-                            GetModuleHandle(NULL), NULL);
-
-        // "Walk" toggle (Shift+W) -- directly below Slow Motion (28px tall
-        // + 6px gap), same hidden-until-Simulation treatment.
-        hWalkBtn = CreateWindowEx(0, L"BUTTON", L"Walk",
-                            WS_CHILD | BS_AUTOCHECKBOX | BS_PUSHLIKE,
-                            10, 44, 120, 28, hWnd, (HMENU)ID_WALK_TOGGLE,
-                            GetModuleHandle(NULL), NULL);
-
-        // "Reset" -- directly below Walk (same 28px + 6px spacing). A
-        // plain BS_PUSHBUTTON, not BS_AUTOCHECKBOX -- this is a one-shot
-        // action, not a persistent on/off state, so it has nothing to
-        // stay "checked" as.
+        // "Reset" -- top of the panel. A plain BS_PUSHBUTTON, not
+        // BS_AUTOCHECKBOX -- this is a one-shot action, not a persistent
+        // on/off state, so it has nothing to stay "checked" as. Created
+        // without WS_VISIBLE -- appMode starts in Design, not Simulation,
+        // so it should start hidden; WM_COMMAND's ID_MODE_SIMULATION
+        // handling shows/hides it from then on.
         hResetBtn = CreateWindowEx(0, L"BUTTON", L"Reset",
                             WS_CHILD | BS_PUSHBUTTON,
-                            10, 78, 120, 28, hWnd, (HMENU)ID_RESET_ROBOT,
+                            10, 10, 120, 28, hWnd, (HMENU)ID_RESET_ROBOT,
                             GetModuleHandle(NULL), NULL);
+
+        // Slow Motion toggle -- directly below Reset (28px tall + 6px
+        // gap). Same BS_AUTOCHECKBOX | BS_PUSHLIKE "checkbox that
+        // looks/behaves like a toggle button" style ui.c's Trace/
+        // Comparison Mode buttons use, same hidden-until-Simulation
+        // treatment.
+        hSlowMotionBtn = CreateWindowEx(0, L"BUTTON", L"Slow Motion",
+                            WS_CHILD | BS_AUTOCHECKBOX | BS_PUSHLIKE,
+                            10, 44, 120, 28, hWnd, (HMENU)ID_SLOW_MOTION,
+                            GetModuleHandle(NULL), NULL);
+
+        // "Walk" toggle (Shift+W) button removed for now -- hWalkBtn is
+        // left NULL (its window is simply never created). All other
+        // usages of hWalkBtn elsewhere in this file are already guarded
+        // by "if (hWalkBtn)", so this is safe without touching them; the
+        // underlying gaitActive/Shift+W machinery is untouched, only the
+        // visible button is gone.
 
         // Environment autosave: restore whatever was last drawn before the
         // app was closed, so a fresh launch shows the last environment
