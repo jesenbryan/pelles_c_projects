@@ -813,6 +813,31 @@
 // short of it.
 #define SIMULATION_LEG_SETTLE_MIN_CLEARANCE_GAIN 0.00002f
 
+// Same idea again, but for Probe 2's newest fallback: does a candidate
+// rotation lower the whole body's actual CENTER OF MASS (computeRockyMassCenterWorld),
+// not just bring some other single point closer to the ground. Needed
+// because bestDrop and bestClearanceGain can BOTH go structurally silent
+// at once: once the pivot is a single already-touching point (nothing
+// else anywhere near the ground -- typically the leg resting on just its
+// convex shin arc or a lone circle, nothing else dangling close enough
+// to register a gain), rotating around that point never changes ITS OWN
+// clearance (that's the definition of pivoting around it) and nothing
+// else is close enough for bestClearanceGain to see either, so both
+// branches report zero for every candidate angle and the search grinds
+// its step down to nothing and gives up -- even though the pose is
+// nowhere near the real physical rest angle. A real report showed
+// exactly this: a leg-only Rocky "converging" with its center-of-mass
+// marker sitting well off to the side of its single ground contact,
+// instead of balanced directly above it the way a real object resting on
+// one round point actually settles. Center-of-mass height is the
+// quantity gravity is actually minimizing, so it keeps working as a
+// signal exactly when the other two go quiet -- same fine 0.00002f
+// floor as SIMULATION_LEG_SETTLE_MIN_CLEARANCE_GAIN above and the same
+// reasoning: computeRockyMassCenterWorld is closed-form geometry, not a
+// noisy binary search, so it doesn't need SIMULATION_LEG_SETTLE_MIN_DROP's
+// coarser floor either.
+#define SIMULATION_LEG_SETTLE_MIN_COM_DROP 0.00002f
+
 // Floor for advanceRockySettle's own per-probe step size (separate from
 // SIMULATION_LEG_SETTLE_STEP_DEG/SIMULATION_BODY_SETTLE_STEP_DEG above,
 // which are just the STARTING size). A fixed 1-degree-ish step that
