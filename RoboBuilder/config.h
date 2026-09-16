@@ -774,6 +774,31 @@
 // lets it actually finish and go quiet once it's really done.
 #define SIMULATION_LEG_SETTLE_MIN_DROP 0.001f
 
+// Same idea as SIMULATION_LEG_SETTLE_MIN_DROP just above, but for the
+// "dangling point got closer without the body falling" gain checks
+// (Probe 1's bestClearanceGain/scoutGain on the foot, Probe 2's
+// bestClearanceGain/scoutGain on whichever of knee/foot isn't the
+// pivot) instead of the whole-body vertical drop. A real report showed
+// a leg settling to within ~0.001 of flush and then permanently
+// stopping there, visibly still gapped: nearestEnvDistance here is a
+// direct analytic distance, not dropActiveRobotToRest's binary search,
+// so it doesn't carry that search's precision noise and never needed a
+// floor anywhere near as coarse as SIMULATION_LEG_SETTLE_MIN_DROP to
+// stay stable -- but sharing that same 0.001f threshold meant that once
+// the remaining gap itself shrank to roughly that size, even a
+// geometrically perfect step could no longer clear the bar (gain caps
+// out at whatever the remaining gap is), so every further attempt read
+// as "no improvement," shrinking the step instead of committing the
+// last, genuinely real fraction of a millimeter -- repeatedly, all the
+// way down to SIMULATION_LEG_SETTLE_MIN_STEP_DEG, at which point that
+// probe gives up for good with the gap still open. This threshold is
+// deliberately far smaller -- comfortably above float rounding error,
+// but small enough to still recognize the last sliver of a closing gap
+// as real progress instead of noise -- so the probes keep committing
+// tiny genuine gains all the way to flush instead of stalling just
+// short of it.
+#define SIMULATION_LEG_SETTLE_MIN_CLEARANCE_GAIN 0.00002f
+
 // Floor for advanceRockySettle's own per-probe step size (separate from
 // SIMULATION_LEG_SETTLE_STEP_DEG/SIMULATION_BODY_SETTLE_STEP_DEG above,
 // which are just the STARTING size). A fixed 1-degree-ish step that

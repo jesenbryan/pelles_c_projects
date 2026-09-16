@@ -2269,7 +2269,7 @@ static void advanceRockySettle(void)
             // Keep this probe's step size as-is -- it's still finding
             // real gains at this scale, no need to refine yet.
         }
-        else if (bestClearanceGain > SIMULATION_LEG_SETTLE_MIN_DROP)
+        else if (bestClearanceGain > SIMULATION_LEG_SETTLE_MIN_CLEARANCE_GAIN)
         {
             // The body itself didn't fall any further, but the dangling
             // foot is now genuinely closer to the ground than it was --
@@ -2313,7 +2313,7 @@ static void advanceRockySettle(void)
                 }
 
                 if (scoutDrop > SIMULATION_LEG_SETTLE_MIN_DROP
-                    || (scoutClear && scoutGain > SIMULATION_LEG_SETTLE_MIN_DROP))
+                    || (scoutClear && scoutGain > SIMULATION_LEG_SETTLE_MIN_CLEARANCE_GAIN))
                 {
                     r->kneeAngle = baseKneeAngle + dir * rockyKneeSettleStep;
 
@@ -2376,6 +2376,14 @@ static void advanceRockySettle(void)
             if (!scoutedKnee)
             {
                 r->kneeAngle = baseKneeAngle;
+                // DEBUG: this shrink used to be silent (no printf at all),
+                // which is exactly what made a real report look like Probe 1
+                // stopped dead after one commit with nothing else happening
+                // -- it was still running every tick, just never printing.
+                // Temporary diagnostic line, remove once the "only one of
+                // knee/foot ends up touching" bug is understood.
+                printf("[SETTLE-DBG] Probe1 found nothing (direct or scouted) -- shrinking kneeStep %.4f -> %.4f, baseFootClearance=%.5f\n",
+                       rockyKneeSettleStep, rockyKneeSettleStep * 0.5f, baseFootClearance);
                 rockyKneeSettleStep *= 0.5f; // nothing here, and nothing further out either -- get finer before giving up
             }
         }
@@ -2413,6 +2421,16 @@ static void advanceRockySettle(void)
         float bestBodyAngle = baseBodyAngle;
         PointF bestShift = { 0.0f, 0.0f };
         float bestResidual = 0.0f;
+
+        // DEBUG: temporary -- confirms every tick that Probe 2 actually
+        // entered and ran (as opposed to being skipped), and what it thinks
+        // the current pivot/dangling clearance are. Remove once the "only
+        // one of knee/foot ends up touching" bug is understood.
+        {
+            float dbgDanglingClearance = r->legHidden ? 0.0f : rockyDanglingPointClearance(r);
+            printf("[SETTLE-DBG] Probe2 running -- bodyStep=%.4f pivot=(%.5f,%.5f) danglingClearance=%.5f\n",
+                   rockyBodySettleStep, pivot.x, pivot.y, dbgDanglingClearance);
+        }
 
         // Fallback for the exact mirror of Probe 1's "dangling foot" case
         // above, just from the other direction: as long as the point
@@ -2556,7 +2574,7 @@ static void advanceRockySettle(void)
             printf("[SETTLE] bodyAngle=%.2f pivoted the rectangle %.4f deg around its ground contact, body fell %.5f further this tick (of %.5f available)\n",
                    r->angle, rockyBodySettleStep, appliedDrop, bestDrop);
         }
-        else if (bestClearanceGain > SIMULATION_LEG_SETTLE_MIN_DROP)
+        else if (bestClearanceGain > SIMULATION_LEG_SETTLE_MIN_CLEARANCE_GAIN)
         {
             // The whole body isn't falling any further (the pivot's still
             // blocking that test), but the dangling knee/foot is now
@@ -2616,7 +2634,7 @@ static void advanceRockySettle(void)
                 r->angle = baseBodyAngle;
 
                 if (scoutDrop > SIMULATION_LEG_SETTLE_MIN_DROP
-                    || (scoutClear && scoutGain > SIMULATION_LEG_SETTLE_MIN_DROP))
+                    || (scoutClear && scoutGain > SIMULATION_LEG_SETTLE_MIN_CLEARANCE_GAIN))
                 {
                     float nudgeDelta = dir * rockyBodySettleStep;
                     rotateRockyBodyAroundPivot(r, pivot, nudgeDelta); // committed, kept below
@@ -2665,6 +2683,11 @@ static void advanceRockySettle(void)
 
             if (!scoutedBody)
             {
+                // DEBUG: this shrink used to be silent too -- see Probe 1's
+                // matching diagnostic above. Remove both once the "only one
+                // of knee/foot ends up touching" bug is understood.
+                printf("[SETTLE-DBG] Probe2 found nothing (direct or scouted) -- shrinking bodyStep %.4f -> %.4f, baseDanglingClearance=%.5f, dropAtDir=(%.5f,%.5f)\n",
+                       rockyBodySettleStep, rockyBodySettleStep * 0.5f, baseDanglingClearance, dropAtDir[0], dropAtDir[1]);
                 rockyBodySettleStep *= 0.5f;
             }
         }
@@ -5497,7 +5520,14 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 // search (inside that same settle pass) resolve it in one
                 // direction -- back up to the true contact point -- rather
                 // than pushing up and then immediately dropping back down.
-                if (!(app.robotScene.activeKind == ROBOT_KIND_ROCKY && app.robotScene.rocky.legHidden))
+                //
+                // Also skipped for a leg-only Rocky (bodyHidden, leg still
+                // visible): same reported symptom ("rotating it with
+                // arrows, steps the gravity"), same fix as the legless
+                // case, by explicit request -- arrow-key rotation for this
+                // configuration should just rotate, nothing else.
+                if (!(app.robotScene.activeKind == ROBOT_KIND_ROCKY
+                      && (app.robotScene.rocky.legHidden || app.robotScene.rocky.bodyHidden)))
                     resolveUpwardIfPenetrating(hWnd, SIMULATION_SLOPE_CORRECTION_MAX);
 
                 remaining -= sub;
@@ -5548,7 +5578,13 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             // before -- it's normally resting on the foot/knee already,
             // so this pass is nearly always a no-op for it, and removing
             // it there was never what was reported as broken.
-            if (!(app.robotScene.activeKind == ROBOT_KIND_ROCKY && app.robotScene.rocky.legHidden))
+            //
+            // Also skipped for a leg-only Rocky (bodyHidden): same real
+            // gravity step, same visible "rotating it steps the gravity"
+            // symptom, same fix, by explicit request -- arrow-key rotation
+            // here should just rotate, no automatic settle/drop tacked on.
+            if (!(app.robotScene.activeKind == ROBOT_KIND_ROCKY
+                  && (app.robotScene.rocky.legHidden || app.robotScene.rocky.bodyHidden)))
             {
                 rockySettleConverged = FALSE;
                 rockyKneeSettleStep = SIMULATION_LEG_SETTLE_STEP_DEG;
