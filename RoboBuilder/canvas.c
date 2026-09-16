@@ -4373,12 +4373,12 @@ void canvasRenderFrame(float dimAmount)
     // opacity, live, every frame -- no hold/fade timing at all, otherwise
     // the readout would start fading out from under the user's own
     // fingers mid-hold. Only once the key comes up (WM_KEYUP clears
-    // rotateKeyHeld and stamps rotateToastStartTick) does the SAME
+    // rotateToastStartTick) does the SAME
     // hold-then-fade pattern take over, so the last angle shown lingers
-    // briefly instead of vanishing the instant the key is released. Uses
-    // "DEG" rather than a real degree glyph -- fontBase only covers ASCII
-    // 32-127 (wglUseFontBitmaps' own range above), which doesn't include
-    // the degree sign.
+    // briefly instead of vanishing the instant the key is released. Shows
+    // the real degree sign (0xB0) now that fontBase's own glyph range
+    // covers it (see its own comment, WM_CREATE above) -- no longer
+    // spelled out as "DEG".
     if (rotateKeyHeld || rotateToastStartTick != 0)
     {
         float toastAlpha = 1.0f;
@@ -4406,11 +4406,39 @@ void canvasRenderFrame(float dimAmount)
             // support floating-point format specifiers at all, so round to
             // the nearest whole degree by hand first rather than handing
             // it a raw float.
-            float angle = activeRobotAngleDegrees();
+            //
+            // Negated here, display-only: rotatePoint (geometry.c) turns a
+            // positive angle into a COUNTERclockwise turn on screen (the
+            // standard math convention for this coordinate space), which
+            // made VK_RIGHT (a clockwise turn -- it applies a NEGATIVE
+            // step, see WM_KEYDOWN above) read as the number counting
+            // DOWN, and VK_LEFT counting up -- backwards from how a
+            // clockwise-increasing readout (like a compass heading) is
+            // expected to behave. Flipping the sign right here, before
+            // rounding, makes the DISPLAYED count increase 0->359 for a
+            // clockwise turn (VK_RIGHT) and decrease for a counterclockwise
+            // one (VK_LEFT), without touching the real angle field itself
+            // or which key does which -- only which direction this readout
+            // counts up in.
+            float angle = -activeRobotAngleDegrees();
             int angleDeg = (int)(angle >= 0.0f ? (angle + 0.5f) : (angle - 0.5f));
 
+            // activeRobotAngleDegrees() is the raw, unwrapped rotation --
+            // it keeps climbing (or dropping negative) with every further
+            // VK_LEFT/RIGHT press rather than resetting at a full turn, so
+            // by itself it would show 360, 361, 720... instead of wrapping
+            // back to 0. Wrap the ROUNDED int (not the float before
+            // rounding) into [0, 359] here, display-only -- this never
+            // touches the real angle field driving the robot's actual
+            // pose, only what this readout prints. The C '%' operator can
+            // return a negative result for a negative left operand (e.g.
+            // -1 % 360 == -1, not 359), so the sign is corrected by hand
+            // right after.
+            angleDeg %= 360;
+            if (angleDeg < 0) angleDeg += 360;
+
             char toastStr[32];
-            wsprintfA(toastStr, "ROTATION: %d DEG", angleDeg);
+            wsprintfA(toastStr, "ROTATION: %d\xB0", angleDeg);
 
             glColor4f(0.2f, 0.4f, 0.85f, toastAlpha);
             glRasterPos2i(10, 52);
@@ -4700,8 +4728,21 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
                                  DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, 
                                  CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
         HFONT hOldFont = (HFONT)SelectObject(hDC, hFont);
-        fontBase = glGenLists(96);
-        wglUseFontBitmaps(hDC, 32, 96, fontBase);
+
+        // Range widened from the original 32..127 (96 glyphs, plain ASCII
+        // only) up through 176 (0xB0) -- the rotation HUD (canvasRenderFrame,
+        // further down) wants the actual degree sign, which lives at 0xB0
+        // in the Windows ANSI/Latin-1 codepage this DEFAULT_CHARSET font
+        // resolves to, not anywhere in 32..127. glListBase(fontBase - 32)
+        // (every call site already uses this same offset) still lines up
+        // correctly for any byte in this new range since it's one
+        // contiguous block starting at 32, same as before -- nothing else
+        // needed to change. The handful of extra Latin-1 glyphs in between
+        // (144 of them now instead of 96) go unused by anything else in
+        // this file, which costs a bit more video memory for their display
+        // lists but nothing else.
+        fontBase = glGenLists(145);
+        wglUseFontBitmaps(hDC, 32, 145, fontBase);
         SelectObject(hDC, hOldFont);
         DeleteObject(hFont);
 
@@ -5437,7 +5478,27 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 // corner sweeping toward the ground is caught and pushed
                 // back up as soon as it first touches, rather than only
                 // after the whole press has already been applied.
-                resolveUpwardIfPenetrating(hWnd, SIMULATION_SLOPE_CORRECTION_MAX);
+                //
+                // Skipped for a legless Rocky specifically: with no leg
+                // holding the rectangle up off the ground, its own edge is
+                // what's normally resting flush against it, so this
+                // center-spin rotation routinely embeds one corner every
+                // single press -- pushing that corner back up here, only
+                // for WM_KEYUP's own settle pass to immediately pull the
+                // whole body back down again to find the new resting
+                // angle, is what actually produced the visible "one tap
+                // and the rectangle drops" a real report described (see
+                // WM_KEYUP's own comment on that settle pass, unconditional
+                // by explicit request). A legged Rocky doesn't have this
+                // problem -- it's normally resting on the foot/knee, well
+                // clear of the rectangle's own corners, so this almost
+                // never fires for it anyway. Leaving the corner embedded
+                // here instead just lets applyGravityStep's own contact
+                // search (inside that same settle pass) resolve it in one
+                // direction -- back up to the true contact point -- rather
+                // than pushing up and then immediately dropping back down.
+                if (!(app.robotScene.activeKind == ROBOT_KIND_ROCKY && app.robotScene.rocky.legHidden))
+                    resolveUpwardIfPenetrating(hWnd, SIMULATION_SLOPE_CORRECTION_MAX);
 
                 remaining -= sub;
             }
@@ -5472,13 +5533,31 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             rotateToastStartTick = GetTickCount();
             InvalidateRect(hWnd, NULL, FALSE);
 
-            rockySettleConverged = FALSE;
-            rockyKneeSettleStep = SIMULATION_LEG_SETTLE_STEP_DEG;
-            rockyBodySettleStep = SIMULATION_BODY_SETTLE_STEP_DEG;
-            rockyKneeSettleSuppressed = FALSE; // whole-body rotate: nothing else drives kneeAngle, Probe 1 is safe here
+            // Skipped entirely for a legless Rocky: this settle pass is
+            // exactly what a real report showed as "pressing left/right
+            // once moves the robot down" -- postRotateSettleActive's own
+            // driver (advancePostRotateSettle) calls applyGravityStep --
+            // a REAL gravity step, translating the robot down first and
+            // only correcting back if that step happened to land -- every
+            // single tick for as long as it takes to reconverge, and with
+            // no leg (Probe 1 skipped, Probe 2 alone driving convergence,
+            // no push-up left to undo now that WM_KEYDOWN's own corner-fix
+            // is skipped too -- see its own comment just above) that takes
+            // long enough to read as a real, visible fall rather than an
+            // imperceptible snap. A legged Rocky keeps this exactly as
+            // before -- it's normally resting on the foot/knee already,
+            // so this pass is nearly always a no-op for it, and removing
+            // it there was never what was reported as broken.
+            if (!(app.robotScene.activeKind == ROBOT_KIND_ROCKY && app.robotScene.rocky.legHidden))
+            {
+                rockySettleConverged = FALSE;
+                rockyKneeSettleStep = SIMULATION_LEG_SETTLE_STEP_DEG;
+                rockyBodySettleStep = SIMULATION_BODY_SETTLE_STEP_DEG;
+                rockyKneeSettleSuppressed = FALSE; // whole-body rotate: nothing else drives kneeAngle, Probe 1 is safe here
 
-            postRotateSettleActive = TRUE;
-            SetTimer(hWnd, AUTO_GRAVITY_TIMER_ID, SIMULATION_AUTO_GRAVITY_INTERVAL_MS, NULL);
+                postRotateSettleActive = TRUE;
+                SetTimer(hWnd, AUTO_GRAVITY_TIMER_ID, SIMULATION_AUTO_GRAVITY_INTERVAL_MS, NULL);
+            }
         }
 
         // A single E/Q tap (or a held one, via Windows auto-repeat

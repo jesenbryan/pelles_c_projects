@@ -600,6 +600,17 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             semniPanLastX = LOWORD(lParam);
             semniPanLastY = HIWORD(lParam);
             SetCapture(hwnd);
+
+            // Same hand-cursor treatment as canvas.c's own ArcSpline
+            // panning (WM_MBUTTONDOWN there) -- this window never handles
+            // WM_SETCURSOR at all (its class cursor is just the plain
+            // IDC_ARROW set at RegisterClass time, see
+            // ensureSemniPanelClassRegistered), so without an explicit
+            // SetCursor call here the cursor never changed for a middle-
+            // mouse pan in the Design Robot screen at all, unlike the
+            // Environment/Simulation canvas. Set directly rather than
+            // relying on WM_SETCURSOR, for the same reason noted there.
+            SetCursor(LoadCursor(NULL, IDC_HAND));
             return 0;
         }
 
@@ -1278,6 +1289,12 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
 
             if (semniPanning)
             {
+                // Same reasoning as WM_MBUTTONDOWN's own SetCursor call
+                // just above -- re-assert the hand cursor on every move
+                // for the rest of the drag, matching canvas.c's own
+                // ArcSpline panning (WM_MOUSEMOVE there).
+                SetCursor(LoadCursor(NULL, IDC_HAND));
+
                 int dx = mx - semniPanLastX;
                 int dy = my - semniPanLastY;
 
