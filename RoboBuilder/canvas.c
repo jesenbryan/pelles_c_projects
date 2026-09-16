@@ -1429,11 +1429,42 @@ static void drawSimulationContactDebug(void)
                 RockyEdgeSegment rectEdges[NUM_ROCKY_RECT_SEGMENTS];
                 computeRockyRectSegments(app.robotScene.rocky, rectEdges);
 
+                // EXPERIMENT: match the short sides' point-to-point spacing
+                // to the long sides' instead of giving every edge the same
+                // fixed ARC_SAMPLE_COUNT regardless of length -- that fixed
+                // count is what made the short edges' dots look packed
+                // closer together (same 41 points, shorter edge to spread
+                // them over). Uses the longest edge's own spacing (at the
+                // usual ARC_SAMPLE_COUNT) as the target for every edge, so
+                // a short edge gets proportionally fewer points instead.
+                // Purely cosmetic -- collision itself no longer samples
+                // rectangle edges at all (see robotCollidesWithEnvironment's
+                // own comment just above), only this debug overlay does.
+                float edgeLen[NUM_ROCKY_RECT_SEGMENTS];
+                float longestEdgeLen = 0.0f;
                 for (int e = 0; e < NUM_ROCKY_RECT_SEGMENTS; e++)
                 {
-                    for (int i = 0; i < ARC_SAMPLE_COUNT; i++)
+                    float dx = rectEdges[e].end.x - rectEdges[e].start.x;
+                    float dy = rectEdges[e].end.y - rectEdges[e].start.y;
+                    edgeLen[e] = sqrtf(dx * dx + dy * dy);
+                    if (edgeLen[e] > longestEdgeLen)
+                        longestEdgeLen = edgeLen[e];
+                }
+                float targetSpacing = longestEdgeLen / (float)(ARC_SAMPLE_COUNT - 1);
+
+                for (int e = 0; e < NUM_ROCKY_RECT_SEGMENTS; e++)
+                {
+                    int pointCount = ARC_SAMPLE_COUNT;
+                    if (targetSpacing > 0.0f)
                     {
-                        float t = (float)i / (float)(ARC_SAMPLE_COUNT - 1);
+                        pointCount = (int)(edgeLen[e] / targetSpacing + 0.5f) + 1;
+                        if (pointCount < 2) pointCount = 2;
+                        if (pointCount > ARC_SAMPLE_COUNT) pointCount = ARC_SAMPLE_COUNT;
+                    }
+
+                    for (int i = 0; i < pointCount; i++)
+                    {
+                        float t = (float)i / (float)(pointCount - 1);
                         float lx = rectEdges[e].start.x + (rectEdges[e].end.x - rectEdges[e].start.x) * t;
                         float ly = rectEdges[e].start.y + (rectEdges[e].end.y - rectEdges[e].start.y) * t;
 
