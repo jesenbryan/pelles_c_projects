@@ -879,6 +879,59 @@ static float nearestEnvDistance(float ecx, float ecy)
     return best; // -1.0f if there are no traced segments at all
 }
 
+// Simulation mode's mass-center drop line (renderer.c's
+// drawSimulationMassCenterDropLine) needs to know where a straight drop
+// from `from` (robot-local space) actually reaches the environment.
+// Marches straight down (decreasing robot-local Y, same X) and returns
+// the robot-local Y where it makes contact.
+//
+// Sphere-traces rather than stepping by a fixed increment: nearestEnvDistance
+// already returns the TRUE distance from any point to the closest traced
+// segment, so nothing anywhere around that point is closer than that --
+// advancing by exactly that distance each iteration can never step clean
+// over a genuinely thin environment line the way a fixed coarse step
+// could (miss it by landing a sample on either side without ever testing
+// a point close enough to register), and it still converges in only a
+// handful of iterations for the common case of ground not too far below.
+// nearestEnvDistance itself works in env-world units, not robot-local
+// ones, so each step is converted back via robotLengthToEnvWorld's own
+// scale ratio (see its comment -- this mapping is a uniform scale, no
+// rotation, so a straight vertical march in robot-local space really
+// does correspond to a straight vertical march in env-world space too).
+//
+// SIM_MASS_CENTER_DROP_MAX_LENGTH/MAX_ITERATIONS (config.h) bound the
+// search so a robot with nothing drawn underneath it doesn't search
+// forever -- it just draws a line of that capped length instead.
+static float simFindGroundBelowRobotPoint(PointF from)
+{
+    float envScale = robotLengthToEnvWorld(1.0f); // env-world units per one robot-local unit
+    if (envScale <= 0.0f)
+        return from.y - SIM_MASS_CENTER_DROP_MAX_LENGTH; // defensive -- zoom/scale should never be <= 0
+
+    float touchThreshold = simEnvLineHalfWidthWorld();
+    float traveled = 0.0f;
+
+    for (int i = 0; i < SIM_MASS_CENTER_DROP_MAX_ITERATIONS; i++)
+    {
+        float y = from.y - traveled;
+        float ecx, ecy;
+        robotPointToEnvWorld(from.x, y, &ecx, &ecy);
+
+        float envDist = nearestEnvDistance(ecx, ecy);
+        if (envDist < 0.0f)
+            break; // nothing traced in the environment at all -- fall back below
+
+        if (envDist <= touchThreshold)
+            return y; // close enough to call it contact
+
+        traveled += envDist / envScale;
+        if (traveled >= SIM_MASS_CENTER_DROP_MAX_LENGTH)
+            break;
+    }
+
+    return from.y - SIM_MASS_CENTER_DROP_MAX_LENGTH;
+}
+
 // Rocky's knee/foot circles used to be tested as a single analytic point
 // (the circle's own center, radius folded into the collision padding) --
 // exact for a bare yes/no, but for DRAWING it meant synthesizing one
@@ -1348,7 +1401,7 @@ static void drawSimulationContactDebug(void)
                         robotPointToEnvWorld(circlePts[i].x, circlePts[i].y, &ecx, &ecy);
                         BOOL hit = pointVisuallyContactsEnvironmentStroke(ecx, ecy, eArcThickness);
                         drawMarkerDisc(circlePts[i].x, circlePts[i].y, hit ? smallDotRadius * 3.0f : smallDotRadius,
-                                       hit ? 0.95f : 0.15f, hit ? 0.15f : 0.85f, 0.15f, hit ? 1.0f : 0.7f);
+                                       hit ? 0.95f : 0.25f, hit ? 0.15f : 0.85f, hit ? 0.15f : 0.95f, hit ? 1.0f : 0.7f);
                         if (logThisPass) { dbgPointCount++; if (hit) dbgHitCount++; }
                     }
                 }
@@ -1365,7 +1418,7 @@ static void drawSimulationContactDebug(void)
                         robotPointToEnvWorld(arcPts[a][i].x, arcPts[a][i].y, &ecx, &ecy);
                         BOOL hit = pointVisuallyContactsEnvironmentStroke(ecx, ecy, eArcThickness);
                         drawMarkerDisc(arcPts[a][i].x, arcPts[a][i].y, hit ? smallDotRadius * 3.0f : smallDotRadius,
-                                       hit ? 0.95f : 0.15f, hit ? 0.15f : 0.85f, 0.15f, hit ? 1.0f : 0.7f);
+                                       hit ? 0.95f : 0.25f, hit ? 0.15f : 0.85f, hit ? 0.15f : 0.95f, hit ? 1.0f : 0.7f);
                         if (logThisPass) { dbgPointCount++; if (hit) dbgHitCount++; }
                     }
                 }
@@ -1388,7 +1441,7 @@ static void drawSimulationContactDebug(void)
                         robotPointToEnvWorld(lx, ly, &ecx, &ecy);
                         BOOL hit = pointVisuallyContactsEnvironmentStroke(ecx, ecy, 0.0f);
                         drawMarkerDisc(lx, ly, hit ? smallDotRadius * 3.0f : smallDotRadius,
-                                       hit ? 0.95f : 0.15f, hit ? 0.15f : 0.85f, 0.15f, hit ? 1.0f : 0.7f);
+                                       hit ? 0.95f : 0.25f, hit ? 0.15f : 0.85f, hit ? 0.15f : 0.95f, hit ? 1.0f : 0.7f);
                         if (logThisPass) { dbgPointCount++; if (hit) dbgHitCount++; }
                     }
                 }
@@ -1414,7 +1467,7 @@ static void drawSimulationContactDebug(void)
                 // environment's own line is drawn close by. Size is the
                 // primary signal here; color is secondary.
                 drawMarkerDisc(bodyCircles[c].center.x, bodyCircles[c].center.y, hit ? dotRadius * 2.5f : dotRadius,
-                               hit ? 0.95f : 0.15f, hit ? 0.15f : 0.85f, 0.15f, hit ? 1.0f : 0.9f);
+                               hit ? 0.95f : 0.25f, hit ? 0.15f : 0.85f, hit ? 0.15f : 0.95f, hit ? 1.0f : 0.9f);
                 if (logThisPass) { dbgPointCount++; if (hit) dbgHitCount++; }
             }
 
@@ -1430,7 +1483,7 @@ static void drawSimulationContactDebug(void)
                     robotPointToEnvWorld(arcPts[a][i].x, arcPts[a][i].y, &ecx, &ecy);
                     BOOL hit = pointVisuallyContactsEnvironmentStroke(ecx, ecy, eArcThickness);
                     drawMarkerDisc(arcPts[a][i].x, arcPts[a][i].y, hit ? smallDotRadius * 3.0f : smallDotRadius,
-                                   hit ? 0.95f : 0.15f, hit ? 0.15f : 0.85f, 0.15f, hit ? 1.0f : 0.7f);
+                                   hit ? 0.95f : 0.25f, hit ? 0.15f : 0.85f, hit ? 0.15f : 0.95f, hit ? 1.0f : 0.7f);
                     if (logThisPass) { dbgPointCount++; if (hit) dbgHitCount++; }
                 }
             }
@@ -1456,7 +1509,7 @@ static void drawSimulationContactDebug(void)
                 // environment's own line is drawn close by. Size is the
                 // primary signal here; color is secondary.
                 drawMarkerDisc(bodyCircles[c].center.x, bodyCircles[c].center.y, hit ? dotRadius * 2.5f : dotRadius,
-                               hit ? 0.95f : 0.15f, hit ? 0.15f : 0.85f, 0.15f, hit ? 1.0f : 0.9f);
+                               hit ? 0.95f : 0.25f, hit ? 0.15f : 0.85f, hit ? 0.15f : 0.95f, hit ? 1.0f : 0.9f);
                 if (logThisPass) { dbgPointCount++; if (hit) dbgHitCount++; }
             }
 
@@ -1472,7 +1525,7 @@ static void drawSimulationContactDebug(void)
                     robotPointToEnvWorld(arcPts[a][i].x, arcPts[a][i].y, &ecx, &ecy);
                     BOOL hit = pointVisuallyContactsEnvironmentStroke(ecx, ecy, eArcThickness);
                     drawMarkerDisc(arcPts[a][i].x, arcPts[a][i].y, hit ? smallDotRadius * 3.0f : smallDotRadius,
-                                   hit ? 0.95f : 0.15f, hit ? 0.15f : 0.85f, 0.15f, hit ? 1.0f : 0.7f);
+                                   hit ? 0.95f : 0.25f, hit ? 0.15f : 0.85f, hit ? 0.15f : 0.95f, hit ? 1.0f : 0.7f);
                     if (logThisPass) { dbgPointCount++; if (hit) dbgHitCount++; }
                 }
             }
@@ -2197,13 +2250,23 @@ static void advanceRockySettle(void)
         float bestClearanceGain = 0.0f;
         float bestClearanceKneeAngle = baseKneeAngle;
 
-        for (int dir = -1; dir <= 1; dir += 2)
+        // Per-direction values, same reason Probe 2 keeps its own
+        // dropAtDir[] below: needed after this loop to tell WHICH kind
+        // of improvement each direction found (see the straddle check
+        // right after this loop).
+        float dropAtDir[2] = { 0.0f, 0.0f };
+        float gainAtDir[2] = { 0.0f, 0.0f };
+
+        int dirIndex = 0;
+        for (int dir = -1; dir <= 1; dir += 2, dirIndex++)
         {
             r->kneeAngle = baseKneeAngle + dir * rockyKneeSettleStep;
 
             float drop = dropActiveRobotToRest();
             if (drop > 0.0f)
                 translateActiveRobot(0.0f, drop); // undo the probe's own move
+
+            dropAtDir[dirIndex] = drop;
 
             if (drop > bestDrop)
             {
@@ -2233,6 +2296,9 @@ static void advanceRockySettle(void)
                 float clearance = nearestEnvDistance(fecx, fecy) - footCombinedRadius;
                 float gain = baseFootClearance - clearance;
 
+                if (clearance >= 0.0f)
+                    gainAtDir[dirIndex] = gain;
+
                 if (clearance >= 0.0f && gain > bestClearanceGain)
                 {
                     bestClearanceGain = gain;
@@ -2243,13 +2309,37 @@ static void advanceRockySettle(void)
 
         r->kneeAngle = baseKneeAngle;
 
+        // One direction wants to bend the knee to let the body fall
+        // further (bestDrop) while the OPPOSITE direction wants to swing
+        // the dangling foot closer instead (bestClearanceGain) -- both
+        // genuinely real at the SAME time, just from opposite candidate
+        // angles. Committing whichever one happens to win this tick, then
+        // finding the other one winning again next tick once the first
+        // is undone by the resulting pose change, is exactly what a real
+        // report showed as the knee (and the whole robot along with it)
+        // visibly rocking back and forth instead of settling -- see
+        // Probe 2's own crossCriterionStraddle just below for the mirror
+        // image of this same fix. Shrinking here instead of picking a
+        // side lets a finer step eventually resolve which one the
+        // geometry actually favors, same as the existing same-criterion
+        // straddle idea.
+        BOOL crossCriterionStraddle =
+               (dropAtDir[0] > SIMULATION_LEG_SETTLE_MIN_DROP && gainAtDir[1] > SIMULATION_LEG_SETTLE_MIN_CLEARANCE_GAIN)
+            || (dropAtDir[1] > SIMULATION_LEG_SETTLE_MIN_DROP && gainAtDir[0] > SIMULATION_LEG_SETTLE_MIN_CLEARANCE_GAIN);
+
         // Compared against SIMULATION_LEG_SETTLE_MIN_DROP rather than a
         // bare > 0.0f -- see that constant's own comment on why: without
         // a floor, the search binary search's own precision noise right
         // at the true resting pose reads as an endless string of
         // wafer-thin "improvements," which is exactly what showed up as
         // visible vibration instead of a clean stop.
-        if (bestDrop > SIMULATION_LEG_SETTLE_MIN_DROP)
+        if (crossCriterionStraddle)
+        {
+            printf("[SETTLE] kneeAngle=%.2f both directions improve but by different criteria (drop=%.5f/%.5f gain=%.5f/%.5f) -- shrinking instead of picking one, to avoid rocking back and forth\n",
+                   r->kneeAngle, dropAtDir[0], dropAtDir[1], gainAtDir[0], gainAtDir[1]);
+            rockyKneeSettleStep *= 0.5f;
+        }
+        else if (bestDrop > SIMULATION_LEG_SETTLE_MIN_DROP)
         {
             // Cap what's actually applied THIS tick -- see
             // SIMULATION_LEG_SETTLE_MAX_DROP_PER_TICK's own comment: a
@@ -2291,7 +2381,22 @@ static void advanceRockySettle(void)
             // can't itself cause a visible jump.
             BOOL scoutedKnee = FALSE;
 
-            for (int dir = -1; dir <= 1 && !scoutedKnee; dir += 2)
+            // Both directions are measured and undone before either is
+            // judged -- this used to just try dir=-1 (clockwise) first and
+            // commit to it the instant it cleared the threshold below,
+            // never even scouting dir=+1 (counterclockwise) at all once
+            // clockwise passed. That made clockwise win by going first,
+            // not by being the better option, which is exactly the
+            // clockwise-tipping bias a real report noticed. Scouting both
+            // first and picking the larger improvement (same drop-before-
+            // gain priority the direct branch above already uses) removes
+            // that order bias; see the winner-selection loop just below.
+            float scoutDropAtDir[2] = { 0.0f, 0.0f };
+            float scoutGainAtDir[2] = { -1.0f, -1.0f };
+            BOOL scoutClearAtDir[2] = { FALSE, FALSE };
+
+            int scoutDirIndex = 0;
+            for (int dir = -1; dir <= 1; dir += 2, scoutDirIndex++)
             {
                 r->kneeAngle = baseKneeAngle + dir * SIMULATION_LEG_SETTLE_SCOUT_STEP_DEG;
 
@@ -2312,78 +2417,119 @@ static void advanceRockySettle(void)
                     scoutGain = baseFootClearance - sClearance;
                 }
 
-                if (scoutDrop > SIMULATION_LEG_SETTLE_MIN_DROP
-                    || (scoutClear && scoutGain > SIMULATION_LEG_SETTLE_MIN_CLEARANCE_GAIN))
-                {
-                    r->kneeAngle = baseKneeAngle + dir * rockyKneeSettleStep;
+                scoutDropAtDir[scoutDirIndex] = scoutDrop;
+                scoutGainAtDir[scoutDirIndex] = scoutGain;
+                scoutClearAtDir[scoutDirIndex] = scoutClear;
 
-                    // The scout already measured a real, collision-safe
-                    // drop (scoutDrop) -- but it measured it OUT AT the
-                    // full scouted angle, not here at the small nudge. Re-
-                    // probing dropActiveRobotToRest() at the nudge angle
-                    // (the previous version of this fix) mostly finds
-                    // almost nothing, because the ground clearance opens up
-                    // gradually across the whole scouted range, not right at
-                    // its very start -- that read as the body creeping down
-                    // by a few thousandths per tick while still rotating
-                    // through tens of degrees, i.e. still visibly "floating"
-                    // for a long time, just no longer perfectly frozen.
-                    // Instead, spend from the SAME per-tick budget
-                    // (SIMULATION_LEG_SETTLE_MAX_DROP_PER_TICK) the real
-                    // bestDrop branch above already uses, straight out of
-                    // scoutDrop, so the body catches up in only a handful of
-                    // ticks instead of dozens. This is optimistic -- the
-                    // clearance at the nudge angle isn't actually the same
-                    // clearance measured at the scouted angle -- so verify
-                    // afterward and fall back to whatever's genuinely safe
-                    // right here if it turns out to overshoot into the
-                    // environment. Skipped when this nudge was only the
-                    // clearanceGain (dangling-foot) case, matching the real
-                    // branch above: the body genuinely isn't meant to move
-                    // there, only the foot swings.
-                    float nudgeAppliedDrop = 0.0f;
-                    if (scoutDrop > SIMULATION_LEG_SETTLE_MIN_DROP)
+                r->kneeAngle = baseKneeAngle; // undo this trial, same as the direct branch's own undo above
+            }
+
+            // Same drop-before-gain priority the direct branch above uses
+            // (bestDrop checked before bestClearanceGain): a real drop
+            // candidate always wins over a mere clearance-gain candidate
+            // regardless of magnitude, and within the same criterion the
+            // larger value wins. scoutDirIndex 0 is dir=-1 (clockwise), 1
+            // is dir=+1 (counterclockwise) -- an exact tie between two
+            // equally-good candidates still favors index 0 (clockwise)
+            // below, same as the direct branch's own strict '>' compares,
+            // but that residual tie-break is now the ONLY place clockwise
+            // gets an edge, not an unconditional first-past-the-post win.
+            int scoutWinner = -1;
+            BOOL scoutWinnerIsDrop = FALSE;
+
+            for (int i = 0; i < 2; i++)
+            {
+                BOOL isDropCandidate = scoutDropAtDir[i] > SIMULATION_LEG_SETTLE_MIN_DROP;
+                BOOL isGainCandidate = !isDropCandidate && scoutClearAtDir[i] && scoutGainAtDir[i] > SIMULATION_LEG_SETTLE_MIN_CLEARANCE_GAIN;
+
+                if (!isDropCandidate && !isGainCandidate)
+                    continue;
+
+                if (scoutWinner == -1)
+                {
+                    scoutWinner = i;
+                    scoutWinnerIsDrop = isDropCandidate;
+                }
+                else if (isDropCandidate && !scoutWinnerIsDrop)
+                {
+                    scoutWinner = i;
+                    scoutWinnerIsDrop = TRUE;
+                }
+                else if (isDropCandidate == scoutWinnerIsDrop)
+                {
+                    if (isDropCandidate && scoutDropAtDir[i] > scoutDropAtDir[scoutWinner])
+                        scoutWinner = i;
+                    else if (!isDropCandidate && scoutGainAtDir[i] > scoutGainAtDir[scoutWinner])
+                        scoutWinner = i;
+                }
+            }
+
+            if (scoutWinner != -1)
+            {
+                int dir = (scoutWinner == 0) ? -1 : 1;
+                float scoutDrop = scoutDropAtDir[scoutWinner];
+                float scoutGain = scoutGainAtDir[scoutWinner];
+
+                r->kneeAngle = baseKneeAngle + dir * rockyKneeSettleStep;
+
+                // The scout already measured a real, collision-safe
+                // drop (scoutDrop) -- but it measured it OUT AT the
+                // full scouted angle, not here at the small nudge. Re-
+                // probing dropActiveRobotToRest() at the nudge angle
+                // (the previous version of this fix) mostly finds
+                // almost nothing, because the ground clearance opens up
+                // gradually across the whole scouted range, not right at
+                // its very start -- that read as the body creeping down
+                // by a few thousandths per tick while still rotating
+                // through tens of degrees, i.e. still visibly "floating"
+                // for a long time, just no longer perfectly frozen.
+                // Instead, spend from the SAME per-tick budget
+                // (SIMULATION_LEG_SETTLE_MAX_DROP_PER_TICK) the real
+                // bestDrop branch above already uses, straight out of
+                // scoutDrop, so the body catches up in only a handful of
+                // ticks instead of dozens. This is optimistic -- the
+                // clearance at the nudge angle isn't actually the same
+                // clearance measured at the scouted angle -- so verify
+                // afterward and fall back to whatever's genuinely safe
+                // right here if it turns out to overshoot into the
+                // environment. Skipped when this nudge was only the
+                // clearanceGain (dangling-foot) case, matching the real
+                // branch above: the body genuinely isn't meant to move
+                // there, only the foot swings.
+                float nudgeAppliedDrop = 0.0f;
+                if (scoutDrop > SIMULATION_LEG_SETTLE_MIN_DROP)
+                {
+                    nudgeAppliedDrop = scoutDrop;
+                    if (nudgeAppliedDrop > SIMULATION_LEG_SETTLE_MAX_DROP_PER_TICK)
+                        nudgeAppliedDrop = SIMULATION_LEG_SETTLE_MAX_DROP_PER_TICK;
+                    translateActiveRobot(0.0f, -nudgeAppliedDrop);
+
+                    if (robotCollidesWithEnvironment())
                     {
-                        nudgeAppliedDrop = scoutDrop;
+                        // Optimistic budget didn't actually fit at this
+                        // angle -- undo it and fall back to the old,
+                        // always-safe approach: whatever's genuinely
+                        // available right here, found the same way
+                        // dropActiveRobotToRest already searches.
+                        translateActiveRobot(0.0f, nudgeAppliedDrop);
+                        nudgeAppliedDrop = dropActiveRobotToRest();
                         if (nudgeAppliedDrop > SIMULATION_LEG_SETTLE_MAX_DROP_PER_TICK)
                             nudgeAppliedDrop = SIMULATION_LEG_SETTLE_MAX_DROP_PER_TICK;
-                        translateActiveRobot(0.0f, -nudgeAppliedDrop);
-
-                        if (robotCollidesWithEnvironment())
-                        {
-                            // Optimistic budget didn't actually fit at this
-                            // angle -- undo it and fall back to the old,
-                            // always-safe approach: whatever's genuinely
-                            // available right here, found the same way
-                            // dropActiveRobotToRest already searches.
-                            translateActiveRobot(0.0f, nudgeAppliedDrop);
-                            nudgeAppliedDrop = dropActiveRobotToRest();
-                            if (nudgeAppliedDrop > SIMULATION_LEG_SETTLE_MAX_DROP_PER_TICK)
-                                nudgeAppliedDrop = SIMULATION_LEG_SETTLE_MAX_DROP_PER_TICK;
-                            if (nudgeAppliedDrop > 0.0f)
-                                translateActiveRobot(0.0f, -nudgeAppliedDrop);
-                            else
-                                nudgeAppliedDrop = 0.0f;
-                        }
+                        if (nudgeAppliedDrop > 0.0f)
+                            translateActiveRobot(0.0f, -nudgeAppliedDrop);
+                        else
+                            nudgeAppliedDrop = 0.0f;
                     }
-
-                    printf("[SETTLE] kneeAngle=%.2f scouted real improvement %.1f deg out (drop=%.5f clearanceGain=%.5f), fell %.5f this tick -- nudging that way instead of shrinking\n",
-                           r->kneeAngle, dir * SIMULATION_LEG_SETTLE_SCOUT_STEP_DEG, scoutDrop, scoutGain, nudgeAppliedDrop);
-                    scoutedKnee = TRUE;
                 }
+
+                printf("[SETTLE] kneeAngle=%.2f scouted real improvement %.1f deg out (drop=%.5f clearanceGain=%.5f), fell %.5f this tick -- nudging that way instead of shrinking\n",
+                       r->kneeAngle, dir * SIMULATION_LEG_SETTLE_SCOUT_STEP_DEG, scoutDrop, scoutGain, nudgeAppliedDrop);
+                scoutedKnee = TRUE;
             }
 
             if (!scoutedKnee)
             {
                 r->kneeAngle = baseKneeAngle;
-                // DEBUG: this shrink used to be silent (no printf at all),
-                // which is exactly what made a real report look like Probe 1
-                // stopped dead after one commit with nothing else happening
-                // -- it was still running every tick, just never printing.
-                // Temporary diagnostic line, remove once the "only one of
-                // knee/foot ends up touching" bug is understood.
-                printf("[SETTLE-DBG] Probe1 found nothing (direct or scouted) -- shrinking kneeStep %.4f -> %.4f, baseFootClearance=%.5f\n",
-                       rockyKneeSettleStep, rockyKneeSettleStep * 0.5f, baseFootClearance);
                 rockyKneeSettleStep *= 0.5f; // nothing here, and nothing further out either -- get finer before giving up
             }
         }
@@ -2422,16 +2568,6 @@ static void advanceRockySettle(void)
         PointF bestShift = { 0.0f, 0.0f };
         float bestResidual = 0.0f;
 
-        // DEBUG: temporary -- confirms every tick that Probe 2 actually
-        // entered and ran (as opposed to being skipped), and what it thinks
-        // the current pivot/dangling clearance are. Remove once the "only
-        // one of knee/foot ends up touching" bug is understood.
-        {
-            float dbgDanglingClearance = r->legHidden ? 0.0f : rockyDanglingPointClearance(r);
-            printf("[SETTLE-DBG] Probe2 running -- bodyStep=%.4f pivot=(%.5f,%.5f) danglingClearance=%.5f\n",
-                   rockyBodySettleStep, pivot.x, pivot.y, dbgDanglingClearance);
-        }
-
         // Fallback for the exact mirror of Probe 1's "dangling foot" case
         // above, just from the other direction: as long as the point
         // rockyTopplePivotWorld picked is ALREADY on the ground, holding
@@ -2468,8 +2604,11 @@ static void advanceRockySettle(void)
         // Raw drop found in EACH direction, kept separately from bestDrop
         // above (which only remembers the winner) -- see the "straddling"
         // check right after this loop for why both matter, not just
-        // whichever is larger.
+        // whichever is larger. gainAtDir is the same idea for the
+        // dangling-point clearance gain, used by crossCriterionStraddle
+        // just after the loop.
         float dropAtDir[2] = { 0.0f, 0.0f };
+        float gainAtDir[2] = { 0.0f, 0.0f };
 
         int dirIndex = 0;
         for (int dir = -1; dir <= 1; dir += 2, dirIndex++)
@@ -2510,6 +2649,9 @@ static void advanceRockySettle(void)
                 float clearance = rockyDanglingPointClearance(r);
                 float gain = baseDanglingClearance - clearance;
 
+                if (clearance >= 0.0f)
+                    gainAtDir[dirIndex] = gain;
+
                 if (clearance >= 0.0f && gain > bestClearanceGain)
                 {
                     bestClearanceGain = gain;
@@ -2547,10 +2689,28 @@ static void advanceRockySettle(void)
         BOOL straddlingKink = (dropAtDir[0] > SIMULATION_LEG_SETTLE_MIN_DROP)
                             && (dropAtDir[1] > SIMULATION_LEG_SETTLE_MIN_DROP);
 
-        if (straddlingKink)
+        // Mirror image of the same problem: instead of both directions
+        // wanting a real vertical drop, ONE direction wants the drop
+        // (relieving whatever's embedded at the pivot -- typically the
+        // rectangle's own corner right next to it) while the OPPOSITE
+        // direction wants to swing the dangling knee/foot closer instead
+        // (bestClearanceGain). Both are genuinely real, just from
+        // opposite candidate angles -- committing whichever wins this
+        // tick, only to find the other one winning again next tick once
+        // this tick's commit changed the pose, is exactly the "keeps
+        // vibrating going forth and back" a real report showed for a
+        // pose where the knee AND a body corner were both already
+        // resting while the foot was still dangling well above. Treated
+        // the same way as straddlingKink above: shrink instead of
+        // picking a side.
+        BOOL crossCriterionStraddle =
+               (dropAtDir[0] > SIMULATION_LEG_SETTLE_MIN_DROP && gainAtDir[1] > SIMULATION_LEG_SETTLE_MIN_CLEARANCE_GAIN)
+            || (dropAtDir[1] > SIMULATION_LEG_SETTLE_MIN_DROP && gainAtDir[0] > SIMULATION_LEG_SETTLE_MIN_CLEARANCE_GAIN);
+
+        if (straddlingKink || crossCriterionStraddle)
         {
-            printf("[SETTLE] bodyAngle=%.2f both +/-%.4f deg candidates still improve (drop=%.5f/%.5f) -- shrinking instead of picking one, to avoid oscillating across the exact resting angle\n",
-                   r->angle, rockyBodySettleStep, dropAtDir[0], dropAtDir[1]);
+            printf("[SETTLE] bodyAngle=%.2f both directions still improve (drop=%.5f/%.5f gain=%.5f/%.5f) -- shrinking instead of picking one, to avoid oscillating across the exact resting angle\n",
+                   r->angle, dropAtDir[0], dropAtDir[1], gainAtDir[0], gainAtDir[1]);
             rockyBodySettleStep *= 0.5f;
         }
         else if (bestDrop > SIMULATION_LEG_SETTLE_MIN_DROP)
@@ -2601,7 +2761,21 @@ static void advanceRockySettle(void)
             // contact-point pivot as the direct branch, not a center-spin.
             BOOL scoutedBody = FALSE;
 
-            for (int dir = -1; dir <= 1 && !scoutedBody; dir += 2)
+            // Both directions are measured and undone before either is
+            // judged -- see the knee probe's own scout branch above for
+            // the full reasoning: trying dir=-1 (clockwise) first and
+            // committing to it the instant it cleared the threshold below
+            // meant clockwise silently won every time both directions were
+            // actually viable, never even scouting dir=+1 (counterclockwise)
+            // once clockwise passed. Scouting both first and picking the
+            // larger improvement (same drop-before-gain priority the direct
+            // branch above uses) removes that order bias.
+            float scoutDropAtDir[2] = { 0.0f, 0.0f };
+            float scoutGainAtDir[2] = { -1.0f, -1.0f };
+            BOOL scoutClearAtDir[2] = { FALSE, FALSE };
+
+            int scoutDirIndex = 0;
+            for (int dir = -1; dir <= 1; dir += 2, scoutDirIndex++)
             {
                 float scoutDelta = dir * SIMULATION_LEG_SETTLE_SCOUT_STEP_DEG;
                 PointF scoutShift = rotateRockyBodyAroundPivot(r, pivot, scoutDelta);
@@ -2628,66 +2802,102 @@ static void advanceRockySettle(void)
                     scoutGain = baseDanglingClearance - scoutClearance;
                 }
 
+                scoutDropAtDir[scoutDirIndex] = scoutDrop;
+                scoutGainAtDir[scoutDirIndex] = scoutGain;
+                scoutClearAtDir[scoutDirIndex] = scoutClear;
+
                 if (scoutResidual > 0.0f)
                     translateActiveRobot(0.0f, -scoutResidual); // undo the scout's residual correction too
                 translateActiveRobot(-scoutShift.x, -scoutShift.y); // undo the scout's pivot rotation
                 r->angle = baseBodyAngle;
+            }
 
-                if (scoutDrop > SIMULATION_LEG_SETTLE_MIN_DROP
-                    || (scoutClear && scoutGain > SIMULATION_LEG_SETTLE_MIN_CLEARANCE_GAIN))
+            // Same drop-before-gain priority as the knee probe's own scout
+            // branch above -- see its comment for the full reasoning.
+            // scoutDirIndex 0 is dir=-1 (clockwise), 1 is dir=+1
+            // (counterclockwise).
+            int scoutWinner = -1;
+            BOOL scoutWinnerIsDrop = FALSE;
+
+            for (int i = 0; i < 2; i++)
+            {
+                BOOL isDropCandidate = scoutDropAtDir[i] > SIMULATION_LEG_SETTLE_MIN_DROP;
+                BOOL isGainCandidate = !isDropCandidate && scoutClearAtDir[i] && scoutGainAtDir[i] > SIMULATION_LEG_SETTLE_MIN_CLEARANCE_GAIN;
+
+                if (!isDropCandidate && !isGainCandidate)
+                    continue;
+
+                if (scoutWinner == -1)
                 {
-                    float nudgeDelta = dir * rockyBodySettleStep;
-                    rotateRockyBodyAroundPivot(r, pivot, nudgeDelta); // committed, kept below
-                    clearPivotRoundingResidual(); // same fix, also kept -- see above
+                    scoutWinner = i;
+                    scoutWinnerIsDrop = isDropCandidate;
+                }
+                else if (isDropCandidate && !scoutWinnerIsDrop)
+                {
+                    scoutWinner = i;
+                    scoutWinnerIsDrop = TRUE;
+                }
+                else if (isDropCandidate == scoutWinnerIsDrop)
+                {
+                    if (isDropCandidate && scoutDropAtDir[i] > scoutDropAtDir[scoutWinner])
+                        scoutWinner = i;
+                    else if (!isDropCandidate && scoutGainAtDir[i] > scoutGainAtDir[scoutWinner])
+                        scoutWinner = i;
+                }
+            }
 
-                    // Same follow-up as the knee probe's scout branch, same
-                    // reasoning -- see its comment for the full explanation:
-                    // spend straight from scoutDrop (already known safe out
-                    // at the full scouted angle), capped to the same per-
-                    // tick budget the real bestDrop branch above uses,
-                    // rather than re-measuring the (usually tiny) clearance
-                    // actually available at the small nudge angle. Verified
-                    // afterward and pulled back to whatever's genuinely safe
-                    // here if the optimistic amount doesn't actually fit.
-                    // Skipped when this nudge was only the scoutGain
-                    // (dangling-point) case, matching the direct branch
-                    // above and Probe 1's own scout branch: the body
-                    // genuinely isn't meant to drop any further here, only
-                    // pivot.
-                    float nudgeAppliedDrop = 0.0f;
-                    if (scoutDrop > SIMULATION_LEG_SETTLE_MIN_DROP)
+            if (scoutWinner != -1)
+            {
+                int dir = (scoutWinner == 0) ? -1 : 1;
+                float scoutDrop = scoutDropAtDir[scoutWinner];
+                float scoutGain = scoutGainAtDir[scoutWinner];
+
+                float nudgeDelta = dir * rockyBodySettleStep;
+                rotateRockyBodyAroundPivot(r, pivot, nudgeDelta); // committed, kept below
+                clearPivotRoundingResidual(); // same fix, also kept -- see above
+
+                // Same follow-up as the knee probe's scout branch, same
+                // reasoning -- see its comment for the full explanation:
+                // spend straight from scoutDrop (already known safe out
+                // at the full scouted angle), capped to the same per-
+                // tick budget the real bestDrop branch above uses,
+                // rather than re-measuring the (usually tiny) clearance
+                // actually available at the small nudge angle. Verified
+                // afterward and pulled back to whatever's genuinely safe
+                // here if the optimistic amount doesn't actually fit.
+                // Skipped when this nudge was only the scoutGain
+                // (dangling-point) case, matching the direct branch
+                // above and Probe 1's own scout branch: the body
+                // genuinely isn't meant to drop any further here, only
+                // pivot.
+                float nudgeAppliedDrop = 0.0f;
+                if (scoutDrop > SIMULATION_LEG_SETTLE_MIN_DROP)
+                {
+                    nudgeAppliedDrop = scoutDrop;
+                    if (nudgeAppliedDrop > SIMULATION_LEG_SETTLE_MAX_DROP_PER_TICK)
+                        nudgeAppliedDrop = SIMULATION_LEG_SETTLE_MAX_DROP_PER_TICK;
+                    translateActiveRobot(0.0f, -nudgeAppliedDrop);
+
+                    if (robotCollidesWithEnvironment())
                     {
-                        nudgeAppliedDrop = scoutDrop;
+                        translateActiveRobot(0.0f, nudgeAppliedDrop);
+                        nudgeAppliedDrop = dropActiveRobotToRest();
                         if (nudgeAppliedDrop > SIMULATION_LEG_SETTLE_MAX_DROP_PER_TICK)
                             nudgeAppliedDrop = SIMULATION_LEG_SETTLE_MAX_DROP_PER_TICK;
-                        translateActiveRobot(0.0f, -nudgeAppliedDrop);
-
-                        if (robotCollidesWithEnvironment())
-                        {
-                            translateActiveRobot(0.0f, nudgeAppliedDrop);
-                            nudgeAppliedDrop = dropActiveRobotToRest();
-                            if (nudgeAppliedDrop > SIMULATION_LEG_SETTLE_MAX_DROP_PER_TICK)
-                                nudgeAppliedDrop = SIMULATION_LEG_SETTLE_MAX_DROP_PER_TICK;
-                            if (nudgeAppliedDrop > 0.0f)
-                                translateActiveRobot(0.0f, -nudgeAppliedDrop);
-                            else
-                                nudgeAppliedDrop = 0.0f;
-                        }
+                        if (nudgeAppliedDrop > 0.0f)
+                            translateActiveRobot(0.0f, -nudgeAppliedDrop);
+                        else
+                            nudgeAppliedDrop = 0.0f;
                     }
-
-                    printf("[SETTLE] bodyAngle=%.2f pivoted around its ground contact, scouted real improvement %.1f deg out (drop=%.5f gain=%.5f), fell %.5f this tick -- nudging that way instead of shrinking\n",
-                           r->angle, dir * SIMULATION_LEG_SETTLE_SCOUT_STEP_DEG, scoutDrop, scoutGain, nudgeAppliedDrop);
-                    scoutedBody = TRUE;
                 }
+
+                printf("[SETTLE] bodyAngle=%.2f pivoted around its ground contact, scouted real improvement %.1f deg out (drop=%.5f gain=%.5f), fell %.5f this tick -- nudging that way instead of shrinking\n",
+                       r->angle, dir * SIMULATION_LEG_SETTLE_SCOUT_STEP_DEG, scoutDrop, scoutGain, nudgeAppliedDrop);
+                scoutedBody = TRUE;
             }
 
             if (!scoutedBody)
             {
-                // DEBUG: this shrink used to be silent too -- see Probe 1's
-                // matching diagnostic above. Remove both once the "only one
-                // of knee/foot ends up touching" bug is understood.
-                printf("[SETTLE-DBG] Probe2 found nothing (direct or scouted) -- shrinking bodyStep %.4f -> %.4f, baseDanglingClearance=%.5f, dropAtDir=(%.5f,%.5f)\n",
-                       rockyBodySettleStep, rockyBodySettleStep * 0.5f, baseDanglingClearance, dropAtDir[0], dropAtDir[1]);
                 rockyBodySettleStep *= 0.5f;
             }
         }
@@ -4507,6 +4717,21 @@ void renderCombinedFrame(void)
     float robotDimAmount  = (semniActive || simulationActive) ? 0.0f : inactiveDimAmount;
     float canvasDimAmount = (!semniActive || simulationActive) ? 0.0f : inactiveDimAmount;
 
+    // Simulation mode's mass-center drop line needs to know where a
+    // straight drop from the mass center actually reaches the
+    // environment -- computed once here (canvas.c owns the environment/
+    // collision code this needs) and threaded into renderRobotScene,
+    // which draws it (see drawSimulationMassCenterDropLine's own
+    // comment). Only worth computing while actually in Simulation --
+    // it's not drawn otherwise, and the search below does real per-frame
+    // environment queries.
+    float massCenterDropStopY = 0.0f;
+    if (simulationActive)
+    {
+        PointF massCenterTip = computeSimulationMassCenterWorld(&app);
+        massCenterDropStopY = simFindGroundBelowRobotPoint(massCenterTip);
+    }
+
     // Semni's own projection/blend state has to be (re)asserted right
     // before it draws, and the ArcSpline canvas's projection right before
     // IT draws (canvasRenderFrame does this itself via UpdateProjection) --
@@ -4522,7 +4747,7 @@ void renderCombinedFrame(void)
         graphicsOnResize(glWindowWidth, glWindowHeight);
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        renderRobotScene(&app, robotDimAmount);
+        renderRobotScene(&app, robotDimAmount, massCenterDropStopY);
     }
     else
     {
@@ -4530,7 +4755,7 @@ void renderCombinedFrame(void)
         graphicsOnResize(glWindowWidth, glWindowHeight);
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        renderRobotScene(&app, robotDimAmount);
+        renderRobotScene(&app, robotDimAmount, massCenterDropStopY);
 
         // ...ArcSpline on top
         canvasRenderFrame(canvasDimAmount);

@@ -45,17 +45,31 @@
 #define MASS_CENTER_HANDLE_RADIUS 0.014f
 
 // Simulation mode's center-of-mass indicator (renderer.c's
-// drawSimulationMassCenterArrow) -- a small solid green arrow pointing
-// straight down at wherever the active robot kind's own
+// drawSimulationMassCenterDropLine) -- a dashed green line dropping
+// straight down from wherever the active robot kind's own
 // compute*MassCenterWorld (computeSemniMassCenterWorld/
 // computeRockyMassCenterWorld/computeStiloMassCenterWorld, all above)
-// currently places its mass center. LENGTH is the shaft's length (world
-// units, tip sitting exactly at the mass center, tail extending upward
-// from it); HEAD_SIZE is the width/height of the triangular arrowhead at
-// the tip. Sized to read clearly against the robot's own body-circle
-// scale (MIN_R/MAX_R above) without dwarfing it.
+// currently places its mass center, down to wherever that vertical drop
+// actually reaches the environment (canvas.c's
+// simFindGroundBelowRobotPoint) -- a plumb line, so it's obvious at a
+// glance whether the mass center's drop point is still over the robot's
+// own base of support or has drifted outside it (about to tip).
 #define SIM_MASS_CENTER_ARROW_LENGTH   0.09f
 #define SIM_MASS_CENTER_ARROW_HEAD_SIZE 0.035f
+
+// simFindGroundBelowRobotPoint's own search bounds: MAX_LENGTH caps how
+// far (in robot-local world units, same space SIM_MASS_CENTER_ARROW_LENGTH
+// above is in) the drop line will search straight down before giving up
+// and just drawing a line of that length -- keeps a robot with nothing
+// drawn underneath it (floating, or the environment traced somewhere
+// else entirely) from searching forever and still shows a bounded, sane-
+// looking line instead of nothing at all. MAX_ITERATIONS bounds the
+// sphere-tracing search itself (see that function's own comment for why
+// it sphere-traces instead of stepping by a fixed increment) -- normally
+// only a handful of steps are needed, this is just a hard ceiling so a
+// pathological/glancing case can't spin forever.
+#define SIM_MASS_CENTER_DROP_MAX_LENGTH 3.0f
+#define SIM_MASS_CENTER_DROP_MAX_ITERATIONS 64
 
 // handle for the top/bottom seam fillet arcs -- sits at each arc's
 // outward peak point; dragging it changes that arc's fillet radius

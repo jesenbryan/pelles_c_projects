@@ -222,8 +222,22 @@ void renderAppForSave(AppState* app);
 // full opacity, up to 1 = heavily dimmed) so this scene can be shown as
 // dimmed background context when Semni isn't the currently active editor
 // mode, without a full-screen overlay that would also darken the shared
-// white canvas background underneath it.
-void renderRobotScene(AppState* app, float dimAmount);
+// white canvas background underneath it. massCenterDropStopY is the
+// robot-local Y where a straight drop from the mass center reaches the
+// environment (canvas.c's simFindGroundBelowRobotPoint owns that search
+// -- this file has no access to the environment/collision code it
+// needs), used to draw the Simulation-mode mass-center drop line -- see
+// drawSimulationMassCenterDropLine's own comment. Ignored outside
+// Simulation mode, where that line isn't drawn at all.
+void renderRobotScene(AppState* app, float dimAmount, float massCenterDropStopY);
+
+// Dispatches to whichever robot kind is currently active to find where
+// ITS mass center currently is (computeSemniMassCenterWorld/
+// computeRockyMassCenterWorld/computeStiloMassCenterWorld) -- exposed
+// (not static) so canvas.c can compute the same tip point renderRobotScene
+// itself uses, ahead of the render call, to run the mass-center drop
+// line's ground search before renderRobotScene needs the result.
+PointF computeSimulationMassCenterWorld(AppState* app);
 
 void drawSemni(Semni b, RenderState* rs, int includeHandles, float opacity);
 

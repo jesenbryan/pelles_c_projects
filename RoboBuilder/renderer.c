@@ -1120,6 +1120,39 @@ static void drawRockyBodyRect(Rocky b, RenderState* rs, float opacity)
     BOOL topActive    = rockyBodyMoveActive || widthHandleDragging;
     BOOL bottomActive = rockyBodyMoveActive || widthHandleDragging;
 
+    // leftActive/rightActive and topActive/bottomActive are each always
+    // equal to one another (see the comment above), so the only way any
+    // of the 4 edges can end up a DIFFERENT color from the others is
+    // widthHandleDragging XOR heightHandleDragging -- dragging one resize
+    // handle lighting up just the opposite pair. Whenever that's not
+    // happening (which is every single frame in Simulation, and the
+    // overwhelming majority of the time in the Design > Robot editor
+    // too), all 4 calls to setColor below would produce the exact same
+    // color anyway, so draw the whole rectangle as ONE connected
+    // GL_LINE_LOOP instead of 4 independent GL_LINES calls that merely
+    // happen to share endpoint VALUES. A real report showed a visible
+    // seam/notch right at one corner in Simulation: with GL_LINE_SMOOTH
+    // antialiasing on, each of those 4 separate primitives gets its own
+    // independently-computed edge coverage, and two unconnected segments
+    // that only coincidentally end at the same coordinate don't always
+    // blend together cleanly there. A single GL_LINE_LOOP shares actual
+    // vertices between adjacent edges, so the rasterizer treats every
+    // corner as one continuous join instead of two separately-antialiased
+    // line ends meeting (or not quite meeting) at the same point.
+    BOOL edgeColorsMayDiffer = (topActive != leftActive);
+
+    if (!edgeColorsMayDiffer)
+    {
+        setColor(rs, bottomActive, 0.2f, 0.4f, 1.0f, opacity);
+        glBegin(GL_LINE_LOOP);
+        glVertex2f(c0.x, c0.y);
+        glVertex2f(c1.x, c1.y);
+        glVertex2f(c2.x, c2.y);
+        glVertex2f(c3.x, c3.y);
+        glEnd();
+        return;
+    }
+
     setColor(rs, bottomActive, 0.2f, 0.4f, 1.0f, opacity);
     glBegin(GL_LINES);
     glVertex2f(c0.x, c0.y);
@@ -2551,32 +2584,35 @@ void renderAppForSave(AppState* app)
     renderRobot(app, 0, 1.0f);
 }
 
-// Simulation mode's center-of-mass indicator: a small solid green arrow
-// pointing straight down, its tip sitting exactly at `tip` (the active
-// robot kind's own mass center, see the dispatch in renderRobotScene
-// below). Deliberately its own distinct green from drawRockyMassCenterMarker's
-// handle-convention green above -- this isn't a draggable handle, just a
-// read-only marker, so there's no hover/active state to color for.
-static void drawSimulationMassCenterArrow(PointF tip, float opacity)
+// Simulation mode's center-of-mass indicator: a dashed green line
+// dropping straight down from `tip` (the active robot kind's own mass
+// center, see the dispatch in renderRobotScene below) to `stopY` --
+// wherever that straight drop actually reaches the environment, per
+// canvas.c's simFindGroundBelowRobotPoint (this file has no access to
+// the environment/collision code that search needs, so canvas.c runs it
+// ahead of time and threads the result in through renderRobotScene).
+// Reads like a plumb line: at a glance, whether that drop point is still
+// over the robot's own base of support or has drifted outside it (about
+// to tip) is immediately visible, which a short fixed-length arrow
+// pointing at the mass center itself never showed. Same dashed-line
+// convention drawRockyMassCenterTrack above uses (glLineStipple(1,
+// 0x00FF)), and deliberately its own distinct green from that function's
+// handle-convention green -- this isn't a draggable handle, just a read-
+// only marker, so there's no hover/active state to color for.
+static void drawSimulationMassCenterDropLine(PointF tip, float stopY, float opacity)
 {
-    float shaftTopY    = tip.y + SIM_MASS_CENTER_ARROW_LENGTH;
-    float shaftBottomY = tip.y + SIM_MASS_CENTER_ARROW_HEAD_SIZE * 0.9f; // stop just shy of the arrowhead's base so the shaft and head don't visibly overlap/double up on alpha
-
+    glEnable(GL_LINE_STIPPLE);
+    glLineStipple(1, 0x00FF);
+    glLineWidth(2.0f);
     glColor4f(0.15f, 0.75f, 0.2f, opacity);
 
-    glLineWidth(2.0f);
     glBegin(GL_LINES);
-        glVertex2f(tip.x, shaftTopY);
-        glVertex2f(tip.x, shaftBottomY);
+        glVertex2f(tip.x, tip.y);
+        glVertex2f(tip.x, stopY);
     glEnd();
-    glLineWidth(1.0f);
 
-    float headHalfWidth = SIM_MASS_CENTER_ARROW_HEAD_SIZE * 0.5f;
-    glBegin(GL_TRIANGLES);
-        glVertex2f(tip.x, tip.y);                                                    // point, exactly at the mass center
-        glVertex2f(tip.x - headHalfWidth, tip.y + SIM_MASS_CENTER_ARROW_HEAD_SIZE);   // base, left
-        glVertex2f(tip.x + headHalfWidth, tip.y + SIM_MASS_CENTER_ARROW_HEAD_SIZE);   // base, right
-    glEnd();
+    glLineWidth(1.0f);
+    glDisable(GL_LINE_STIPPLE);
 }
 
 // Dispatches to whichever robot kind is currently active (app->robotScene.
@@ -2584,9 +2620,11 @@ static void drawSimulationMassCenterArrow(PointF tip, float opacity)
 // exact same compute*MassCenterWorld functions that already drive each
 // kind's draggable Design-mode mass-center handle (computeSemniMassCenterWorld/
 // computeRockyMassCenterWorld/computeStiloMassCenterWorld, all above), so
-// the Simulation-mode arrow can never disagree with whatever Design mode
-// itself considers the mass center to be.
-static PointF computeSimulationMassCenterWorld(AppState* app)
+// the Simulation-mode drop line can never disagree with whatever Design
+// mode itself considers the mass center to be. Not static -- canvas.c
+// calls this too, to get the same tip point ahead of renderRobotScene
+// (see renderer.h's own comment on why).
+PointF computeSimulationMassCenterWorld(AppState* app)
 {
     switch (app->robotScene.activeKind)
     {
@@ -2611,7 +2649,7 @@ static PointF computeSimulationMassCenterWorld(AppState* app)
 // look grayed out everywhere instead of just this subsystem's own lines
 // fading, which is what "Semni isn't the active editor mode" should
 // actually look like.
-void renderRobotScene(AppState* app, float dimAmount)
+void renderRobotScene(AppState* app, float dimAmount, float massCenterDropStopY)
 {
     float opacity = 1.0f - dimAmount;
 
@@ -2640,14 +2678,14 @@ void renderRobotScene(AppState* app, float dimAmount)
 
     // Simulation mode: small green downward-pointing arrow marking the
     // active robot's (approximate) current center of mass -- see
-    // computeSimulationMassCenterWorld/drawSimulationMassCenterArrow above.
-    // Gated on appMode (not editorModeState.currentMode) since it's
-    // meaningful specifically in Simulation, unlike the ground line/size
-    // box below, which are Design > Robot editing aids.
+    // computeSimulationMassCenterWorld/drawSimulationMassCenterDropLine
+    // above. Gated on appMode (not editorModeState.currentMode) since
+    // it's meaningful specifically in Simulation, unlike the ground
+    // line/size box below, which are Design > Robot editing aids.
     if (appMode == APP_MODE_SIMULATION)
     {
         PointF massCenter = computeSimulationMassCenterWorld(app);
-        drawSimulationMassCenterArrow(massCenter, opacity);
+        drawSimulationMassCenterDropLine(massCenter, massCenterDropStopY, opacity);
     }
 
     // Real-world-size bounding box overlay while the "Robot Size" slider
