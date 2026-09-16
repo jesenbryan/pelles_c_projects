@@ -2085,12 +2085,25 @@ static float rockyBodySettleStep = 0.0f;
 // where nothing else is driving kneeAngle and Probe 1 is safe to run.
 static BOOL rockyKneeSettleSuppressed = FALSE;
 
+// Which physical part of the leg a RockyLegContact came from -- lets a
+// caller tell "the knee circle is what's touching" apart from "a shin arc
+// point is what's touching" without comparing world positions against an
+// epsilon. See rockyKneeBendWouldAbandonArcContact below for why this
+// distinction matters: Probe 1's knee bend rotates the WHOLE shin (arc
+// included) rigidly around the knee joint, which can only ever preserve a
+// KNEE or FOOT contact (their own distance from the knee joint doesn't
+// change), never an ARC contact (an arc point's distance from the knee
+// joint is fixed too, but its ANGLE around the knee sweeps with the bend,
+// so the specific point that was touching stops touching the instant the
+// knee moves at all).
+typedef enum { ROCKY_LEG_CONTACT_KNEE, ROCKY_LEG_CONTACT_FOOT, ROCKY_LEG_CONTACT_ARC } RockyLegContactKind;
+
 // One candidate contact point on the leg -- either joint circle, or a
 // single sample point along one of the two shin fillet arcs -- together
 // with its clearance to the environment, using the same nearestEnvDistance
 // minus combinedRadius convention every other clearance check in this file
 // already uses (see e.g. Probe 1's own baseFootClearance just below).
-typedef struct { PointF world; float clearance; } RockyLegContact;
+typedef struct { PointF world; float clearance; RockyLegContactKind kind; } RockyLegContact;
 
 // Finds the CLOSEST and SECOND-CLOSEST points on the whole leg outline --
 // knee circle, foot circle, AND both shin fillet arcs (computeRockyArcPoints'
@@ -2130,8 +2143,8 @@ static void rockyLegContactPoints(const Rocky* r, RockyLegContact* closest, Rock
     float kneeCombinedRadius = robotLengthToEnvWorld(r->kneeRadius) + simEnvLineHalfWidthWorld();
     float footCombinedRadius = robotLengthToEnvWorld(r->footRadius) + simEnvLineHalfWidthWorld();
 
-    RockyLegContact best = { kneeWorld, nearestEnvDistance(kecx, kecy) - kneeCombinedRadius };
-    RockyLegContact second = { footWorld, nearestEnvDistance(fecx, fecy) - footCombinedRadius };
+    RockyLegContact best = { kneeWorld, nearestEnvDistance(kecx, kecy) - kneeCombinedRadius, ROCKY_LEG_CONTACT_KNEE };
+    RockyLegContact second = { footWorld, nearestEnvDistance(fecx, fecy) - footCombinedRadius, ROCKY_LEG_CONTACT_FOOT };
     if (second.clearance < best.clearance)
     {
         RockyLegContact tmp = best;
@@ -2165,11 +2178,13 @@ static void rockyLegContactPoints(const Rocky* r, RockyLegContact* closest, Rock
                 second = best;
                 best.world = arcPts[a][i];
                 best.clearance = clearance;
+                best.kind = ROCKY_LEG_CONTACT_ARC;
             }
             else if (clearance < second.clearance)
             {
                 second.world = arcPts[a][i];
                 second.clearance = clearance;
+                second.kind = ROCKY_LEG_CONTACT_ARC;
             }
         }
     }
@@ -2320,6 +2335,42 @@ static void advanceRockySettle(void)
 
     Rocky* r = &app.robotScene.rocky;
 
+    // Whether the leg's CURRENT ground contact is on one of the shin
+    // fillet arcs, rather than the knee or foot circle -- if so, Probe 1
+    // below is skipped for this tick. Bending the knee rotates the WHOLE
+    // shin, arc included, rigidly around the knee joint: that can still
+    // preserve a KNEE or FOOT contact (each stays the same fixed distance
+    // from the knee, so a small bend just swings it along its own circle,
+    // and Probe 1's own clearance checks below still judge that fairly),
+    // but it CANNOT preserve an ARC contact -- the specific arc point
+    // currently touching sweeps around the knee as it bends while the
+    // ground stays put, so the instant the knee moves at all, that exact
+    // point lifts away while the rest of the arc swings past without ever
+    // re-touching the same spot. dropActiveRobotToRest then correctly (by
+    // its own narrow measure) reports a real drop into the gap Probe 1
+    // itself just pried open -- not genuine progress, just Probe 1
+    // repeatedly prying a real, already-settled arc contact loose and
+    // falling into the gap it made, tick after tick, never converging. A
+    // real report showed exactly this: a leg-only Rocky correctly
+    // balancing on its convex shin arc (see rockyLegContactPoints' own
+    // comment above), then kneeAngle drifting steadily for hundreds of
+    // ticks afterward until the contact finally landed back on the knee
+    // circle instead. Probe 2's body rotation is already the correct
+    // settling mechanism once the arc is genuinely what's touching -- see
+    // its own comment further below -- so Probe 1 just steps aside until
+    // that's no longer true. Compared against SIMULATION_LEG_SETTLE_MIN_DROP
+    // (not a bare < 0.0f) for the same reason every other clearance check
+    // in this function is: a hair of float noise right at 0 shouldn't
+    // flip this on and off tick to tick.
+    BOOL legRestingOnArc = FALSE;
+    if (!r->legHidden)
+    {
+        RockyLegContact currentContact, currentSecondContact;
+        rockyLegContactPoints(r, &currentContact, &currentSecondContact);
+        legRestingOnArc = (currentContact.kind == ROCKY_LEG_CONTACT_ARC)
+                        && (currentContact.clearance < SIMULATION_LEG_SETTLE_MIN_DROP);
+    }
+
     // Probe 1: bend the knee. Skipped entirely while the leg is hidden
     // (ID_ROCKY_TOGGLE_LEG_BUTTON, app.h's legHidden comment) -- with no
     // leg being rendered or collision-tested, bending an invisible knee
@@ -2328,7 +2379,8 @@ static void advanceRockySettle(void)
     // getRockyCenter), so this used to just spin kneeAngle through
     // hundreds of degrees for no visible effect, flooding the console
     // with [SETTLE] lines about a foot nobody can see or collide with.
-    if (!r->legHidden && !rockyKneeSettleSuppressed && rockyKneeSettleStep >= SIMULATION_LEG_SETTLE_MIN_STEP_DEG)
+    // Also skipped while legRestingOnArc (see its own comment just above).
+    if (!r->legHidden && !rockyKneeSettleSuppressed && !legRestingOnArc && rockyKneeSettleStep >= SIMULATION_LEG_SETTLE_MIN_STEP_DEG)
     {
         float baseKneeAngle = r->kneeAngle;
         float bestDrop = 0.0f;
