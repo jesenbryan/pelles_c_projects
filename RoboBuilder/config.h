@@ -838,6 +838,52 @@
 // coarser floor either.
 #define SIMULATION_LEG_SETTLE_MIN_COM_DROP 0.00002f
 
+// How many consecutive ticks Probe 1 (knee) and Probe 2 (body) are allowed
+// to BOTH commit a real move on the very same tick before that streak is
+// treated as a stalemate and both step sizes are force-halved. The two
+// probes run back to back inside the same advanceRockySettle call, each
+// one committing based on whatever the OTHER just left behind one tick
+// (or, this same tick, for Probe 2 watching Probe 1) earlier -- and
+// neither probe's own same-tick straddle check can see that, since each
+// only compares its own two candidate directions against each other, not
+// against what the other probe is doing. Two separate real reports showed
+// this going wrong with two DIFFERENT pairs of criteria (bestComDrop vs
+// bestClearanceGain with the knee as the primary contact; bestDrop vs
+// bestClearanceGain with a different part as the primary contact and the
+// knee left as a perpetually-almost-touching dangling point) -- so this
+// watches for the general SHAPE of the problem (both probes committing
+// every tick, forever) rather than guarding each specific pairing by
+// hand. A handful of ticks with both probes firing is completely normal
+// (e.g. right after a fresh landing, before either probe's step has had a
+// chance to shrink), so this only fires once the streak is long enough to
+// rule that out.
+#define SIMULATION_LEG_SETTLE_STALEMATE_STREAK 6
+
+// How many consecutive ticks a probe is allowed to commit a real,
+// above-noise move via one of its DIRECT branches (not the scout fallback
+// -- see rockyKneeSettleGrowthStreak's own comment in canvas.c for why
+// that distinction matters) while the OTHER probe stays completely silent,
+// before that probe's step size is grown back up (doubled, capped at its
+// own starting SIMULATION_LEG_SETTLE_STEP_DEG/SIMULATION_BODY_SETTLE_STEP_DEG)
+// instead of staying wherever it last happened to shrink to. Without this,
+// a step that was forced down by the stalemate detector above (or by an
+// ordinary same-tick straddle) stays that small for the REST of that
+// landing's settle, even long after whatever coupling or straddle caused
+// the shrink is over and only one probe is left cleanly, monotonically
+// converging with nothing to fight -- a real report showed exactly this:
+// hundreds of ticks of bestComDrop alone committing a fixed ~0.03-degree
+// step, sweeping tens of degrees at a crawl that had nothing left to do
+// with the earlier stalemate it was defusing. Deliberately set higher than
+// SIMULATION_LEG_SETTLE_STALEMATE_STREAK above -- growing the step back up
+// carries more risk of reintroducing an oscillation than shrinking it does
+// (shrinking can only ever make the search more careful; growing can make
+// it overshoot again), so this waits for a longer run of clean, one-probe-
+// only progress before trusting it enough to speed back up. If growing
+// turns out to be premature, the very next tick's ordinary same-tick
+// straddle check or the stalemate detector above will simply shrink it
+// straight back down -- there is no separate "undo" needed.
+#define SIMULATION_LEG_SETTLE_GROWTH_STREAK 10
+
 // Floor for advanceRockySettle's own per-probe step size (separate from
 // SIMULATION_LEG_SETTLE_STEP_DEG/SIMULATION_BODY_SETTLE_STEP_DEG above,
 // which are just the STARTING size). A fixed 1-degree-ish step that
