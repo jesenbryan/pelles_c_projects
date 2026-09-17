@@ -3674,7 +3674,75 @@ static BOOL applyGravityStep(HWND hWnd, float step)
             rockyBodySettleGrowthStreak = 0;
         }
 
-        advanceRockySettle();
+        if (app.robotScene.activeKind != ROBOT_KIND_ROCKY)
+        {
+            advanceRockySettle(); // no-op for every other kind -- its own early return
+        }
+        else
+        {
+            // Runs the settle probes several times within this ONE timer
+            // tick once consecutive calls are each only producing an
+            // imperceptibly small rotation -- see
+            // SIMULATION_LEG_SETTLE_FAST_FORWARD_MAX_STEP_DEG's own comment
+            // in config.h for the full reasoning. A real report showed a
+            // perfectly legitimate, non-oscillating settle -- bestComDrop
+            // alone, committing cleanly every single tick, nothing wrong
+            // with any individual decision -- taking hundreds of ticks
+            // (several real seconds at SIMULATION_AUTO_GRAVITY_INTERVAL_MS's
+            // cadence) to finish, purely because each call only ever
+            // advances by one already-tiny, already-safe step. Loosening
+            // WHAT counts as safe (the straddle/stalemate floors) was
+            // considered and rejected: the "ceiling" turned out to be a
+            // small but genuinely real competing signal (a barely-dangling
+            // point's own clearance improving in the opposite direction),
+            // not measurement noise, and that pairing is exactly what a
+            // real historical report already burned once (see
+            // directionsStraddle's own comment above) -- relaxing it again
+            // risks reopening that same class of bug. This fixes the
+            // symptom the OTHER way instead: change how MANY of those
+            // individually-imperceptible, already-correct calls happen
+            // before the next frame is drawn, not what any one of them is
+            // allowed to decide. Every call inside this loop is completely
+            // unmodified -- same criteria, same floors, same straddle/
+            // stalemate guards -- so nothing about WHAT gets committed
+            // changes, only how fast an already-safe sequence of commits
+            // plays out.
+            //
+            // Measures the ACTUAL kneeAngle/angle change each call
+            // produces (rather than inferring from rockyKneeSettleStep/
+            // rockyBodySettleStep directly), so this stays correct even
+            // when one probe is structurally idle this tick (legHidden,
+            // rockyKneeSettleSuppressed, or legRestingOnImmovableJoint) and
+            // its OWN step size is just sitting at some frozen, larger,
+            // irrelevant value left over from earlier in this same landing,
+            // before it got guarded off -- an idle probe produces a true
+            // zero delta regardless of its stale step size, so it can never
+            // wrongly block fast-forwarding by itself. At a full-size step
+            // (right after a fresh landing, or whenever a growth-streak
+            // regrow -- rockyBodySettleGrowthStreak's own comment above --
+            // has pushed a step back up), each call's own rotation is still
+            // visually significant, so the very first call already breaks
+            // out of this loop below and it falls back to exactly one call
+            // per tick, unchanged -- preserving the smooth, gradual sink
+            // SIMULATION_LEG_SETTLE_STEP_DEG's own comment describes.
+            for (int ff = 0; ff < SIMULATION_LEG_SETTLE_FAST_FORWARD_TICKS; ff++)
+            {
+                float kneeBefore = app.robotScene.rocky.kneeAngle;
+                float bodyBefore = app.robotScene.rocky.angle;
+
+                advanceRockySettle();
+
+                if (rockySettleConverged)
+                    break; // nothing left to do -- stop early instead of spending the rest of the budget on no-ops
+
+                float kneeDelta = fabsf(app.robotScene.rocky.kneeAngle - kneeBefore);
+                float bodyDelta = fabsf(app.robotScene.rocky.angle - bodyBefore);
+
+                if (kneeDelta > SIMULATION_LEG_SETTLE_FAST_FORWARD_MAX_STEP_DEG
+                    || bodyDelta > SIMULATION_LEG_SETTLE_FAST_FORWARD_MAX_STEP_DEG)
+                    break; // that call moved something by a visually real amount -- don't batch any further this tick
+            }
+        }
     }
 
     wasLanded = landed;

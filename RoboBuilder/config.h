@@ -884,6 +884,37 @@
 // straight back down -- there is no separate "undo" needed.
 #define SIMULATION_LEG_SETTLE_GROWTH_STREAK 10
 
+// Threshold (degrees) below which advanceRockySettle's PER-CALL rotation is
+// considered small enough to batch several calls into one timer tick -- see
+// applyGravityStep's own fast-forward loop for the mechanics. Chosen well
+// below any step size that's still visually meaningful on its own: the
+// starting SIMULATION_LEG_SETTLE_STEP_DEG/SIMULATION_BODY_SETTLE_STEP_DEG
+// are 1.0f, and even the FIRST couple of halvings after a fresh landing
+// (0.5, 0.25) still read as real, deliberate motion -- but a real report's
+// slow tail was crawling at a stable ~0.03 degrees per tick, comfortably
+// under this floor, indistinguishable from doing several of those same
+// tiny steps within one rendered frame instead of one every 16ms. Kept
+// well clear of the 0.125/0.0625 range too, so a step still mid-shrink
+// (still resolving a genuine straddle) isn't prematurely batched before
+// it's actually reached its stable size.
+#define SIMULATION_LEG_SETTLE_FAST_FORWARD_MAX_STEP_DEG 0.1f
+
+// How many advanceRockySettle calls the fast-forward loop above is allowed
+// to make within a single timer tick once it's in the small-step regime
+// (SIMULATION_LEG_SETTLE_FAST_FORWARD_MAX_STEP_DEG). Each call is fully
+// unmodified -- same criteria, same floors, same straddle/stalemate guards
+// -- this only controls how many of those already-decided, already-safe
+// steps get to play out before the next frame, cutting a multi-second,
+// hundreds-of-ticks crawl down to a fraction of a second without changing
+// a single decision along the way. 16 is a deliberately modest starting
+// budget (an ~16x speedup on the tiny-step tail specifically, nothing
+// else) rather than something large enough to risk collapsing a long
+// settle into one indistinguishable jump; the loop still exits the moment
+// any call in the batch produces a real (non-tiny) rotation or reaches
+// rockySettleConverged, so this is a ceiling, not a fixed cost paid every
+// tick.
+#define SIMULATION_LEG_SETTLE_FAST_FORWARD_TICKS 16
+
 // Floor for advanceRockySettle's own per-probe step size (separate from
 // SIMULATION_LEG_SETTLE_STEP_DEG/SIMULATION_BODY_SETTLE_STEP_DEG above,
 // which are just the STARTING size). A fixed 1-degree-ish step that
