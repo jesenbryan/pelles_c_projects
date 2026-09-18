@@ -1420,10 +1420,9 @@ static void drawSimulationLiveContactDots(void)
 
     const float liveContactDotRadius = 0.0015f;
 
-    // Pivot (red) and non-pivot (orange) Rocky-leg dots are now the SAME
-    // size, by explicit request -- the earlier half-size-for-non-pivot
-    // rule is gone; only color tells them apart now. Bumped up again from
-    // 0.024f at the same time. Still its own constant rather than reusing
+    // Pivot (red) and non-pivot (orange) Rocky-leg dots are the SAME size
+    // -- only color tells them apart. Bumped back up from 0.008f, by
+    // explicit request. Still its own constant rather than reusing
     // liveContactDotRadius (0.0015f, unchanged, still used by every OTHER
     // red dot this function draws -- Rocky's rectangle edges, and the
     // whole STILO/SEMNI cases below -- none of which this request
@@ -1431,7 +1430,7 @@ static void drawSimulationLiveContactDots(void)
     // orange dot (see the deferred pivotWorld draw at the bottom of the
     // ROCKY case below), so an exact-same-size overlap still resolves in
     // red's favor rather than whichever happened to be tested last.
-    const float liveContactDotRadiusPivot = 0.03f;
+    const float liveContactDotRadiusPivot = 0.016f;
     const float liveContactDotRadiusNonPivot = liveContactDotRadiusPivot;
 
     float eArcThickness = robotLengthToEnvWorld(SIMULATION_ARC_COLLISION_THICKNESS);
@@ -2047,6 +2046,24 @@ static int rockyBothProbesCommittedStreak = 0;
 // rockyBothProbesCommittedStreak.
 static int rockyKneeSettleGrowthStreak = 0;
 static int rockyBodySettleGrowthStreak = 0;
+
+// Which side of the body's own center of mass the CURRENT toppling pivot
+// sits on -- 0 before any tick has measured it yet (or right after a
+// fresh-landing reset, alongside rockyBodySettleStep itself), -1 once
+// measured left of the mass center's X, +1 once measured right. Compared
+// every advanceRockySettle tick against the SAME reading from the tick
+// before: a flip (-1 -> +1 or the reverse) means the point gravity is
+// pivoting around is alternating which side of the mass it's on, tick to
+// tick -- the contact straddling directly under the body instead of
+// settling to one side of it -- which reads as visible shaking even
+// though directionsStraddle (below) never catches it, since that check
+// only compares the two ROTATE directions tried within a single tick, not
+// which point is acting as the pivot from one tick to the next. Halved
+// (rockyBodySettleStep *= 0.5f) on every such flip, same binary-search
+// idea directionsStraddle already uses for its own kind of straddle, by
+// explicit request, so a genuinely straddling contact converges onto the
+// true balance point instead of oscillating across it forever.
+static int rockyPivotSide = 0;
 
 // Set TRUE for the duration of an E/Q-triggered settle pass (see the
 // WM_KEYDOWN kickoff below) to stop Probe 1 (knee-bending) from firing
@@ -2665,6 +2682,23 @@ static void advanceRockySettle(void)
     {
         float baseBodyAngle = r->angle;
         PointF pivot = rockyTopplePivotWorld(r); // same contact point for both directions below
+
+        // Binary-division fix for a specific vibration report, by explicit
+        // request -- see rockyPivotSide's own comment above for the full
+        // reasoning. Measured off the CURRENT (pre-rotation) mass center,
+        // same baseBodyAngle pose the pivot itself was just picked from.
+        {
+            float pivotComX = computeRockyMassCenterWorld(*r).x;
+            int currentPivotSide = (pivot.x < pivotComX) ? -1 : 1;
+            if (rockyPivotSide != 0 && currentPivotSide != rockyPivotSide)
+            {
+                printf("[SETTLE] bodyAngle=%.2f pivot flipped sides of the center of mass (side=%d -> %d) -- halving rockyBodySettleStep to stop it vibrating across center\n",
+                       r->angle, rockyPivotSide, currentPivotSide);
+                rockyBodySettleStep *= 0.5f;
+            }
+            rockyPivotSide = currentPivotSide;
+        }
+
         float bestDrop = 0.0f;
         float bestBodyAngle = baseBodyAngle;
         PointF bestShift = { 0.0f, 0.0f };
@@ -3517,6 +3551,7 @@ static BOOL applyGravityStep(HWND hWnd, float step)
             rockyBothProbesCommittedStreak = 0;
             rockyKneeSettleGrowthStreak = 0;
             rockyBodySettleGrowthStreak = 0;
+            rockyPivotSide = 0;
         }
 
         if (app.robotScene.activeKind != ROBOT_KIND_ROCKY)
@@ -6239,6 +6274,7 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 rockyBothProbesCommittedStreak = 0;
                 rockyKneeSettleGrowthStreak = 0;
                 rockyBodySettleGrowthStreak = 0;
+                rockyPivotSide = 0;
                 rockyKneeSettleSuppressed = FALSE; // whole-body rotate: nothing else drives kneeAngle, Probe 1 is safe here
 
                 postRotateSettleActive = TRUE;
@@ -6455,6 +6491,7 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 rockyBothProbesCommittedStreak = 0;
                 rockyKneeSettleGrowthStreak = 0;
                 rockyBodySettleGrowthStreak = 0;
+                rockyPivotSide = 0;
                 rockyKneeSettleSuppressed = FALSE;
 
                 postRotateSettleActive = TRUE;
@@ -6936,6 +6973,7 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	                rockyBothProbesCommittedStreak = 0;
 	                rockyKneeSettleGrowthStreak = 0;
 	                rockyBodySettleGrowthStreak = 0;
+	                rockyPivotSide = 0;
 	                rockyKneeSettleSuppressed = FALSE;
 	                postRotateSettleActive = TRUE;
 	                SetTimer(hWnd, AUTO_GRAVITY_TIMER_ID, SIMULATION_AUTO_GRAVITY_INTERVAL_MS, NULL);
