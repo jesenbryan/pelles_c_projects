@@ -857,15 +857,6 @@ static BOOL edgeCollidesWithAnyEnvironmentStroke(float ax, float ay, float bx, f
     return FALSE;
 }
 
-// Visual-tolerance counterpart to edgeCollidesWithAnyEnvironmentStroke,
-// same reasoning as pointVisuallyContactsEnvironmentStroke just above --
-// display-only, never used by anything that actually moves the robot.
-static BOOL edgeVisuallyContactsEnvironmentStroke(float ax, float ay, float bx, float by,
-                                                   float eRadius, float* outT)
-{
-    return edgeCollidesWithAnyEnvironmentStroke(ax, ay, bx, by, eRadius + simContactVisualToleranceWorld(), outT);
-}
-
 // Debug-only companion to pointCollidesWithAnyEnvironmentStroke: returns
 // the raw geometric distance from (ecx, ecy) to the NEAREST environment
 // segment's centerline, with no radius/padding applied at all -- unlike
@@ -1581,39 +1572,46 @@ static void drawSimulationLiveContactDots(void)
                 RockyEdgeSegment rectEdges[NUM_ROCKY_RECT_SEGMENTS];
                 computeRockyRectSegments(app.robotScene.rocky, rectEdges);
 
-                // Was a per-edge ARC_SAMPLE_COUNT point-sampling loop --
-                // this runs EVERY FRAME, unconditionally, so it was both
-                // the main source of the occasional dropped/missing red
-                // dot (a thin collision band at high zoom could fall
-                // between two fixed samples, same bug as
-                // robotCollidesWithEnvironment's own -- see that
-                // function's comment) AND, if grown denser to fix that,
-                // a real per-frame cost. edgeVisuallyContactsEnvironmentStroke
-                // is exact (no sampling at any zoom) and hands back the
-                // one true closest point on this edge, so this now draws
-                // at most a single, always-correctly-placed dot per edge
-                // instead of looping over many candidate points hoping
-                // one of them landed close enough.
+                // Back to per-edge ARC_SAMPLE_COUNT point sampling, by
+                // explicit request -- this used to hand back just the ONE
+                // true closest point per edge (an exact edge-to-stroke
+                // distance test, no longer needed anywhere and removed),
+                // which is exact and cheap but means a rectangle lying
+                // flat along a whole line only ever showed a single dot
+                // (or two, wherever each of the two perpendicular short
+                // edges' own closest point happened to land, usually right
+                // at a corner) instead of a dot running the full length of
+                // the actual contact -- a real report: "when its lying
+                // down it should show a lot of contact points on the line
+                // and not just 2 on each corner". Same sampling style the
+                // STILO/SEMNI cases and the knee/foot circles above
+                // already use in this function (pointVisuallyContactsEnvironmentStroke
+                // per sample, draw only the hits) -- purely a visual
+                // choice for THIS overlay; actual collision/settle logic
+                // elsewhere (robotCollidesWithEnvironment,
+                // dropActiveRobotToRest, etc.) is untouched and still uses
+                // its own exact tests.
                 for (int e = 0; e < NUM_ROCKY_RECT_SEGMENTS; e++)
                 {
-                    float esx, esy, eex, eey;
-                    robotPointToEnvWorld(rectEdges[e].start.x, rectEdges[e].start.y, &esx, &esy);
-                    robotPointToEnvWorld(rectEdges[e].end.x, rectEdges[e].end.y, &eex, &eey);
-
-                    // t comes back as the parametric position (0=start,
-                    // 1=end) of the closest point along THIS edge -- the
-                    // robot<->env mapping is affine (see
-                    // robotPointToEnvWorld's own comment), so re-applying
-                    // the same t to the ORIGINAL robot-space endpoints
-                    // lands exactly on the matching robot-space point,
-                    // with no inverse transform (and no risk of dividing
-                    // by a near-zero axis on an axis-aligned edge) needed.
-                    float t;
-                    if (edgeVisuallyContactsEnvironmentStroke(esx, esy, eex, eey, 0.0f, &t))
+                    for (int i = 0; i < ARC_SAMPLE_COUNT; i++)
                     {
+                        float t = (float)i / (float)(ARC_SAMPLE_COUNT - 1);
                         float rx = rectEdges[e].start.x + (rectEdges[e].end.x - rectEdges[e].start.x) * t;
                         float ry = rectEdges[e].start.y + (rectEdges[e].end.y - rectEdges[e].start.y) * t;
-                        drawMarkerDisc(rx, ry, liveContactDotRadius, 0.95f, 0.1f, 0.1f, 1.0f);
+
+                        float ecx, ecy;
+                        robotPointToEnvWorld(rx, ry, &ecx, &ecy);
+                        // liveContactDotRadiusPivot, not the tiny
+                        // liveContactDotRadius (0.0015f) -- at the leg
+                        // dots' now much bigger 0.016f size, the rectangle's
+                        // own contact dots would otherwise shrink to
+                        // functionally invisible by comparison. Still just
+                        // red, same as before -- this isn't a pivot in the
+                        // leg's sense, only reusing that constant's CURRENT
+                        // size so every Rocky contact dot reads at a
+                        // consistent scale.
+                        if (pointVisuallyContactsEnvironmentStroke(ecx, ecy, 0.0f))
+                            drawMarkerDisc(rx, ry, liveContactDotRadiusPivot, 0.95f, 0.1f, 0.1f, 1.0f);
                     }
                 }
             }
