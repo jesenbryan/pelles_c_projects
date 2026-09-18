@@ -7003,6 +7003,42 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	            app.draggingShin1 = 0;
 	            app.draggingShin2 = 0;
 	            app.activeHandle = 0;
+	            app.draggingSemniMassCenter = 0;
+
+	            // Same belt-and-suspenders, extended to Rocky's and Stilo's own
+	            // per-handle drag flags (app.h) -- these were missing from this
+	            // reset even though input.c's handleInput never calls
+	            // SetCapture for any of them either, so they're exactly as
+	            // exposed to a button-up landing on some other window (e.g. the
+	            // Robot editor's own Remove Leg/Remove Body checkboxes sitting
+	            // right next to the canvas, input.c's
+	            // ID_ROCKY_TOGGLE_LEG_BUTTON/ID_ROCKY_TOGGLE_BODY_BUTTON) as the
+	            // Semni fields above were. Left uncleared, a stuck TRUE here
+	            // survives a full round trip through Simulation and back: the
+	            // next WM_MOUSEMOVE the Robot editor receives drags that part
+	            // (e.g. the knee, dragging the whole leg with it) straight from
+	            // wherever the cursor happens to be, with no mouse button held
+	            // down at all -- which is exactly what a stuck
+	            // draggingRockyKnee/draggingRockyBody looks like from the
+	            // outside.
+	            app.draggingRockyBody = 0;
+	            app.draggingRockyEdge = ROCKY_EDGE_NONE;
+	            app.draggingRockyKnee = 0;
+	            app.draggingRockyFoot = 0;
+	            app.draggingRockyMassCenter = 0;
+	            app.draggingRockyShin1 = 0;
+	            app.draggingRockyShin2 = 0;
+	            app.draggingStiloMassCenter = 0;
+	            app.draggingStiloSeamArc1 = 0;
+	            app.draggingStiloSeamArc2 = 0;
+	            app.draggingStiloHip1 = 0;
+	            app.draggingStiloFeet1 = 0;
+	            app.draggingStiloThigh1Arc1 = 0;
+	            app.draggingStiloThigh1Arc2 = 0;
+	            app.draggingStiloHip2 = 0;
+	            app.draggingStiloFeet2 = 0;
+	            app.draggingStiloThigh2Arc1 = 0;
+	            app.draggingStiloThigh2Arc2 = 0;
 
 	            // Ground collision (robotCollidesWithEnvironment ->
 	            // pointCollidesWithAnyEnvironmentStroke) tests against the
@@ -7048,7 +7084,26 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	            // fix) -- a robot starting out genuinely airborne is supposed
 	            // to just sit there until the user turns gravity on or
 	            // presses G, same as it always has.
-	            if (robotCollidesWithEnvironment())
+	            //
+	            // Also now requires autoGravityActive itself (by explicit
+	            // request): without this, a robot that had already settled
+	            // onto the ground once (e.g. from an earlier Auto Gravity
+	            // drop) re-triggered this SAME correction pass every single
+	            // time Simulation was re-entered afterward -- e.g. a trip out
+	            // to Design > Robot to toggle Remove Leg/Remove Body and back
+	            // -- since it was still touching right where it landed. With
+	            // Auto Gravity off that read as the robot (or, with the body
+	            // hidden, just the visible leg) quietly drifting on its own
+	            // driven by mouse movement (advancePostRotateSettle's own
+	            // WM_MOUSEMOVE fallback-driver call) even though nothing
+	            // gravity-related was ever turned on -- exactly the "moving the
+	            // cursor moves the robot with Auto Gravity off" behavior this
+	            // was reported to do. Gravity off should mean nothing settles
+	            // on its own, full stop; the "knee down, foot floating" home-
+	            // position correction above only ever mattered for a freshly-
+	            // posed robot anyway, and a user relying on that nudge can
+	            // just turn Auto Gravity on for it now.
+	            if (robotCollidesWithEnvironment() && autoGravityActive)
 	            {
 	                rockySettleConverged = FALSE;
 	                rockyKneeSettleStep = SIMULATION_LEG_SETTLE_STEP_DEG;

@@ -2674,19 +2674,29 @@ void renderRobotScene(AppState* app, float dimAmount, float massCenterDropStopY)
     if (editorModeState.currentMode == EDITOR_MODE_SEMNI)
         drawDashedHorizontalLine(GROUND_LINE_DESIGN_Y, opacity);
 
-    renderRobot(app, 1, opacity);
-
     // Simulation mode: small green downward-pointing arrow marking the
     // active robot's (approximate) current center of mass -- see
     // computeSimulationMassCenterWorld/drawSimulationMassCenterDropLine
     // above. Gated on appMode (not editorModeState.currentMode) since
     // it's meaningful specifically in Simulation, unlike the ground
-    // line/size box below, which are Design > Robot editing aids.
+    // line/size box below, which are Design > Robot editing aids. Drawn
+    // BEFORE renderRobot (not after) on purpose: this plumb line drops
+    // straight down from the mass center and, on Rocky's flat/wide body
+    // rectangle in particular, crosses both the top and bottom edges of
+    // the robot's own solid black outline. Drawing it first means
+    // renderRobot's opaque outline paints over it at every crossing,
+    // so the outline stays one unbroken line and the marker simply
+    // appears to run behind the robot -- drawing it after (the old
+    // order) instead punched a small gap/color-mismatch into the
+    // outline wherever the line crossed it, which is exactly what
+    // showed up zoomed in.
     if (appMode == APP_MODE_SIMULATION)
     {
         PointF massCenter = computeSimulationMassCenterWorld(app);
         drawSimulationMassCenterDropLine(massCenter, massCenterDropStopY, opacity);
     }
+
+    renderRobot(app, 1, opacity);
 
     // Real-world-size bounding box overlay while the "Robot Size" slider
     // is being (or was just) dragged -- see drawRobotSizeBox's own

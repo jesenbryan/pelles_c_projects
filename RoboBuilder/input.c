@@ -625,6 +625,23 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             int mx = LOWORD(lParam);
             int my = HIWORD(lParam);
 
+            // Capture the mouse for the whole drag, same as WM_MBUTTONDOWN's
+            // panning just above. Without this, releasing the button
+            // anywhere other than this window -- most easily this panel's
+            // own Remove Leg/Remove Body checkboxes, sitting right next to
+            // the canvas -- never delivers a WM_LBUTTONUP here at all, so
+            // whichever dragging* flag this click sets below (just above
+            // WM_LBUTTONUP's own reset list) never gets cleared. The result
+            // is a handle stuck "dragging" with no button held: every later
+            // WM_MOUSEMOVE keeps assigning its position from the cursor, so
+            // it visibly tracks the mouse (faster/slower exactly matching
+            // cursor speed) until some OTHER path happens to zero the flag
+            // (e.g. entering Simulation, see canvas.c's ID_MODE_SIMULATION
+            // handler). SetCapture guarantees the matching WM_LBUTTONUP
+            // below always reaches this window instead, so that can no
+            // longer happen.
+            SetCapture(hwnd);
+
             screenToGL(hwnd, mx, my, &app->mouseGL.x, &app->mouseGL.y);
 
             app->draggingSeamArc1 = 0;
@@ -1244,6 +1261,8 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
 
         case WM_LBUTTONUP:
         {
+            ReleaseCapture();
+
             app->draggingSeamArc1 = 0;
             app->draggingSeamArc2 = 0;
             app->draggingInner = 0;
