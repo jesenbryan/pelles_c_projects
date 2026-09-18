@@ -1291,7 +1291,20 @@ static BOOL robotCollidesWithEnvironment(void)
 // joint is fixed too, but its ANGLE around the knee sweeps with the bend,
 // so the specific point that was touching stops touching the instant the
 // knee moves at all).
-typedef enum { ROCKY_LEG_CONTACT_KNEE, ROCKY_LEG_CONTACT_FOOT, ROCKY_LEG_CONTACT_ARC } RockyLegContactKind;
+typedef enum { ROCKY_LEG_CONTACT_KNEE, ROCKY_LEG_CONTACT_FOOT, ROCKY_LEG_CONTACT_ARC,
+               // Not actually a LEG part -- a Rocky rectangle corner --
+               // only ever produced by rockyToppleContactPoints below, never
+               // by rockyLegContactPoints itself. Kept in this same enum
+               // (rather than a whole separate type) so rockyToppleContactPoints
+               // can reuse RockyLegContact/RockyLegContactKind as-is instead
+               // of duplicating both. Deliberately never produced by
+               // rockyLegContactPoints -- legRestingOnImmovableJoint further
+               // below specifically wants to know whether something on the
+               // LEG itself has settled, regardless of whether the body is
+               // separately resting on a corner, and relies on this value
+               // never showing up from that call. See rockyToppleContactPoints'
+               // own comment for the full story.
+               ROCKY_LEG_CONTACT_BODY_CORNER } RockyLegContactKind;
 
 // One candidate contact point on the leg -- either joint circle, or a
 // single sample point along one of the two shin fillet arcs -- together
@@ -2148,6 +2161,49 @@ static int rockyBodySettleGrowthStreak = 0;
 // true balance point instead of oscillating across it forever.
 static int rockyPivotSide = 0;
 
+// The pivot DIRECTION (-1 or +1, matching the dir loop below; 0 = no
+// commit yet, or just reset by a fresh landing) that Probe 2 actually
+// committed to on its MOST RECENT commit, whichever of bestDrop/
+// bestComDrop/bestClearanceGain/the scout fallback made that commit.
+// This is a different axis from rockyPivotSide just above -- that one
+// tracks which SIDE of the mass center the contact point sits on
+// (catches the pivot itself alternating sides); this one tracks which
+// way the body last actually turned (catches the CHOSEN criterion
+// alternating instead). A real report showed bodyAngle stuck bouncing
+// forever between two values 0.25deg apart, one tick committing via
+// bestDrop in one direction, the next tick committing via bestComDrop
+// in the OTHER direction from the new angle -- each criterion was
+// individually correct by its own narrow measure at the moment it
+// fired, and directionsStraddle never caught it because on any single
+// tick only ONE direction ever qualified (never both at once), so
+// there was nothing to straddle within that tick; the two opposing
+// commits were spread across separate ticks instead. Checked right
+// before any of Probe 2's three direct branches (or the scout
+// fallback) would commit: if the direction about to be applied is the
+// exact reverse of the direction just committed last tick, that's the
+// same oscillation shape directionsStraddle/rockyPivotSide already
+// guard against, just visible only across ticks instead of within
+// one -- so it's treated the same way, halving rockyBodySettleStep
+// instead of reversing, rather than committing. Reset to 0 at every
+// fresh-landing reset, alongside rockyPivotSide itself.
+static int rockyBodyLastCommitDir = 0;
+
+// Counts CONSECUTIVE ticks where rockyBodyLastCommitDir's own guard
+// (immediately above) actually blocked a reversal -- incremented in each
+// of its four copies (bestDrop/bestComDrop/bestClearanceGain/scout) right
+// where they shrink instead of committing, reset to 0 by any real commit
+// in ANY direction (same four places) as well as everywhere
+// rockyBodyLastCommitDir itself is reset. A real report showed the guard
+// becoming a NEW deadlock of its own: once Probe 2 had already pivoted
+// several degrees of genuine forward progress and then needed one clean
+// reversal to correct an overshoot, every attempt to do so kept getting
+// blocked and shrunk forever, with nothing ever letting it through -- see
+// SIMULATION_ROCKY_BODY_REVERSAL_BLOCK_STREAK's own comment (config.h)
+// for the exact reasoning on why a long-enough run of blocks is treated
+// as that, not as the original same-tick criterion-flip-flop this guard
+// exists for.
+static int rockyBodyReversalBlockedStreak = 0;
+
 // Set TRUE for the duration of an E/Q-triggered settle pass (see the
 // WM_KEYDOWN kickoff below) to stop Probe 1 (knee-bending) from firing
 // while the USER is the one actively driving kneeAngle -- without this,
@@ -2164,51 +2220,190 @@ static int rockyPivotSide = 0;
 static BOOL rockyKneeSettleSuppressed = FALSE;
 
 
-// The leg's own current world position (robot-scene space, same as
-// bodyX/bodyY/translateActiveRobot, not env-pixel space) of whichever
-// point -- knee, foot, or a shin arc sample -- is closest to the
-// environment right now. Probe 2 below pivots its rotation around
-// whichever point this returns, instead of around Rocky's own rectangle
-// center: a real object balanced on one point doesn't spin in place
-// around its own centroid when gravity tips it, it rotates around
-// whatever's actually touching the ground -- see rotateRockyBodyAroundPivot's
-// own comment just below for the mechanics, and rockyLegContactPoints'
-// own comment above for why this now looks past just the two joint
-// circles. Falls back to the rectangle's own center when the leg is
-// hidden (nothing else to check, same as Probe 1 skipping entirely in
-// that case) -- there is no meaningful "contact point" left to pivot
-// around, so this just preserves the old center-pivot behavior for a
-// legless Rocky.
+// Same idea as rockyLegContactPoints above -- finds the CLOSEST and
+// SECOND-CLOSEST candidate points to the environment -- but the pool now
+// spans the WHOLE assembly: the leg's own three parts (via
+// rockyLegContactPoints, when the leg isn't hidden) PLUS Rocky's own four
+// rectangle corners (when the body isn't hidden), not the leg alone. This
+// is deliberately a SEPARATE function from rockyLegContactPoints, not a
+// change to it -- rockyLegContactPoints itself still only ever looks at
+// the leg, exactly as before, because legRestingOnImmovableJoint further
+// below genuinely wants that narrower answer (see its own comment: a
+// dangling foot should keep Probe 1 actively trying to bring it down
+// even while the body is separately resting on a corner, not freeze
+// kneeAngle just because the corner happens to already be flush).
+//
+// This wider version exists for rockyTopplePivotWorld/rockyDanglingPointClearance
+// just below, which need the TRUE closest point across the whole
+// assembly -- a real report showed exactly why the leg-only version
+// wasn't enough for them: a Rocky resting flush on its own rectangle
+// corner (screenshot: one red dot right at the corner, on the ground
+// line, nothing else), with the foot dangling a hair off the ground and
+// never quite reaching it, forever. rockyTopplePivotWorld (leg-only at
+// the time) kept pivoting the whole assembly around whichever LEG point
+// happened to be closest -- the foot itself, the closest thing ON the
+// leg, but still genuinely off the ground -- never around the corner
+// that was ACTUALLY touching, so nothing ever rotated the assembly
+// around its real, physical contact to bring the foot the rest of the
+// way down. A real object toppling over its own corner pivots around
+// THAT corner, not around some other part of itself that merely happens
+// to be nearest the ground -- same "pivot around whatever's actually
+// touching, not around some unrelated reference point" idea
+// rockyLegContactPoints' own comment already covers for the leg-only
+// case, just widened to cover the body too.
+//
+// Rectangle corners are tested exactly (computeRockyRectSegments' own
+// four segment start points, one call, cheap), not sampled along each
+// edge -- if a whole edge were genuinely flush against a straight
+// environment surface, at least one of its two corners reads the same
+// near-zero clearance as every other point on that edge, so a corner-only
+// test still finds the true contact without the cost of a full edge
+// sampling pass (this runs inside the same per-tick fast-forward loop
+// applyGravityStep already calls advanceRockySettle from, so it matters).
+// Clearance uses combinedRadius = simEnvLineHalfWidthWorld() alone (no
+// eArcThickness-style padding) -- a rectangle corner is real filled-shape
+// geometry, not a bare curve, matching robotCollidesWithEnvironment's own
+// treatment of these exact same edges (see its own comment on why
+// eArcThickness would be the wrong convention here).
+//
+// A hidden leg or hidden body simply contributes nothing to the pool
+// (each guarded the same way the rest of this file already treats a
+// hidden part -- not sampled, not collided, not pivoted around). If
+// BOTH are hidden there is genuinely nothing left to test at all;
+// rockyTopplePivotWorld's own fallback (see below) covers that
+// degenerate case, not this function.
+// Sticky memory of which CATEGORY (the leg's own knee/foot/arc, or one of
+// Rocky's own rectangle corners) most recently won the toppling pivot --
+// 0 before anything has been decided yet (or right after a fresh-landing
+// reset, alongside rockyPivotSide/rockyBodyLastCommitDir), +1 once a leg
+// point has won, -1 once a body corner has. See
+// SIMULATION_ROCKY_TOPPLE_PIVOT_HYSTERESIS's own comment (config.h) for
+// the real report this exists for: a leg point and a body corner sitting
+// at nearly the same tiny clearance made the plain "whichever candidate
+// has the smaller clearance wins" comparison flip the pivot's entire
+// IDENTITY back and forth between two completely different parts of the
+// robot every single tick, not the gradual same-kind crossing
+// rockyPivotSide already handles. rockyToppleContactPoints below only
+// lets a leg<->body handoff happen once the new category is closer by
+// more than that hysteresis margin, using this to remember which side
+// of that margin last tick's decision landed on.
+static int rockyToppleLastPivotCategory = 0;
+
+static void rockyToppleContactPoints(const Rocky* r, RockyLegContact* closest, RockyLegContact* secondClosest)
+{
+    // Never-wins placeholders (huge clearance) for whichever half of the
+    // assembly is hidden.
+    RockyLegContact legBest = { { 0.0f, 0.0f }, 1e9f, ROCKY_LEG_CONTACT_KNEE };
+    RockyLegContact legSecond = legBest;
+    BOOL haveLeg = !r->legHidden;
+
+    if (haveLeg)
+        rockyLegContactPoints(r, &legBest, &legSecond);
+
+    RockyLegContact bodyBest = { { 0.0f, 0.0f }, 1e9f, ROCKY_LEG_CONTACT_BODY_CORNER };
+    RockyLegContact bodySecond = bodyBest;
+    BOOL haveBody = !r->bodyHidden;
+
+    if (haveBody)
+    {
+        RockyEdgeSegment rectEdges[NUM_ROCKY_RECT_SEGMENTS];
+        computeRockyRectSegments(*r, rectEdges);
+
+        float combinedRadius = simEnvLineHalfWidthWorld();
+
+        for (int e = 0; e < NUM_ROCKY_RECT_SEGMENTS; e++)
+        {
+            PointF cornerWorld = rectEdges[e].start; // each segment's own start is one distinct corner -- 4 segments cover all 4 corners exactly once
+            float ecx, ecy;
+            robotPointToEnvWorld(cornerWorld.x, cornerWorld.y, &ecx, &ecy);
+            float clearance = nearestEnvDistance(ecx, ecy) - combinedRadius;
+
+            RockyLegContact candidate = { cornerWorld, clearance, ROCKY_LEG_CONTACT_BODY_CORNER };
+
+            if (candidate.clearance < bodyBest.clearance) { bodySecond = bodyBest; bodyBest = candidate; }
+            else if (candidate.clearance < bodySecond.clearance) { bodySecond = candidate; }
+        }
+    }
+
+    // Decide which CATEGORY wins the pivot -- see rockyToppleLastPivotCategory's
+    // own comment above and SIMULATION_ROCKY_TOPPLE_PIVOT_HYSTERESIS's
+    // (config.h) for the full reasoning. Only the very first tick since a
+    // fresh-landing reset (rockyToppleLastPivotCategory == 0, nothing to
+    // be sticky about yet) picks the plain closest with no margin;
+    // every tick after that requires the OTHER category to beat whichever
+    // one is currently pivoting by more than the hysteresis margin before
+    // switching.
+    BOOL useLeg;
+    if (!haveLeg)
+        useLeg = FALSE;
+    else if (!haveBody)
+        useLeg = TRUE;
+    else if (rockyToppleLastPivotCategory == 0)
+        useLeg = (legBest.clearance <= bodyBest.clearance);
+    else if (rockyToppleLastPivotCategory > 0)
+        useLeg = !(bodyBest.clearance < legBest.clearance - SIMULATION_ROCKY_TOPPLE_PIVOT_HYSTERESIS);
+    else
+        useLeg = (legBest.clearance < bodyBest.clearance - SIMULATION_ROCKY_TOPPLE_PIVOT_HYSTERESIS);
+
+    rockyToppleLastPivotCategory = useLeg ? 1 : -1;
+
+    RockyLegContact best = useLeg ? legBest : bodyBest;
+    RockyLegContact otherCategoryBest = useLeg ? bodyBest : legBest;
+    RockyLegContact sameCategorySecond = useLeg ? legSecond : bodySecond;
+    RockyLegContact second = (otherCategoryBest.clearance < sameCategorySecond.clearance) ? otherCategoryBest : sameCategorySecond;
+
+    *closest = best;
+    *secondClosest = second;
+}
+
+// The whole assembly's own current world position (robot-scene space,
+// same as bodyX/bodyY/translateActiveRobot, not env-pixel space) of
+// whichever point -- leg (knee/foot/shin arc) OR body rectangle corner --
+// is closest to the environment right now. Probe 2 below pivots its
+// rotation around whichever point this returns, instead of around
+// Rocky's own rectangle center: a real object balanced on one point
+// doesn't spin in place around its own centroid when gravity tips it, it
+// rotates around whatever's actually touching the ground -- see
+// rotateRockyBodyAroundPivot's own comment just below for the mechanics,
+// and rockyToppleContactPoints' own comment above for why this now looks
+// across the WHOLE assembly, not just the leg. Falls back to the
+// rectangle's own center only in the fully degenerate case of both the
+// leg AND the body hidden -- there is then genuinely no real contact
+// point left to pivot around at all, so this just preserves the old
+// center-pivot behavior for that one edge case.
 static PointF rockyTopplePivotWorld(const Rocky* r)
 {
-    if (r->legHidden)
+    if (r->legHidden && r->bodyHidden)
         return getRockyCenter(*r);
 
     RockyLegContact closest, secondClosest;
-    rockyLegContactPoints(r, &closest, &secondClosest);
+    rockyToppleContactPoints(r, &closest, &secondClosest);
     return closest.world;
 }
 
-// Clearance of whichever leg point is currently SECOND-closest to the
-// environment -- i.e. not the one rockyTopplePivotWorld picked as the
-// pivot, but the next one in line -- the point Probe 2's rotation is
-// actually trying to bring down to the ground. See rockyLegContactPoints'
-// own comment above for why this now searches the shin arcs too, not
-// just the knee/foot circles. Used by Probe 2's own "dangling point"
-// fallback below, the same idea as Probe 1's baseFootClearance/
-// bestClearanceGain a little further up: rotating around a point that's
-// ALREADY on the ground holds THAT point's own clearance pinned at ~0 for
-// the whole rotation (that's the definition of pivoting around it), so
-// dropActiveRobotToRest's whole-body translate test can never see any
-// benefit until the dangling point ALSO reaches the ground -- tracking
-// its clearance directly is the only way to reward the rotation while
-// it's still mid-tip, instead of only ever being able to detect the
-// single exact instant both points cross zero together (which a
-// fixed-size angle step will almost always step past).
+// Clearance of whichever point (leg or body corner) is currently
+// SECOND-closest to the environment -- i.e. not the one
+// rockyTopplePivotWorld picked as the pivot, but the next one in line --
+// the point Probe 2's rotation is actually trying to bring down to the
+// ground. See rockyToppleContactPoints' own comment above for why this
+// now searches the body corners too, not just the leg. Used by Probe 2's
+// own "dangling point" fallback below, the same idea as Probe 1's
+// baseFootClearance/bestClearanceGain a little further up: rotating
+// around a point that's ALREADY on the ground holds THAT point's own
+// clearance pinned at ~0 for the whole rotation (that's the definition
+// of pivoting around it), so dropActiveRobotToRest's whole-body
+// translate test can never see any benefit until the dangling point
+// ALSO reaches the ground -- tracking its clearance directly is the
+// only way to reward the rotation while it's still mid-tip, instead of
+// only ever being able to detect the single exact instant both points
+// cross zero together (which a fixed-size angle step will almost always
+// step past). Only ever called with !r->legHidden (see its own call
+// site's guard), so the legHidden-and-bodyHidden degenerate case
+// rockyTopplePivotWorld itself guards against never reaches here.
 static float rockyDanglingPointClearance(const Rocky* r)
 {
     RockyLegContact closest, secondClosest;
-    rockyLegContactPoints(r, &closest, &secondClosest);
+    rockyToppleContactPoints(r, &closest, &secondClosest);
     return secondClosest.clearance;
 }
 
@@ -2385,13 +2580,47 @@ static void advanceRockySettle(void)
     // for the same reason every other clearance check in this function is:
     // a hair of float noise right at 0 shouldn't flip this on and off tick
     // to tick.
+    //
+    // Tried, and REVERTED, adding a symmetric "BODY CORNER" case here
+    // (checking rockyToppleContactPoints' wider leg+body answer, freezing
+    // Probe 1 whenever a body corner was the immovable pivot): a real
+    // report showed kneeAngle winding past -280 degrees with a corner
+    // long since settled as Probe 2's pivot, which looked at first like
+    // the exact same "crouching over an already-fixed point" pathology
+    // FOOT's own paragraph describes. But unlike FOOT/KNEE/ARC -- where
+    // the frozen point and the point Probe 1 moves are THE SAME point --
+    // a resting corner and a still-dangling foot are DIFFERENT points on
+    // rigid parts connected by an adjustable knee, so bending the knee
+    // can still genuinely swing the foot closer while the corner stays
+    // fixed; that's the whole "does NOT block Probe 1's still-legitimate
+    // job of swinging a still-dangling foot down" case the paragraph
+    // above this one already calls out by name. Freezing on the corner
+    // alone fired the instant the corner registered as resting -- which
+    // is essentially IMMEDIATELY, since a topple pivot only wins the
+    // selection in the first place by already being near-zero-clearance
+    // -- silencing Probe 1 before it ever got to swing the foot down at
+    // all, not just once it had genuinely finished. A real report showed
+    // this plainly too: the knee probe staying quiet for an entire
+    // multi-degree body-toppling pass, the foot never gaining any ground
+    // at all. Left as leg-only, exactly as it was before that attempt --
+    // the genuine -280-degree runaway needs a more targeted fix specific
+    // to whatever lets a whole-body drop keep reporting real room while
+    // a corner's own clearance doesn't actually move, not a blanket
+    // freeze on the corner merely existing.
     BOOL legRestingOnImmovableJoint = FALSE;
+    // Captured alongside legRestingOnImmovableJoint purely for the
+    // diagnostic printf below (Probe 1's own else-branch, further down)
+    // -- not used for any decision here.
+    RockyLegContactKind pivotKindForDiagnostic = ROCKY_LEG_CONTACT_KNEE;
+    float legRestingOnImmovableJointClearanceForDiagnostic = 0.0f;
     if (!r->legHidden)
     {
         RockyLegContact currentContact, currentSecondContact;
         rockyLegContactPoints(r, &currentContact, &currentSecondContact);
         legRestingOnImmovableJoint = (currentContact.kind == ROCKY_LEG_CONTACT_ARC || currentContact.kind == ROCKY_LEG_CONTACT_KNEE || currentContact.kind == ROCKY_LEG_CONTACT_FOOT)
                                    && (currentContact.clearance < SIMULATION_LEG_SETTLE_MIN_DROP);
+        pivotKindForDiagnostic = currentContact.kind;
+        legRestingOnImmovableJointClearanceForDiagnostic = currentContact.clearance;
     }
 
     // Whether each probe committed a real move on THIS tick -- used only
@@ -2736,6 +2965,26 @@ static void advanceRockySettle(void)
             }
         }
     }
+    else if (!r->legHidden)
+    {
+        // Diagnostic only, temporary -- a real report showed Probe 1
+        // staying completely silent (no [SETTLE] kneeAngle=... lines at
+        // all) for long stretches while Probe 2 alone kept pivoting the
+        // body, with the foot left visibly dangling well clear of the
+        // ground the whole time and no [SETTLE] converged line either
+        // (so it wasn't genuine convergence). rockyKneeSettleSuppressed
+        // was the leading suspect (its own comment describes it as set
+        // TRUE on every E/Q WM_KEYDOWN) but turned out to never actually
+        // be set TRUE anywhere in this file -- only ever declared FALSE
+        // and reset to FALSE -- so it can't be the real cause; this
+        // prints whichever of the four OTHER conditions is actually
+        // false instead of guessing further.
+        printf("[SETTLE] Probe 1 (knee) skipped this tick -- suppressed=%d legRestingOnImmovableJoint=%d(kind=%d clearance=%.5f) probe1Enabled=%d kneeStep=%.5f (min=%.5f)\n",
+               rockyKneeSettleSuppressed, legRestingOnImmovableJoint,
+               legRestingOnImmovableJoint ? (int)pivotKindForDiagnostic : -1,
+               legRestingOnImmovableJointClearanceForDiagnostic,
+               rockyProbe1Enabled, rockyKneeSettleStep, SIMULATION_LEG_SETTLE_MIN_STEP_DEG);
+    }
 
     // Probe 2: rotate the rectangle itself. This used to just change
     // r->angle directly, which always rotates around (bodyX, bodyY) --
@@ -2786,6 +3035,7 @@ static void advanceRockySettle(void)
         float bestBodyAngle = baseBodyAngle;
         PointF bestShift = { 0.0f, 0.0f };
         float bestResidual = 0.0f;
+        int bestDropDir = 0; // -1/+1 once bestDrop has a real winner -- see rockyBodyLastCommitDir above
 
         // Fallback for the exact mirror of Probe 1's "dangling foot" case
         // above, just from the other direction: as long as the point
@@ -2819,6 +3069,7 @@ static void advanceRockySettle(void)
         float bestClearanceBodyAngle = baseBodyAngle;
         PointF bestClearanceShift = { 0.0f, 0.0f };
         float bestClearanceResidual = 0.0f;
+        int bestClearanceGainDir = 0; // same idea as bestDropDir above
 
         // Third fallback, alongside bestDrop and bestClearanceGain just
         // above: the actual height of the whole body's CENTER OF MASS
@@ -2862,6 +3113,7 @@ static void advanceRockySettle(void)
         float bestComBodyAngle = baseBodyAngle;
         PointF bestComShift = { 0.0f, 0.0f };
         float bestComResidual = 0.0f;
+        int bestComDropDir = 0; // same idea as bestDropDir above
 
         // Raw drop found in EACH direction, kept separately from bestDrop
         // above (which only remembers the winner) -- see the unified
@@ -2899,6 +3151,7 @@ static void advanceRockySettle(void)
                 bestBodyAngle = r->angle;
                 bestShift = shift;
                 bestResidual = residual;
+                bestDropDir = dir;
             }
 
             // Same "did this get measurably closer, without embedding"
@@ -2925,6 +3178,7 @@ static void advanceRockySettle(void)
                     bestComBodyAngle = r->angle;
                     bestComShift = shift;
                     bestComResidual = residual;
+                    bestComDropDir = dir;
                 }
 
                 if (!r->legHidden)
@@ -2941,6 +3195,7 @@ static void advanceRockySettle(void)
                         bestClearanceBodyAngle = r->angle;
                         bestClearanceShift = shift;
                         bestClearanceResidual = residual;
+                        bestClearanceGainDir = dir;
                     }
                 }
             }
@@ -2988,6 +3243,24 @@ static void advanceRockySettle(void)
                    r->angle, dropAtDir[0], dropAtDir[1], comDropAtDir[0], comDropAtDir[1], gainAtDir[0], gainAtDir[1]);
             rockyBodySettleStep *= 0.5f;
         }
+        else if (rockyBodyLastCommitDir != 0 && bestDrop > SIMULATION_LEG_SETTLE_MIN_DROP && bestDropDir == -rockyBodyLastCommitDir
+                 && rockyBodyReversalBlockedStreak < SIMULATION_ROCKY_BODY_REVERSAL_BLOCK_STREAK)
+        {
+            // bestDrop would fire below, but in the OPPOSITE direction
+            // from whatever Probe 2 actually committed last tick -- see
+            // rockyBodyLastCommitDir's own comment above for the real
+            // report this guards against (bestDrop and bestComDrop
+            // disagreeing on direction from one tick to the next,
+            // bouncing bodyAngle between two fixed values forever).
+            // Shrinking here instead of reversing is the same fix
+            // directionsStraddle/rockyPivotSide already use for their own
+            // shape of this problem. See rockyBodyReversalBlockedStreak's
+            // own comment for the extra trailing condition above.
+            rockyBodyReversalBlockedStreak++;
+            printf("[SETTLE] bodyAngle=%.2f bestDrop wants to pivot back the OPPOSITE way from last tick's own commit (dir %d -> %d) -- shrinking instead of reversing, to stop it bouncing between two angles forever (blocked streak %d/%d)\n",
+                   r->angle, rockyBodyLastCommitDir, bestDropDir, rockyBodyReversalBlockedStreak, SIMULATION_ROCKY_BODY_REVERSAL_BLOCK_STREAK);
+            rockyBodySettleStep *= 0.5f;
+        }
         else if (bestDrop > SIMULATION_LEG_SETTLE_MIN_DROP)
         {
             // Same per-tick cap as the knee probe above, same reason --
@@ -3008,8 +3281,33 @@ static void advanceRockySettle(void)
             translateActiveRobot(0.0f, -appliedDrop);
             probe2Committed = TRUE;
             probe2DirectCommit = TRUE;
+            // Only a genuine REVERSAL (a new committed direction that
+            // actually differs from the last one) clears the blocked-
+            // streak below -- an ordinary commit that just continues the
+            // SAME direction doesn't mean the standoff with the opposite
+            // direction is resolved, only that this direction still has
+            // its own separate progress available too. Zeroing on every
+            // commit (tried first) let a run of same-direction commits
+            // keep quietly erasing the streak just before it reached
+            // SIMULATION_ROCKY_BODY_REVERSAL_BLOCK_STREAK, so the genuine
+            // reversal it was there to eventually allow never actually
+            // got its turn -- see that constant's own comment (config.h).
+            if (bestDropDir != rockyBodyLastCommitDir)
+                rockyBodyReversalBlockedStreak = 0;
+            rockyBodyLastCommitDir = bestDropDir;
             printf("[SETTLE] bodyAngle=%.2f pivoted the assembly %.4f deg around its ground contact, it fell %.5f further this tick (of %.5f available)\n",
                    r->angle, rockyBodySettleStep, appliedDrop, bestDrop);
+        }
+        else if (rockyBodyLastCommitDir != 0 && bestComDrop > SIMULATION_LEG_SETTLE_MIN_COM_DROP && bestComDropDir == -rockyBodyLastCommitDir
+                 && rockyBodyReversalBlockedStreak < SIMULATION_ROCKY_BODY_REVERSAL_BLOCK_STREAK)
+        {
+            // Same reversal guard as bestDrop's own copy just above, for
+            // the exact bestDrop-then-bestComDrop-reversing pairing the
+            // real report showed -- see rockyBodyLastCommitDir's comment.
+            rockyBodyReversalBlockedStreak++;
+            printf("[SETTLE] bodyAngle=%.2f bestComDrop wants to pivot back the OPPOSITE way from last tick's own commit (dir %d -> %d) -- shrinking instead of reversing, to stop it bouncing between two angles forever (blocked streak %d/%d)\n",
+                   r->angle, rockyBodyLastCommitDir, bestComDropDir, rockyBodyReversalBlockedStreak, SIMULATION_ROCKY_BODY_REVERSAL_BLOCK_STREAK);
+            rockyBodySettleStep *= 0.5f;
         }
         else if (bestComDrop > SIMULATION_LEG_SETTLE_MIN_COM_DROP)
         {
@@ -3023,8 +3321,23 @@ static void advanceRockySettle(void)
                 translateActiveRobot(0.0f, bestComResidual);
             probe2Committed = TRUE;
             probe2DirectCommit = TRUE;
+            // See bestDrop's own copy of this same check just above for
+            // why only a genuine direction CHANGE clears the streak.
+            if (bestComDropDir != rockyBodyLastCommitDir)
+                rockyBodyReversalBlockedStreak = 0;
+            rockyBodyLastCommitDir = bestComDropDir;
             printf("[SETTLE] bodyAngle=%.2f pivoted the assembly %.4f deg around its ground contact, center of mass dropped %.5f further (no further translation, gravity settling by mass alone)\n",
                    r->angle, rockyBodySettleStep, bestComDrop);
+        }
+        else if (rockyBodyLastCommitDir != 0 && bestClearanceGain > SIMULATION_LEG_SETTLE_MIN_CLEARANCE_GAIN && bestClearanceGainDir == -rockyBodyLastCommitDir
+                 && rockyBodyReversalBlockedStreak < SIMULATION_ROCKY_BODY_REVERSAL_BLOCK_STREAK)
+        {
+            // Same reversal guard again, this time for bestClearanceGain --
+            // see rockyBodyLastCommitDir's comment above.
+            rockyBodyReversalBlockedStreak++;
+            printf("[SETTLE] bodyAngle=%.2f bestClearanceGain wants to pivot back the OPPOSITE way from last tick's own commit (dir %d -> %d) -- shrinking instead of reversing, to stop it bouncing between two angles forever (blocked streak %d/%d)\n",
+                   r->angle, rockyBodyLastCommitDir, bestClearanceGainDir, rockyBodyReversalBlockedStreak, SIMULATION_ROCKY_BODY_REVERSAL_BLOCK_STREAK);
+            rockyBodySettleStep *= 0.5f;
         }
         else if (bestClearanceGain > SIMULATION_LEG_SETTLE_MIN_CLEARANCE_GAIN)
         {
@@ -3044,6 +3357,11 @@ static void advanceRockySettle(void)
                 translateActiveRobot(0.0f, bestClearanceResidual);
             probe2Committed = TRUE;
             probe2DirectCommit = TRUE;
+            // See bestDrop's own copy of this same check further above
+            // for why only a genuine direction CHANGE clears the streak.
+            if (bestClearanceGainDir != rockyBodyLastCommitDir)
+                rockyBodyReversalBlockedStreak = 0;
+            rockyBodyLastCommitDir = bestClearanceGainDir;
             printf("[SETTLE] bodyAngle=%.2f pivoted the assembly %.4f deg around its ground contact, dangling point %.5f closer to the ground (no further translation)\n",
                    r->angle, rockyBodySettleStep, bestClearanceGain);
         }
@@ -3162,7 +3480,25 @@ static void advanceRockySettle(void)
                 }
             }
 
-            if (scoutWinner != -1)
+            if (scoutWinner != -1 && rockyBodyLastCommitDir != 0 && ((scoutWinner == 0) ? -1 : 1) == -rockyBodyLastCommitDir
+                && rockyBodyReversalBlockedStreak < SIMULATION_ROCKY_BODY_REVERSAL_BLOCK_STREAK)
+            {
+                // Same reversal guard as the three direct branches above
+                // (see rockyBodyLastCommitDir's comment) -- the scouted
+                // angle is real progress by its own measure, but it's
+                // back the way Probe 2 just came from last tick, so
+                // committing it would be the exact same cross-tick
+                // bounce, just found via the scout path instead of a
+                // direct branch. scoutedBody stays FALSE, which falls
+                // through to the shrink just below, same as finding no
+                // scouted improvement at all. See
+                // rockyBodyReversalBlockedStreak's own comment for the
+                // extra trailing condition above.
+                rockyBodyReversalBlockedStreak++;
+                printf("[SETTLE] bodyAngle=%.2f scouted improvement is back the OPPOSITE way from last tick's own commit -- shrinking instead of reversing, same as the direct branches above (blocked streak %d/%d)\n",
+                       r->angle, rockyBodyReversalBlockedStreak, SIMULATION_ROCKY_BODY_REVERSAL_BLOCK_STREAK);
+            }
+            else if (scoutWinner != -1)
             {
                 int dir = (scoutWinner == 0) ? -1 : 1;
                 float scoutDrop = scoutDropAtDir[scoutWinner];
@@ -3211,6 +3547,11 @@ static void advanceRockySettle(void)
                        r->angle, dir * SIMULATION_LEG_SETTLE_SCOUT_STEP_DEG, scoutDrop, scoutComDrop, scoutGain, nudgeAppliedDrop);
                 scoutedBody = TRUE;
                 probe2Committed = TRUE;
+                // See bestDrop's own copy of this same check further above
+                // for why only a genuine direction CHANGE clears the streak.
+                if (dir != rockyBodyLastCommitDir)
+                    rockyBodyReversalBlockedStreak = 0;
+                rockyBodyLastCommitDir = dir;
             }
 
             if (!scoutedBody)
@@ -3344,7 +3685,24 @@ static void advanceRockySettle(void)
     // which also unconditionally pumps the same driver) keeps going,
     // which is exactly "press e or q once and the whole robot starts
     // falling, faster when the cursor moves."
-    if ((r->legHidden || rockyKneeSettleSuppressed || rockyKneeSettleStep < SIMULATION_LEG_SETTLE_MIN_STEP_DEG)
+    // legRestingOnImmovableJoint added here alongside legHidden/
+    // rockyKneeSettleSuppressed -- same reasoning, a real gap this
+    // diagnostic pass found: whenever Probe 1's own top-level guard
+    // (further up) is false because the leg's current contact is one
+    // Probe 1 must leave alone (ARC/KNEE/FOOT already resting), the
+    // block that shrinks rockyKneeSettleStep is never even entered, so
+    // it just sits at whatever it was last reset to (its full starting
+    // value, typically) forever -- waiting for it to drop below
+    // SIMULATION_LEG_SETTLE_MIN_STEP_DEG was waiting for something that
+    // can structurally never happen while this stays true, exactly like
+    // the legHidden and rockyKneeSettleSuppressed cases already handled
+    // here. Without this, a landing where the leg settles onto ARC/KNEE/
+    // FOOT while Probe 2 ALSO happens to run its own step down to zero
+    // (nothing left revives it, e.g. no further E/Q taps) left both
+    // probes completely silent forever -- no further [SETTLE] lines, no
+    // [SETTLE] converged line either -- instead of cleanly recognizing
+    // this as the resting pose the way it was clearly meant to.
+    if ((r->legHidden || rockyKneeSettleSuppressed || legRestingOnImmovableJoint || rockyKneeSettleStep < SIMULATION_LEG_SETTLE_MIN_STEP_DEG)
         && rockyBodySettleStep < SIMULATION_LEG_SETTLE_MIN_STEP_DEG)
     {
         // Both probes have been refined all the way down to the floor
@@ -3628,6 +3986,21 @@ static BOOL applyGravityStep(HWND hWnd, float step)
         // from whatever the PREVIOUS landing settled into.
         if (!suppressThisCall)
         {
+            // Diagnostic only, temporary -- pin down whether THIS reset
+            // (a fresh landed=FALSE -> TRUE transition between two
+            // applyGravityStep calls, not any of the four UI-event-driven
+            // resets elsewhere) is what's clearing rockyBodyLastCommitDir/
+            // rockyToppleLastPivotCategory mid-settle and letting Probe 2
+            // commit what looks like a reversal without the guard above
+            // catching it. If this line shows up sandwiched inside an
+            // otherwise-continuous settle run (no mode switch, no key/
+            // mouse release logged nearby), that confirms a landed/not-
+            // landed flicker -- most likely rotateRockyBodyAroundPivot's
+            // own sub-precision residual correction nudging the pivot
+            // corner's world Y by a hair -- is the real culprit, not a UI
+            // event.
+            printf("[SETTLE] fresh landing detected (landed=FALSE -> TRUE) -- resetting probe step sizes and anti-oscillation state\n");
+
             rockySettleConverged = FALSE;
             rockyKneeSettleStep = SIMULATION_LEG_SETTLE_STEP_DEG;
             rockyBodySettleStep = SIMULATION_BODY_SETTLE_STEP_DEG;
@@ -3635,6 +4008,9 @@ static BOOL applyGravityStep(HWND hWnd, float step)
             rockyKneeSettleGrowthStreak = 0;
             rockyBodySettleGrowthStreak = 0;
             rockyPivotSide = 0;
+            rockyBodyLastCommitDir = 0;
+            rockyToppleLastPivotCategory = 0;
+            rockyBodyReversalBlockedStreak = 0;
         }
 
         if (app.robotScene.activeKind != ROBOT_KIND_ROCKY)
@@ -3989,7 +4365,30 @@ static void advanceAutoGravity(HWND hWnd)
 // tiny "is anything still moving" check running forever).
 static void advancePostRotateSettle(HWND hWnd)
 {
-    if (!postRotateSettleActive || appMode != APP_MODE_SIMULATION) return;
+    // Also bails while autoGravityActive is on -- both drivers ultimately
+    // funnel through the SAME applyGravityStep, and every kickoff site
+    // (VK_LEFT/RIGHT keyup, E/Q keyup, the Simulation-entry embed check,
+    // WM_LBUTTONUP drag-release) now requires autoGravityActive to have
+    // been on in the first place -- so without this, a still-active Auto
+    // Gravity session and this pass both call applyGravityStep on the
+    // SAME tick (WM_TIMER/WM_MOUSEMOVE call advanceAutoGravity then this,
+    // back to back, unconditionally). applyGravityStep's own landed
+    // branch also re-arms and fast-forwards advanceRockySettle every
+    // single time it's called, so two calls a tick doesn't just repeat
+    // idempotent work -- it runs the knee/body settle probes twice as
+    // often as the step-size/growth-streak bookkeeping assumes, and this
+    // function's own re-arm (rockySettleConverged = FALSE, step sizes
+    // reset to full) on top of whatever Auto Gravity's own tick had
+    // already refined them down to is exactly what a real report showed
+    // as Rocky floating while playing with E/Q with Auto Gravity already
+    // on and settled. Auto Gravity's own continuous driver already
+    // re-checks and corrects every tick regardless of whether this ever
+    // ran, so there's nothing this pass adds while it's on -- it only
+    // ever has real work left to do in the (now theoretical, since
+    // nothing can set postRotateSettleActive without autoGravityActive
+    // already being on) case of Auto Gravity being switched off again
+    // while this was still mid-pass.
+    if (!postRotateSettleActive || appMode != APP_MODE_SIMULATION || autoGravityActive) return;
 
     // Same reasoning as advanceAutoGravity's own check just above -- don't
     // fight a manual drag in progress.
@@ -6065,7 +6464,27 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 if (autoGravityActive)
                     SetTimer(hWnd, AUTO_GRAVITY_TIMER_ID, SIMULATION_AUTO_GRAVITY_INTERVAL_MS, NULL);
                 else
+                {
                     KillTimer(hWnd, AUTO_GRAVITY_TIMER_ID);
+
+                    // Also clear a still-active postRotateSettleActive here --
+                    // it can only ever have been kicked off while
+                    // autoGravityActive was on (every kickoff site requires
+                    // it), and advancePostRotateSettle bails out for as long
+                    // as autoGravityActive stays on too, so a session started
+                    // by, say, an E/Q release earlier just sits there inert
+                    // and TRUE, never reaching its own convergence check that
+                    // would otherwise clear it. Turning gravity off right here
+                    // removes the block on advancePostRotateSettle (its guard
+                    // is "off unless autoGravityActive", not "off forever"),
+                    // which un-inerts that leftover TRUE and lets it start
+                    // actually driving applyGravityStep again on the very next
+                    // WM_MOUSEMOVE -- exactly the "moving the cursor drifts
+                    // Rocky down with Auto Gravity off" report this was all
+                    // meant to stop. Explicitly zeroing it here, the moment
+                    // gravity turns off, is what actually closes that gap.
+                    postRotateSettleActive = FALSE;
+                }
 
                 // Kick off the bottom-left "AUTO GRAVITY ON/OFF" toast --
                 // canvasRenderFrame reads these two each frame to compute
@@ -6159,26 +6578,59 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             if (app.robotScene.rocky.legHidden)
                 return 0;
 
-            // By explicit request: E/Q ONLY rotates the knee joint, full
-            // stop -- no LEGPUSH lift, no dropActiveRobotToRest snap, no
-            // settle-timer kickoff, nothing else touches the robot's
-            // position. All of that used to run automatically after every
-            // knee rotation specifically to keep the leg from visibly
-            // passing through the ground -- but each layer of that also
-            // ended up moving the BODY itself (a push up, a snap down, a
-            // gradual fall), which is exactly what kept reading as the
-            // robot falling/teleporting from a plain knee press instead of
-            // just the knee moving. If the new angle leaves the leg
-            // embedded in the ground, that is left exactly as-is here --
-            // nothing in this handler corrects it or starts anything that
-            // would. Auto Gravity (Shift+G) or a manual drag are still
-            // there if the user wants that resolved; this key no longer
-            // does it on their behalf.
+            // Used to ONLY rotate the knee joint with nothing else
+            // touching the robot -- no push, no drop, no settle -- because
+            // an earlier version ran dropActiveRobotToRest's full snap-to-
+            // rest correction unconditionally after every press, which read
+            // as the whole rectangle teleporting from a plain knee tap. By
+            // explicit request this now interacts with the ground again,
+            // but through the same small, bounded, collision-confirmed push
+            // WM_MOUSEWHEEL's own Shift+scroll joint-rotate and the plain
+            // Left/Right whole-body rotate both already use
+            // (resolveUpwardIfPenetrating) -- not the old unconditional
+            // snap, so bending the knee into the ground nudges the leg back
+            // out just far enough to clear it instead of jumping the whole
+            // robot.
             Rocky* r = &app.robotScene.rocky;
             float step = (wParam == 'E') ? -SIMULATION_JOINT_ROTATE_STEP_DEG : SIMULATION_JOINT_ROTATE_STEP_DEG;
             r->kneeAngle += step;
 
+            resolveUpwardIfPenetrating(hWnd, SIMULATION_SLOPE_CORRECTION_MAX);
+
+            // By explicit request: with Auto Gravity on, keep it actually
+            // stepping WHILE E/Q is held, not just once on release. Windows'
+            // own auto-repeat re-fires WM_KEYDOWN steadily for as long as the
+            // key stays down, which is exactly the same kind of message-queue
+            // pressure WM_MOUSEMOVE's own call to these already exists to
+            // fight (see advanceAutoGravity's comment) -- AUTO_GRAVITY_TIMER_ID's
+            // WM_TIMER is low-priority and would otherwise sit starved behind
+            // a steady stream of WM_KEYDOWN the same way it does behind
+            // WM_MOUSEMOVE, silently pausing the fall for as long as E/Q stays
+            // held. Calling all three here too, same as WM_MOUSEMOVE further
+            // down, keeps Auto Gravity (and, if it's separately on, Walk)
+            // advancing on every repeat instead of only catching up once the
+            // key comes back up -- all three no-op instantly whenever their
+            // own flag is off, exactly as they already do everywhere else.
+            advanceAutoGravity(hWnd);
+            advancePostRotateSettle(hWnd);
+            advanceGait(hWnd);
+
             InvalidateRect(hWnd, NULL, FALSE);
+
+            // The state above WAS already updating correctly every single
+            // repeat -- what wasn't updating was the SCREEN: a plain
+            // InvalidateRect only schedules a repaint, and WM_PAINT is just
+            // as low-priority as WM_TIMER, so it was sitting starved behind
+            // the same flood of auto-repeated WM_KEYDOWN messages the comment
+            // above already fixed for the physics side -- every repeat moved
+            // the robot, but nothing ever got drawn until the key came back up
+            // and the queue finally emptied, which read as "nothing happens
+            // until you release the key" even though it had been stepping the
+            // whole time. Same fix WM_MOUSEWHEEL's own rapid-scroll case
+            // already uses for exactly this reason (see its own comment):
+            // force an immediate synchronous repaint on every repeat instead
+            // of waiting for the queue to go quiet.
+            UpdateWindow(hWnd);
             return 0;
         }
 
@@ -6361,6 +6813,7 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
                   && (app.robotScene.rocky.legHidden || app.robotScene.rocky.bodyHidden))
                 && autoGravityActive)
             {
+                printf("[SETTLE] VK_LEFT/RIGHT keyup reset fired -- resetting probe step sizes and anti-oscillation state\n");
                 rockySettleConverged = FALSE;
                 rockyKneeSettleStep = SIMULATION_LEG_SETTLE_STEP_DEG;
                 rockyBodySettleStep = SIMULATION_BODY_SETTLE_STEP_DEG;
@@ -6368,6 +6821,9 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 rockyKneeSettleGrowthStreak = 0;
                 rockyBodySettleGrowthStreak = 0;
                 rockyPivotSide = 0;
+                rockyBodyLastCommitDir = 0;
+                rockyToppleLastPivotCategory = 0;
+                rockyBodyReversalBlockedStreak = 0;
                 rockyKneeSettleSuppressed = FALSE; // whole-body rotate: nothing else drives kneeAngle, Probe 1 is safe here
 
                 postRotateSettleActive = TRUE;
@@ -6397,12 +6853,72 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         // robot is already floating". Releasing the key is the real
         // signal that the user is done driving kneeAngle by hand, so
         // mirror VK_LEFT/VK_RIGHT's own keyup handling just above and
-        // clear the suppression here -- the settle timer this key's own
-        // keydown handler already started picks Probe 1 back up on its
-        // very next tick.
+        // clear the suppression here.
+        //
+        // By explicit request (same as WM_KEYDOWN's own
+        // resolveUpwardIfPenetrating above): actually kick off the settle
+        // pass here too now, same re-arm/postRotateSettleActive/SetTimer
+        // as VK_LEFT/VK_RIGHT's own keyup just above, gated the same way
+        // on autoGravityActive -- so releasing E/Q, like releasing a
+        // whole-body rotate, lets the leg settle the rest of the way onto
+        // whatever it's now resting against, but stays a true no-op with
+        // Auto Gravity off. Skipped for a legless Rocky same as
+        // WM_KEYDOWN's own early-out (there's nothing left to settle), but
+        // NOT skipped for a leg-only Rocky (bodyHidden) -- unlike the
+        // whole-body Left/Right rotate, bending just the knee never moves
+        // the (invisible) rectangle's corners, so the corner-embedding
+        // problem that skip exists for doesn't apply here.
         if ((wParam == 'E' || wParam == 'Q') && appMode == APP_MODE_SIMULATION && app.robotScene.activeKind == ROBOT_KIND_ROCKY)
         {
             rockyKneeSettleSuppressed = FALSE;
+
+            if (!app.robotScene.rocky.legHidden && autoGravityActive)
+            {
+                // Narrowed by explicit diagnosis: this used to reset ALL
+                // settle state on every E/Q release, including Probe 2's
+                // (body pivot) own DIRECTION/IDENTITY memory --
+                // rockyPivotSide, rockyBodyLastCommitDir,
+                // rockyToppleLastPivotCategory -- even though E/Q only
+                // ever drives the KNEE (Probe 1). A real report showed
+                // bodyAngle visibly oscillating during a run of ordinary
+                // knee taps, traced via the printf below to exactly
+                // this: every E/Q release was wiping Probe 2's reversal
+                // guard, so the very next tick's body-pivot commit
+                // sailed right through a guard that had just blocked
+                // the same reversal four ticks in a row.
+                //
+                // Tried dropping the rockyBodySettleStep reset too, not
+                // just the three identity/direction variables above --
+                // that broke a DIFFERENT thing: rockyBodySettleStep only
+                // ever grows back via SIMULATION_LEG_SETTLE_GROWTH_STREAK
+                // consecutive CLEAN commits (see that check above), which
+                // a run of reversal-guard blocks can never accumulate --
+                // each block only shrinks it, never grows it. Once it
+                // shrinks below SIMULATION_LEG_SETTLE_MIN_STEP_DEG, Probe
+                // 2's entire block (further up) stops being entered at
+                // all, so nothing can ever revive it again on its own,
+                // and the very next convergence check (right below this
+                // function) then falsely declares the settle DONE while
+                // the body is visibly still floating -- exactly the "now
+                // the rectangle doesn't fall down" a real report showed
+                // once this reset was dropped. So rockyBodySettleStep
+                // (and its own growth streak) IS still revived here, same
+                // as before -- it's the three IDENTITY variables that
+                // stay untouched, since those are what caused the
+                // guard-bypass, not the step size being large again (a
+                // large step with the guard still intact just gets
+                // reblocked and reshrunk correctly, no bypass).
+                printf("[SETTLE] E/Q keyup reset fired -- reviving knee+body probe step sizes, leaving body pivot direction/identity memory untouched\n");
+                rockySettleConverged = FALSE;
+                rockyKneeSettleStep = SIMULATION_LEG_SETTLE_STEP_DEG;
+                rockyBodySettleStep = SIMULATION_BODY_SETTLE_STEP_DEG;
+                rockyBothProbesCommittedStreak = 0;
+                rockyKneeSettleGrowthStreak = 0;
+                rockyBodySettleGrowthStreak = 0;
+
+                postRotateSettleActive = TRUE;
+                SetTimer(hWnd, AUTO_GRAVITY_TIMER_ID, SIMULATION_AUTO_GRAVITY_INTERVAL_MS, NULL);
+            }
         }
         return 0;
     }
@@ -6586,6 +7102,7 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 // move beyond this -- advancePostRotateSettle notices
                 // there's nothing left to do and shuts its own timer back
                 // off within a tick or two.
+                printf("[SETTLE] WM_LBUTTONUP drag-release reset fired -- resetting probe step sizes and anti-oscillation state\n");
                 rockySettleConverged = FALSE;
                 rockyKneeSettleStep = SIMULATION_LEG_SETTLE_STEP_DEG;
                 rockyBodySettleStep = SIMULATION_BODY_SETTLE_STEP_DEG;
@@ -6593,6 +7110,9 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 rockyKneeSettleGrowthStreak = 0;
                 rockyBodySettleGrowthStreak = 0;
                 rockyPivotSide = 0;
+                rockyBodyLastCommitDir = 0;
+                rockyToppleLastPivotCategory = 0;
+                rockyBodyReversalBlockedStreak = 0;
                 rockyKneeSettleSuppressed = FALSE;
 
                 postRotateSettleActive = TRUE;
@@ -7123,6 +7643,7 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	            // just turn Auto Gravity on for it now.
 	            if (robotCollidesWithEnvironment() && autoGravityActive)
 	            {
+	                printf("[SETTLE] Simulation-mode-entry reset fired -- resetting probe step sizes and anti-oscillation state\n");
 	                rockySettleConverged = FALSE;
 	                rockyKneeSettleStep = SIMULATION_LEG_SETTLE_STEP_DEG;
 	                rockyBodySettleStep = SIMULATION_BODY_SETTLE_STEP_DEG;
@@ -7130,6 +7651,9 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	                rockyKneeSettleGrowthStreak = 0;
 	                rockyBodySettleGrowthStreak = 0;
 	                rockyPivotSide = 0;
+	                rockyBodyLastCommitDir = 0;
+	                rockyToppleLastPivotCategory = 0;
+	                rockyBodyReversalBlockedStreak = 0;
 	                rockyKneeSettleSuppressed = FALSE;
 	                postRotateSettleActive = TRUE;
 	                SetTimer(hWnd, AUTO_GRAVITY_TIMER_ID, SIMULATION_AUTO_GRAVITY_INTERVAL_MS, NULL);
@@ -7290,6 +7814,19 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	            autoGravityActive = FALSE;
 	            autoGravityVelocity = 0.0f;
 	            KillTimer(hWnd, AUTO_GRAVITY_TIMER_ID);
+
+	            // Same reasoning as Shift+G's own turn-off (WM_KEYDOWN above):
+	            // a postRotateSettleActive session that was inert (blocked by
+	            // autoGravityActive being on) while we were still in
+	            // Simulation would otherwise survive the mode switch and wake
+	            // back up -- advancePostRotateSettle's guard only blocks it
+	            // while autoGravityActive is CURRENTLY on, not permanently --
+	            // the moment this same block just turned autoGravityActive
+	            // off, a leftover TRUE here would start driving
+	            // applyGravityStep off of WM_MOUSEMOVE again the next time
+	            // Simulation is re-entered, with Auto Gravity showing off the
+	            // whole time.
+	            postRotateSettleActive = FALSE;
 	        }
 
 	        // Don't let the toast linger into whatever mode we just switched

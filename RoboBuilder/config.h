@@ -845,6 +845,64 @@
 // coarser floor either.
 #define SIMULATION_LEG_SETTLE_MIN_COM_DROP 0.00002f
 
+// How much closer to the ground a NEW category of toppling-pivot
+// candidate (the leg's own knee/foot/arc versus Rocky's own rectangle
+// corners, see rockyToppleContactPoints in canvas.c) has to be than
+// whichever category was actually used as the pivot LAST tick, before
+// Probe 2 is allowed to switch categories at all. Without this, a pose
+// where a leg point and a body corner both sit at nearly the same tiny
+// clearance (a real report showed BOTH flipping every single tick, not
+// occasionally) makes rockyToppleContactPoints' plain "whichever
+// candidate has the smaller clearance" comparison flip the PIVOT ITSELF
+// back and forth between two entirely different points of the assembly
+// on nothing more than float-level noise each tick -- not the gradual,
+// same-kind crossing rockyPivotSide's own halving already handles (a
+// leg point sliding to the other side of the center of mass as the leg
+// itself rotates), but the pivot's very IDENTITY changing to a
+// completely different part of the robot. Since rotating around a
+// different point generally needs the OPPOSITE rotation sign to achieve
+// the same physical effect, each such flip also tripped
+// rockyBodyLastCommitDir's own cross-tick reversal guard, so the two
+// existing anti-oscillation mechanisms ended up fighting each other:
+// pivot flip, then several ticks of "shrinking instead of reversing,"
+// then a small commit, then another flip -- real net progress, but at a
+// small fraction of one real commit's worth of angle per tick, several
+// times slower than it should be, which is why bodyAngle above showed
+// it crawling for dozens of ticks without ever finishing the topple.
+// This margin doesn't touch same-category comparisons (leg-vs-leg,
+// corner-vs-corner still pick the plain closest, same as before) -- only
+// gates a leg-to-body (or body-to-leg) HANDOFF, and only lets that
+// handoff happen once the new category is genuinely, meaningfully
+// closer, not just closer by a rounding hair.
+#define SIMULATION_ROCKY_TOPPLE_PIVOT_HYSTERESIS 0.001f
+
+// How many consecutive ticks rockyBodyLastCommitDir's own reversal guard
+// (canvas.c) is allowed to block Probe 2 from reversing direction before
+// that streak is instead treated as a legitimate need to correct an
+// overshoot, and the reversal is let through for one tick. The guard
+// itself exists for a real, narrower report: bestDrop and bestComDrop
+// disagreeing on direction from one tick to the NEXT, bouncing bodyAngle
+// between the same two fixed values forever, with the step never actually
+// shrinking. But once that guard is in place, it has no way to tell that
+// pathology apart from a completely different, equally real situation:
+// Probe 2 pivoting several genuine degrees of forward progress, then
+// legitimately needing to reverse ONE time to correct an overshoot and
+// settle at the true resting angle just past where the forward run
+// stopped. A real report showed exactly that turning into a brand new
+// deadlock -- bodyAngle stuck dead at a single value indefinitely, every
+// attempt to reverse blocked and the step shrunk down to nothing, with an
+// unrelated E/Q knee tap the only thing reviving the step size (see that
+// reset site's own comment) but never the guard itself, so the same
+// block-then-revive cycle repeated forever with no net progress. A
+// genuine same-tick flip-flop never produces a long RUN of consecutive
+// blocks like this -- each one only takes a single tick to resolve into
+// an ever-shrinking step, not a persistent, repeated demand to go the
+// other way -- so a run this long is itself the signal that this isn't
+// that pathology. Deliberately close to SIMULATION_LEG_SETTLE_STALEMATE_
+// STREAK below's own "long enough to rule out a normal transient"
+// reasoning.
+#define SIMULATION_ROCKY_BODY_REVERSAL_BLOCK_STREAK 6
+
 // How many consecutive ticks Probe 1 (knee) and Probe 2 (body) are allowed
 // to BOTH commit a real move on the very same tick before that streak is
 // treated as a stalemate and both step sizes are force-halved. The two
