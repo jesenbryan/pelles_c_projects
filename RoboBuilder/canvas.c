@@ -360,6 +360,33 @@ static HWND hWalkBtn = NULL;
 // restart returns you to where that attempt began, not to a fixed origin.
 static HWND hResetBtn = NULL;
 
+// Probe 1 (the knee-bending settle probe in advanceRockySettle, gated by
+// rockyProbe1Enabled below) is the source of every settle-pose bug this
+// project has chased -- Probe 2's whole-body pivot-around-current-contact
+// already implements correct toppling on its own. Rather than deleting
+// Probe 1 outright, it's gated behind this checkbox so it can be switched
+// off (to compare against pure Probe 2 toppling) without losing the code
+// or the ability to switch it back on. Anchored to the client area's
+// TOP-RIGHT corner (unlike Slow Motion/Walk/Reset above, which sit at a
+// fixed top-left offset that never needs adjusting) -- WM_SIZE below
+// repositions it on every resize since its distance from the left edge
+// changes with window width. Starts checked (TRUE) so default behavior
+// is unchanged from before this toggle existed.
+// Layout constants for hProbe1ToggleBtn (WM_CREATE/WM_SIZE below) -- kept
+// together here rather than scattered as magic numbers at each call site,
+// since both places need to agree on the exact same button size/margin.
+#define PROBE1_TOGGLE_WIDTH_PX  150
+#define PROBE1_TOGGLE_HEIGHT_PX 28
+#define PROBE1_TOGGLE_MARGIN_PX 10
+
+static HWND hProbe1ToggleBtn = NULL;
+
+// Backing state for hProbe1ToggleBtn -- see its comment just above and
+// the entry-condition check in advanceRockySettle. TRUE = Probe 1 runs
+// normally (pre-existing behavior); FALSE = advanceRockySettle skips
+// straight to Probe 2's body-pivot toppling, never bending the knee.
+static BOOL rockyProbe1Enabled = TRUE;
+
 // Whole-RobotScene snapshot (Semni + Rocky + Stilo + activeKind, plain
 // value struct -- see app.h -- so a raw copy is safe, no pointers inside
 // any of the three) taken once, right when Simulation mode is entered
@@ -932,41 +959,6 @@ static float simFindGroundBelowRobotPoint(PointF from)
     return from.y - SIM_MASS_CENTER_DROP_MAX_LENGTH;
 }
 
-// Rocky's knee/foot circles used to be tested as a single analytic point
-// (the circle's own center, radius folded into the collision padding) --
-// exact for a bare yes/no, but for DRAWING it meant synthesizing one
-// "nearest point" direction and hoping it was the only contact. That
-// broke down for exactly the case a resting/settled robot actually hits:
-// the knee AND foot circles can BOTH be genuinely touching the ground at
-// once, and picking a single global "closest point" per circle has no
-// way to represent two separate circles' contacts independently going
-// missing from view, nor a single circle touching in two places (a
-// notch/corner).
-//
-// Used ONLY for the illustrative debug overlay (drawSimulationContactDebug,
-// the 'C'-toggle one) -- samples the circle's own circumference, exactly
-// like Rocky's shin fillet arcs already do (computeRockyArcPoints/
-// ARC_SAMPLE_COUNT), purely so that overlay can show a green/red ring the
-// same way it already shows arcs and rectangle-edge samples. This is
-// NOT used for the real-time indicator (drawSimulationLiveContactDots,
-// see findCircleContactDirections below for that) -- a fixed 41-point
-// ring has the exact same coarse-discretization problem the rectangle
-// edges originally had (see edgeCollidesWithAnyEnvironmentStroke's own
-// comment): a genuinely tangent contact point can fall in the gap
-// between two adjacent samples, at high zoom, with EVERY sample reading
-// as "too far," which is why callers must pad each sample's own test
-// with eArcThickness (the same forgiving stand-in thickness arcs already
-// use for exactly this reason), not test them at zero radius.
-static void computeCircleSamplePoints(PointF center, float radius, PointF outPts[ARC_SAMPLE_COUNT])
-{
-    for (int i = 0; i < ARC_SAMPLE_COUNT; i++)
-    {
-        float theta = (2.0f * 3.14159265f * i) / ARC_SAMPLE_COUNT;
-        outPts[i].x = center.x + radius * cosf(theta);
-        outPts[i].y = center.y + radius * sinf(theta);
-    }
-}
-
 // Max distinct simultaneous contact points findCircleContactDirections
 // (below) will ever report for one circle -- a robot's leg circle only
 // realistically touches a small handful of separate places at once (a
@@ -974,10 +966,10 @@ static void computeCircleSamplePoints(PointF center, float radius, PointF outPts
 // hand-drawn environment), so this is a generous cap, not a tuned limit.
 #define MAX_CIRCLE_CONTACT_POINTS 4
 
-// EXACT (no sampling, no discretization gap at any zoom) counterpart to
-// computeCircleSamplePoints, used by the always-on live-dot renderer
-// (drawSimulationLiveContactDots) where reliability matters more than
-// illustrative detail. Walks every environment piece directly and groups
+// EXACT (no sampling, no discretization gap at any zoom), used by the
+// always-on live-dot renderer (drawSimulationLiveContactDots) where
+// reliability matters more than illustrative detail. Walks every
+// environment piece directly and groups
 // consecutive in-range pieces (within combinedRadius -- eRadius here is
 // the circle's OWN real radius, same padding formula
 // pointCollidesWithAnyEnvironmentStroke and its visual-tolerance wrapper
@@ -1281,331 +1273,167 @@ static BOOL robotCollidesWithEnvironment(void)
     }
 }
 
-// ---- Simulation "show contact" debug overlay (plain C, no modifier) ----
+// Which physical part of the leg a RockyLegContact came from -- lets a
+// caller tell "the knee circle is what's touching" apart from "a shin arc
+// point is what's touching" without comparing world positions against an
+// epsilon. See rockyKneeBendWouldAbandonArcContact below for why this
+// distinction matters: Probe 1's knee bend rotates the WHOLE shin (arc
+// included) rigidly around the knee joint, which can only ever preserve a
+// KNEE or FOOT contact (their own distance from the knee joint doesn't
+// change), never an ARC contact (an arc point's distance from the knee
+// joint is fixed too, but its ANGLE around the knee sweeps with the bend,
+// so the specific point that was touching stops touching the instant the
+// knee moves at all).
+typedef enum { ROCKY_LEG_CONTACT_KNEE, ROCKY_LEG_CONTACT_FOOT, ROCKY_LEG_CONTACT_ARC } RockyLegContactKind;
 
-// On by default (per explicit request -- this used to default off and
-// need an opt-in press of C, but it's been useful enough while chasing
-// contact bugs that starting Simulation mode without it was just an extra
-// step every time). Plain C still toggles it, now OFF instead of on.
-// Read by drawSimulationContactDebug, called from renderCombinedFrame
-// right after the robot itself is drawn.
-static BOOL showContactDebug = TRUE;
+// One candidate contact point on the leg -- either joint circle, or a
+// single sample point along one of the two shin fillet arcs -- together
+// with its clearance to the environment, using the same nearestEnvDistance
+// minus combinedRadius convention every other clearance check in this file
+// already uses (see e.g. Probe 1's own baseFootClearance just below).
+typedef struct { PointF world; float clearance; RockyLegContactKind kind; } RockyLegContact;
 
-// Sanity-check plumbing for showContactDebug: TRUE once this toggle-ON has
-// already printed its one-shot point dump (see drawSimulationContactDebug),
-// so the console doesn't get a full point dump every single frame (this
-// runs from the main render path). Re-armed to FALSE every time 'C' is
-// pressed, in WM_KEYDOWN just below.
-static BOOL contactDebugLoggedThisToggle = FALSE;
-
-// Draws a small disc at every single point robotCollidesWithEnvironment
-// itself tests against the environment -- every body circle, every
-// fillet-arc sample point (this includes Rocky's two shin arcs between
-// the knee and foot circles, computeRockyArcPoints -- an earlier version
-// of this comment claimed those went untested/undrawn, which stopped
-// being true once the loop below was added), and (Rocky only) every
-// rectangle-edge sample point -- colored red if THAT exact point is
-// colliding right now, dim green otherwise. Deliberately mirrors
-// robotCollidesWithEnvironment's own per-kind iteration line-for-line
-// instead of calling it, since that function early-returns on the first
-// hit and this needs every point's own status to draw anything.
+// Finds the CLOSEST and SECOND-CLOSEST points on the whole leg outline --
+// knee circle, foot circle, AND both shin fillet arcs (computeRockyArcPoints'
+// shin1/shin2, the convex and concave curves connecting them) -- to the
+// environment right now. rockyTopplePivotWorld below wants the closest, to
+// pivot Probe 2's rotation around; rockyDanglingPointClearance wants the
+// second-closest, the "next in line" contact Probe 2's rotation is actually
+// trying to bring down.
 //
-// Draws in ROBOT-local coordinates (same convention drawRockyMassCenterTrack/
-// drawRockyReferencePoint already use), NOT the robotPointToEnvWorld-
-// transformed ones -- that transform only exists to ask "does this land on
-// an environment stroke," it isn't the space anything is actually drawn
-// in. Must run right after renderRobotScene while ITS projection (set up
-// by graphicsOnResize just before it) is still bound -- canvasRenderFrame
-// rebinds its own projection afterward, which would misplace these dots
-// if this ran after that instead.
-static void drawSimulationContactDebug(void)
+// This used to only ever compare the knee and foot CIRCLES -- correct when
+// one of those two joints is what's actually touching, but wrong whenever
+// the leg rests on its SIDE instead, where the shin fillet arc between them
+// genuinely bulges out past both circles (that's the whole point of a
+// fillet: a smooth outer curve instead of a sharp inner corner) and is the
+// TRUE contact. Neither knee nor foot is a clean winner in that case -- both
+// merely hover nearby, roughly tied -- so which one used to "win" the old
+// knee-vs-foot comparison could flip from tick to tick on tiny numeric
+// noise. Since Probe 2 pivots around whatever rockyTopplePivotWorld
+// returns, a flip meant the rotation suddenly held a DIFFERENT point fixed
+// than the tick before, undoing whatever alignment progress had just been
+// made and restarting around the new point -- exactly what read as the leg
+// oscillating back and forth forever instead of settling once its convex
+// side was what actually touched the ground. Including the arc samples as
+// candidates here fixes that: the true lowest point on the whole leg
+// outline wins, arc included, so the pivot stops jumping between two
+// points that were never the real contact to begin with.
+static void rockyLegContactPoints(const Rocky* r, RockyLegContact* closest, RockyLegContact* secondClosest)
 {
-    if (!showContactDebug || appMode != APP_MODE_SIMULATION) return;
+    PointF center = getRockyCenter(*r);
+    PointF kneeWorld = rotatePoint(r->kneeCircle, center, r->angle);
+    PointF footWorld = jointToWorld(r->footCircle, r->kneeCircle, r->kneeAngle, center, r->angle);
 
-    // One-shot text dump the first frame after each toggle-ON: exactly
-    // how many points this pass actually tested and how many of them are
-    // hits right now. Exists so "I didn't see any dots" can be answered
-    // from the console alone -- if this never prints, the overlay isn't
-    // even being reached (a toggle/appMode/focus problem upstream of
-    // drawing); if it prints hits > 0 but nothing is visible on screen,
-    // the problem is specifically in the drawing/projection, not in
-    // whether contact is being detected.
-    BOOL logThisPass = !contactDebugLoggedThisToggle;
-    int dbgPointCount = 0, dbgHitCount = 0;
-    if (logThisPass) contactDebugLoggedThisToggle = TRUE;
+    float kecx, kecy, fecx, fecy;
+    robotPointToEnvWorld(kneeWorld.x, kneeWorld.y, &kecx, &kecy);
+    robotPointToEnvWorld(footWorld.x, footWorld.y, &fecx, &fecy);
 
-    // This function calls pointCollidesWithAnyEnvironmentStroke up to ~250
-    // times EVERY SINGLE FRAME (once per tested point) purely to decide
-    // dot color -- that function has its own [COLLIDE] console print
-    // built in (meant for real gravity-step landing decisions, gated by
-    // gSuppressGravityDebug), which doesn't know the difference between
-    // "the robot just landed, this matters" and "the debug overlay is
-    // just asking, for the 200th time this second, whether this one arc
-    // sample happens to be red or green." With the overlay now on by
-    // default, that flooded the console with dozens of [COLLIDE] lines a
-    // frame, burying the actually-meaningful [STUCK]/[CONTACT] output.
-    // Suppress it for exactly the duration of this function's own point
-    // tests, restoring whatever it was set to on the way out so a REAL
-    // applyGravityStep call running around this (or after it, same frame)
-    // still logs normally.
-    BOOL savedSuppressGravityDebug = gSuppressGravityDebug;
-    gSuppressGravityDebug = TRUE;
+    float kneeCombinedRadius = robotLengthToEnvWorld(r->kneeRadius) + simEnvLineHalfWidthWorld();
+    float footCombinedRadius = robotLengthToEnvWorld(r->footRadius) + simEnvLineHalfWidthWorld();
 
-    const float dotRadius = 0.010f;
-    const float smallDotRadius = 0.006f;
+    RockyLegContact best = { kneeWorld, nearestEnvDistance(kecx, kecy) - kneeCombinedRadius, ROCKY_LEG_CONTACT_KNEE };
+    RockyLegContact second = { footWorld, nearestEnvDistance(fecx, fecy) - footCombinedRadius, ROCKY_LEG_CONTACT_FOOT };
+    if (second.clearance < best.clearance)
+    {
+        RockyLegContact tmp = best;
+        best = second;
+        second = tmp;
+    }
+
+    // Bare curves, same eArcThickness stand-in for their own missing
+    // thickness that robotCollidesWithEnvironment's own arc test already
+    // uses (see its comment) -- consistent with treating a circle's
+    // clearance as nearestEnvDistance minus its OWN radius plus the
+    // environment's half-width, just with eArcThickness standing in for
+    // "the arc's own radius" since a bare curve has none of its own.
     float eArcThickness = robotLengthToEnvWorld(SIMULATION_ARC_COLLISION_THICKNESS);
+    float arcCombinedRadius = eArcThickness + simEnvLineHalfWidthWorld();
 
-    switch (app.robotScene.activeKind)
+    PointF arcPts[NUM_ROCKY_CIRCLE_SEGMENTS][ARC_SAMPLE_COUNT];
+    int arcCounts[NUM_ROCKY_CIRCLE_SEGMENTS];
+    computeRockyArcPoints(*r, arcPts, arcCounts);
+
+    for (int a = 0; a < NUM_ROCKY_CIRCLE_SEGMENTS; a++)
     {
-        case ROBOT_KIND_ROCKY:
+        for (int i = 0; i < arcCounts[a]; i++)
         {
-            // Testing-only toggles (ID_ROCKY_TOGGLE_LEG_BUTTON/
-            // ID_ROCKY_TOGGLE_BODY_BUTTON) -- a hidden part must not be
-            // SAMPLED here either, not just excluded from the real
-            // robotCollidesWithEnvironment check above: this overlay
-            // runs its own completely separate point pass purely to draw
-            // per-point hit/miss dots and print pointsTested= in the
-            // [CONTACT] dump, so without this guard a hidden leg/body
-            // would still show up in that count (and, worse, still draw
-            // its dots) even though it's supposedly gone.
-            if (!app.robotScene.rocky.legHidden)
+            float aecx, aecy;
+            robotPointToEnvWorld(arcPts[a][i].x, arcPts[a][i].y, &aecx, &aecy);
+            float clearance = nearestEnvDistance(aecx, aecy) - arcCombinedRadius;
+
+            if (clearance < best.clearance)
             {
-                CircleSegment bodyCircles[NUM_ROCKY_BODY_CIRCLES];
-                computeRockyBodyCircles(app.robotScene.rocky, bodyCircles);
-
-                for (int c = 0; c < NUM_ROCKY_BODY_CIRCLES; c++)
-                {
-                    // Sampled around the circle's own circumference --
-                    // same idea as the arc points just below and the
-                    // rectangle-edge samples further down -- instead of
-                    // one analytic center+radius test. Padded with
-                    // eArcThickness (NOT zero) for the same reason arcs
-                    // need it: a fixed 41-point ring can leave the true
-                    // tangent point sitting in the gap between two
-                    // samples, and testing at zero radius made a
-                    // genuinely-touching circle show no red dot at all
-                    // (every sample individually reading "too far," even
-                    // though the circle really is resting on the line).
-                    // This is what lets BOTH knee and foot show their own
-                    // dots when both are genuinely resting on the ground
-                    // at once, and lets a single circle resting in a
-                    // notch/corner show two separate lit-up clusters
-                    // instead of one synthesized "nearest point" that
-                    // could only ever pick one.
-                    PointF circlePts[ARC_SAMPLE_COUNT];
-                    computeCircleSamplePoints(bodyCircles[c].center, bodyCircles[c].radius, circlePts);
-
-                    for (int i = 0; i < ARC_SAMPLE_COUNT; i++)
-                    {
-                        float ecx, ecy;
-                        robotPointToEnvWorld(circlePts[i].x, circlePts[i].y, &ecx, &ecy);
-                        BOOL hit = pointVisuallyContactsEnvironmentStroke(ecx, ecy, eArcThickness);
-                        drawMarkerDisc(circlePts[i].x, circlePts[i].y, hit ? smallDotRadius * 3.0f : smallDotRadius,
-                                       hit ? 0.95f : 0.25f, hit ? 0.15f : 0.85f, hit ? 0.15f : 0.95f, hit ? 1.0f : 0.7f);
-                        if (logThisPass) { dbgPointCount++; if (hit) dbgHitCount++; }
-                    }
-                }
-
-                PointF arcPts[NUM_ROCKY_CIRCLE_SEGMENTS][ARC_SAMPLE_COUNT];
-                int arcCounts[NUM_ROCKY_CIRCLE_SEGMENTS];
-                computeRockyArcPoints(app.robotScene.rocky, arcPts, arcCounts);
-
-                for (int a = 0; a < NUM_ROCKY_CIRCLE_SEGMENTS; a++)
-                {
-                    for (int i = 0; i < arcCounts[a]; i++)
-                    {
-                        float ecx, ecy;
-                        robotPointToEnvWorld(arcPts[a][i].x, arcPts[a][i].y, &ecx, &ecy);
-                        BOOL hit = pointVisuallyContactsEnvironmentStroke(ecx, ecy, eArcThickness);
-                        drawMarkerDisc(arcPts[a][i].x, arcPts[a][i].y, hit ? smallDotRadius * 3.0f : smallDotRadius,
-                                       hit ? 0.95f : 0.25f, hit ? 0.15f : 0.85f, hit ? 0.15f : 0.95f, hit ? 1.0f : 0.7f);
-                        if (logThisPass) { dbgPointCount++; if (hit) dbgHitCount++; }
-                    }
-                }
+                second = best;
+                best.world = arcPts[a][i];
+                best.clearance = clearance;
+                best.kind = ROCKY_LEG_CONTACT_ARC;
             }
-
-            if (!app.robotScene.rocky.bodyHidden)
+            else if (clearance < second.clearance)
             {
-                RockyEdgeSegment rectEdges[NUM_ROCKY_RECT_SEGMENTS];
-                computeRockyRectSegments(app.robotScene.rocky, rectEdges);
-
-                // EXPERIMENT: match the short sides' point-to-point spacing
-                // to the long sides' instead of giving every edge the same
-                // fixed ARC_SAMPLE_COUNT regardless of length -- that fixed
-                // count is what made the short edges' dots look packed
-                // closer together (same 41 points, shorter edge to spread
-                // them over). Uses the longest edge's own spacing (at the
-                // usual ARC_SAMPLE_COUNT) as the target for every edge, so
-                // a short edge gets proportionally fewer points instead.
-                // Purely cosmetic -- collision itself no longer samples
-                // rectangle edges at all (see robotCollidesWithEnvironment's
-                // own comment just above), only this debug overlay does.
-                float edgeLen[NUM_ROCKY_RECT_SEGMENTS];
-                float longestEdgeLen = 0.0f;
-                for (int e = 0; e < NUM_ROCKY_RECT_SEGMENTS; e++)
-                {
-                    float dx = rectEdges[e].end.x - rectEdges[e].start.x;
-                    float dy = rectEdges[e].end.y - rectEdges[e].start.y;
-                    edgeLen[e] = sqrtf(dx * dx + dy * dy);
-                    if (edgeLen[e] > longestEdgeLen)
-                        longestEdgeLen = edgeLen[e];
-                }
-                float targetSpacing = longestEdgeLen / (float)(ARC_SAMPLE_COUNT - 1);
-
-                for (int e = 0; e < NUM_ROCKY_RECT_SEGMENTS; e++)
-                {
-                    int pointCount = ARC_SAMPLE_COUNT;
-                    if (targetSpacing > 0.0f)
-                    {
-                        pointCount = (int)(edgeLen[e] / targetSpacing + 0.5f) + 1;
-                        if (pointCount < 2) pointCount = 2;
-                        if (pointCount > ARC_SAMPLE_COUNT) pointCount = ARC_SAMPLE_COUNT;
-                    }
-
-                    for (int i = 0; i < pointCount; i++)
-                    {
-                        float t = (float)i / (float)(pointCount - 1);
-                        float lx = rectEdges[e].start.x + (rectEdges[e].end.x - rectEdges[e].start.x) * t;
-                        float ly = rectEdges[e].start.y + (rectEdges[e].end.y - rectEdges[e].start.y) * t;
-
-                        float ecx, ecy;
-                        robotPointToEnvWorld(lx, ly, &ecx, &ecy);
-                        BOOL hit = pointVisuallyContactsEnvironmentStroke(ecx, ecy, 0.0f);
-                        drawMarkerDisc(lx, ly, hit ? smallDotRadius * 3.0f : smallDotRadius,
-                                       hit ? 0.95f : 0.25f, hit ? 0.15f : 0.85f, hit ? 0.15f : 0.95f, hit ? 1.0f : 0.7f);
-                        if (logThisPass) { dbgPointCount++; if (hit) dbgHitCount++; }
-                    }
-                }
+                second.world = arcPts[a][i];
+                second.clearance = clearance;
+                second.kind = ROCKY_LEG_CONTACT_ARC;
             }
-            break;
-        }
-
-        case ROBOT_KIND_STILO:
-        {
-            CircleSegment bodyCircles[NUM_STILO_BODY_CIRCLES];
-            computeStiloBodyCircles(app.robotScene.stilo, bodyCircles);
-
-            for (int c = 0; c < NUM_STILO_BODY_CIRCLES; c++)
-            {
-                float ecx, ecy;
-                robotPointToEnvWorld(bodyCircles[c].center.x, bodyCircles[c].center.y, &ecx, &ecy);
-                float eRadius = robotLengthToEnvWorld(bodyCircles[c].radius);
-                BOOL hit = pointVisuallyContactsEnvironmentStroke(ecx, ecy, eRadius);
-                // Colliding points draw noticeably BIGGER (2.5x), not just
-                // a different color -- a same-size color swap on an
-                // already-small marker is easy to miss at a glance,
-                // especially sitting right at ground contact where the
-                // environment's own line is drawn close by. Size is the
-                // primary signal here; color is secondary.
-                drawMarkerDisc(bodyCircles[c].center.x, bodyCircles[c].center.y, hit ? dotRadius * 2.5f : dotRadius,
-                               hit ? 0.95f : 0.25f, hit ? 0.15f : 0.85f, hit ? 0.15f : 0.95f, hit ? 1.0f : 0.9f);
-                if (logThisPass) { dbgPointCount++; if (hit) dbgHitCount++; }
-            }
-
-            PointF arcPts[NUM_STILO_CIRCLE_SEGMENTS][ARC_SAMPLE_COUNT];
-            int arcCounts[NUM_STILO_CIRCLE_SEGMENTS];
-            computeStiloArcPoints(app.robotScene.stilo, arcPts, arcCounts);
-
-            for (int a = 0; a < NUM_STILO_CIRCLE_SEGMENTS; a++)
-            {
-                for (int i = 0; i < arcCounts[a]; i++)
-                {
-                    float ecx, ecy;
-                    robotPointToEnvWorld(arcPts[a][i].x, arcPts[a][i].y, &ecx, &ecy);
-                    BOOL hit = pointVisuallyContactsEnvironmentStroke(ecx, ecy, eArcThickness);
-                    drawMarkerDisc(arcPts[a][i].x, arcPts[a][i].y, hit ? smallDotRadius * 3.0f : smallDotRadius,
-                                   hit ? 0.95f : 0.25f, hit ? 0.15f : 0.85f, hit ? 0.15f : 0.95f, hit ? 1.0f : 0.7f);
-                    if (logThisPass) { dbgPointCount++; if (hit) dbgHitCount++; }
-                }
-            }
-            break;
-        }
-
-        case ROBOT_KIND_SEMNI:
-        default:
-        {
-            CircleSegment bodyCircles[NUM_ROBOT_BODY_CIRCLES];
-            computeSemniBodyCircles(app.robotScene.robot, bodyCircles);
-
-            for (int c = 0; c < NUM_ROBOT_BODY_CIRCLES; c++)
-            {
-                float ecx, ecy;
-                robotPointToEnvWorld(bodyCircles[c].center.x, bodyCircles[c].center.y, &ecx, &ecy);
-                float eRadius = robotLengthToEnvWorld(bodyCircles[c].radius);
-                BOOL hit = pointVisuallyContactsEnvironmentStroke(ecx, ecy, eRadius);
-                // Colliding points draw noticeably BIGGER (2.5x), not just
-                // a different color -- a same-size color swap on an
-                // already-small marker is easy to miss at a glance,
-                // especially sitting right at ground contact where the
-                // environment's own line is drawn close by. Size is the
-                // primary signal here; color is secondary.
-                drawMarkerDisc(bodyCircles[c].center.x, bodyCircles[c].center.y, hit ? dotRadius * 2.5f : dotRadius,
-                               hit ? 0.95f : 0.25f, hit ? 0.15f : 0.85f, hit ? 0.15f : 0.95f, hit ? 1.0f : 0.9f);
-                if (logThisPass) { dbgPointCount++; if (hit) dbgHitCount++; }
-            }
-
-            PointF arcPts[NUM_ROBOT_CIRCLE_SEGMENTS][ARC_SAMPLE_COUNT];
-            int arcCounts[NUM_ROBOT_CIRCLE_SEGMENTS];
-            computeSemniArcPoints(app.robotScene.robot, arcPts, arcCounts);
-
-            for (int a = 0; a < NUM_ROBOT_CIRCLE_SEGMENTS; a++)
-            {
-                for (int i = 0; i < arcCounts[a]; i++)
-                {
-                    float ecx, ecy;
-                    robotPointToEnvWorld(arcPts[a][i].x, arcPts[a][i].y, &ecx, &ecy);
-                    BOOL hit = pointVisuallyContactsEnvironmentStroke(ecx, ecy, eArcThickness);
-                    drawMarkerDisc(arcPts[a][i].x, arcPts[a][i].y, hit ? smallDotRadius * 3.0f : smallDotRadius,
-                                   hit ? 0.95f : 0.25f, hit ? 0.15f : 0.85f, hit ? 0.15f : 0.95f, hit ? 1.0f : 0.7f);
-                    if (logThisPass) { dbgPointCount++; if (hit) dbgHitCount++; }
-                }
-            }
-            break;
         }
     }
 
-    gSuppressGravityDebug = savedSuppressGravityDebug;
-
-    if (logThisPass)
-    {
-        printf("[CONTACT] dump: activeKind=%d pointsTested=%d currentlyColliding=%d\n",
-               app.robotScene.activeKind, dbgPointCount, dbgHitCount);
-    }
+    *closest = best;
+    *secondClosest = second;
 }
 
-// Always-on companion to drawSimulationContactDebug above, by explicit
-// request: that function only draws anything while the plain-C toggle
-// (showContactDebug) is on, and even then draws EVERY sampled point --
-// hits big and red, misses small and green -- as a diagnostic overlay of
-// the whole collision test. This instead runs unconditionally any time
-// we're in Simulation mode, and draws NOTHING for a point that isn't
-// currently colliding -- just one small red dot exactly where contact is
-// actually happening right now, so a real touch/land/collision always has
-// a visible marker without needing to remember to switch on the fuller
-// debug view. Live only, by explicit request -- no accumulated trail: a
-// dot disappears the instant that point stops colliding, same as any
-// other per-frame overlay.
+// ---- Simulation "show contact" debug overlay (plain C, no modifier) ----
+
+// On by default -- so the pivot/non-pivot contact dots below are visible
+// from the moment Simulation mode starts, without needing to remember to
+// press C first. Read by drawSimulationLiveContactDots, called from
+// renderCombinedFrame right after the robot itself is drawn.
+static BOOL showContactDebug = TRUE;
+
+// Draws NOTHING for a point that isn't currently colliding -- just one
+// dot exactly where contact is actually happening right now (red for the
+// current toppling pivot, half-size orange for every other genuinely
+// touching point), gated by the same plain-C toggle (showContactDebug)
+// that used to gate a much noisier full-sample overlay here (every point
+// robotCollidesWithEnvironment tests, hit or miss, big red or dim green --
+// removed by explicit request once this replaced it, along with the
+// one-shot [CONTACT] console dump that only that older overlay printed).
+// Live only: no accumulated trail, a dot disappears the instant that
+// point stops colliding, same as any other per-frame overlay.
 //
-// Same per-kind sampling as robotCollidesWithEnvironment/
-// drawSimulationContactDebug (body circles, shin/thigh fillet arcs, and
-// for Rocky the rectangle edges), including Rocky's own legHidden/
-// bodyHidden testing toggles (ID_ROCKY_TOGGLE_LEG_BUTTON/
-// ID_ROCKY_TOGGLE_BODY_BUTTON) -- a hidden part isn't sampled here
-// either, consistent with it not being sampled for real collision or the
-// debug overlay.
+// Same per-kind sampling robotCollidesWithEnvironment itself uses (body
+// circles, shin/thigh fillet arcs, and for Rocky the rectangle edges),
+// including Rocky's own legHidden/bodyHidden testing toggles
+// (ID_ROCKY_TOGGLE_LEG_BUTTON/ID_ROCKY_TOGGLE_BODY_BUTTON) -- a hidden
+// part isn't sampled here either, consistent with it not being sampled
+// for real collision.
 static void drawSimulationLiveContactDots(void)
 {
     if (appMode != APP_MODE_SIMULATION) return;
+    if (!showContactDebug) return; // now what the plain-C toggle actually gates
 
-    // Same suppression as drawSimulationContactDebug's own -- this calls
-    // pointCollidesWithAnyEnvironmentStroke up to ~250 times EVERY FRAME
-    // purely to decide dot color, and running unconditionally (not just
-    // while a debug toggle is on) makes that even more important to keep
-    // quiet than the toggle-gated overlay above.
+    // This calls pointCollidesWithAnyEnvironmentStroke up to ~250 times
+    // EVERY FRAME purely to decide dot color -- suppressed here so that
+    // doesn't flood the console with [COLLIDE] lines for as long as the
+    // toggle leaves this overlay switched on.
     BOOL savedSuppressGravityDebug = gSuppressGravityDebug;
     gSuppressGravityDebug = TRUE;
 
     const float liveContactDotRadius = 0.0015f;
+
+    // Pivot (red) and non-pivot (orange) Rocky-leg dots are now the SAME
+    // size, by explicit request -- the earlier half-size-for-non-pivot
+    // rule is gone; only color tells them apart now. Bumped up again from
+    // 0.024f at the same time. Still its own constant rather than reusing
+    // liveContactDotRadius (0.0015f, unchanged, still used by every OTHER
+    // red dot this function draws -- Rocky's rectangle edges, and the
+    // whole STILO/SEMNI cases below -- none of which this request
+    // touches). The pivot dot is still always drawn LAST/on top of every
+    // orange dot (see the deferred pivotWorld draw at the bottom of the
+    // ROCKY case below), so an exact-same-size overlap still resolves in
+    // red's favor rather than whichever happened to be tested last.
+    const float liveContactDotRadiusPivot = 0.03f;
+    const float liveContactDotRadiusNonPivot = liveContactDotRadiusPivot;
+
     float eArcThickness = robotLengthToEnvWorld(SIMULATION_ARC_COLLISION_THICKNESS);
 
     switch (app.robotScene.activeKind)
@@ -1614,6 +1442,32 @@ static void drawSimulationLiveContactDots(void)
         {
             if (!app.robotScene.rocky.legHidden)
             {
+                // Which leg point is the CURRENT toppling pivot (same
+                // point rockyTopplePivotWorld/Probe 2 rotate around) --
+                // computed once here, by explicit request, so every dot
+                // below can tell "this is the point toppling is actually
+                // pivoting on" (drawn red, last, on top) apart from "this
+                // is just ANOTHER point that also happens to be touching
+                // right now" (a non-pivot contact, drawn orange). Only the
+                // dot's own color/size/draw-order changes here -- no
+                // recoloring of the knee/foot/shin outline itself, per
+                // explicit request.
+                RockyLegContact pivotContact, pivotSecond;
+                rockyLegContactPoints(&app.robotScene.rocky, &pivotContact, &pivotSecond);
+
+                // The single pivot point's own world position, drawn once
+                // at the very end of this case instead of inline where
+                // it's found -- see liveContactDotRadiusPivot's comment
+                // above for why deferring it is what actually prevents
+                // overlap. pivotHasContact stays FALSE (nothing drawn) in
+                // the (normal) case where the pivot itself isn't currently
+                // registering as a genuine hit by this function's own
+                // exact tests, even though rockyLegContactPoints picked it
+                // as closest -- there is then nothing red to draw at all,
+                // only whichever orange points are genuinely touching.
+                BOOL pivotHasContact = FALSE;
+                float pivotDrawX = 0.0f, pivotDrawY = 0.0f;
+
                 CircleSegment bodyCircles[NUM_ROCKY_BODY_CIRCLES];
                 computeRockyBodyCircles(app.robotScene.rocky, bodyCircles);
 
@@ -1633,13 +1487,43 @@ static void drawSimulationLiveContactDots(void)
                     // actually has (handles knee+foot both touching at
                     // once, and a single circle touching in two places)
                     // with zero discretization error at any zoom.
+                    //
+                    // Index 0 is always the knee, index 1 always the foot
+                    // (computeRockyBodyCircles' own comment) -- matched
+                    // straight against pivotContact.kind to tell this
+                    // circle's contacts apart: the pivot circle's contacts
+                    // are deferred to the end (drawn red, on top), a
+                    // merely-touching non-pivot circle's are drawn right
+                    // here in orange.
+                    BOOL isPivotCircle = (c == 0 && pivotContact.kind == ROCKY_LEG_CONTACT_KNEE) ||
+                                         (c == 1 && pivotContact.kind == ROCKY_LEG_CONTACT_FOOT);
+
                     float contactDirX[MAX_CIRCLE_CONTACT_POINTS], contactDirY[MAX_CIRCLE_CONTACT_POINTS];
                     int contactCount = findCircleContactDirections(ecx, ecy, eRadius, contactDirX, contactDirY, MAX_CIRCLE_CONTACT_POINTS);
                     for (int k = 0; k < contactCount; k++)
                     {
                         float rx = bodyCircles[c].center.x + contactDirX[k] * bodyCircles[c].radius;
                         float ry = bodyCircles[c].center.y + contactDirY[k] * bodyCircles[c].radius;
-                        drawMarkerDisc(rx, ry, liveContactDotRadius, 0.95f, 0.1f, 0.1f, 1.0f);
+                        if (isPivotCircle)
+                        {
+                            // Multiple contact directions are possible on
+                            // one circle (see the comment above) -- if so,
+                            // only the FIRST is kept as the one red dot;
+                            // this circle is still the pivot either way,
+                            // and drawing more than one red dot for a
+                            // single pivot joint would misrepresent it as
+                            // multiple separate pivot points.
+                            if (!pivotHasContact)
+                            {
+                                pivotHasContact = TRUE;
+                                pivotDrawX = rx;
+                                pivotDrawY = ry;
+                            }
+                        }
+                        else
+                        {
+                            drawMarkerDisc(rx, ry, liveContactDotRadiusNonPivot, 1.0f, 0.55f, 0.0f, 1.0f);
+                        }
                     }
                 }
 
@@ -1654,9 +1538,43 @@ static void drawSimulationLiveContactDots(void)
                         float ecx, ecy;
                         robotPointToEnvWorld(arcPts[a][i].x, arcPts[a][i].y, &ecx, &ecy);
                         if (pointVisuallyContactsEnvironmentStroke(ecx, ecy, eArcThickness))
-                            drawMarkerDisc(arcPts[a][i].x, arcPts[a][i].y, liveContactDotRadius, 0.95f, 0.1f, 0.1f, 1.0f);
+                        {
+                            // Same pivot-vs-non-pivot test as the circles
+                            // above, but by exact position instead of a
+                            // fixed index -- there's no small fixed count
+                            // of "the arc points" the way there's exactly
+                            // one knee and one foot, so identifying THIS
+                            // sample as the pivot means matching it
+                            // against pivotContact.world directly. Safe as
+                            // exact equality (not an epsilon compare):
+                            // both this loop and rockyLegContactPoints call
+                            // the same deterministic computeRockyArcPoints
+                            // on the same Rocky struct, so the pivot
+                            // sample's coordinates are bit-identical here.
+                            BOOL isPivotSample = (pivotContact.kind == ROCKY_LEG_CONTACT_ARC &&
+                                                   arcPts[a][i].x == pivotContact.world.x &&
+                                                   arcPts[a][i].y == pivotContact.world.y);
+                            if (isPivotSample)
+                            {
+                                pivotHasContact = TRUE;
+                                pivotDrawX = arcPts[a][i].x;
+                                pivotDrawY = arcPts[a][i].y;
+                            }
+                            else
+                            {
+                                drawMarkerDisc(arcPts[a][i].x, arcPts[a][i].y, liveContactDotRadiusNonPivot, 1.0f, 0.55f, 0.0f, 1.0f);
+                            }
+                        }
                     }
                 }
+
+                // The single deferred pivot dot, drawn last so it always
+                // wins any overlap with an orange non-pivot dot (see the
+                // liveContactDotRadiusPivot comment above) -- bigger
+                // (liveContactDotRadiusPivot) and red, versus every
+                // non-pivot dot's exactly-half-size liveContactDotRadiusNonPivot/orange.
+                if (pivotHasContact)
+                    drawMarkerDisc(pivotDrawX, pivotDrawY, liveContactDotRadiusPivot, 0.95f, 0.1f, 0.1f, 1.0f);
             }
 
             if (!app.robotScene.rocky.bodyHidden)
@@ -2145,113 +2063,6 @@ static int rockyBodySettleGrowthStreak = 0;
 // where nothing else is driving kneeAngle and Probe 1 is safe to run.
 static BOOL rockyKneeSettleSuppressed = FALSE;
 
-// Which physical part of the leg a RockyLegContact came from -- lets a
-// caller tell "the knee circle is what's touching" apart from "a shin arc
-// point is what's touching" without comparing world positions against an
-// epsilon. See rockyKneeBendWouldAbandonArcContact below for why this
-// distinction matters: Probe 1's knee bend rotates the WHOLE shin (arc
-// included) rigidly around the knee joint, which can only ever preserve a
-// KNEE or FOOT contact (their own distance from the knee joint doesn't
-// change), never an ARC contact (an arc point's distance from the knee
-// joint is fixed too, but its ANGLE around the knee sweeps with the bend,
-// so the specific point that was touching stops touching the instant the
-// knee moves at all).
-typedef enum { ROCKY_LEG_CONTACT_KNEE, ROCKY_LEG_CONTACT_FOOT, ROCKY_LEG_CONTACT_ARC } RockyLegContactKind;
-
-// One candidate contact point on the leg -- either joint circle, or a
-// single sample point along one of the two shin fillet arcs -- together
-// with its clearance to the environment, using the same nearestEnvDistance
-// minus combinedRadius convention every other clearance check in this file
-// already uses (see e.g. Probe 1's own baseFootClearance just below).
-typedef struct { PointF world; float clearance; RockyLegContactKind kind; } RockyLegContact;
-
-// Finds the CLOSEST and SECOND-CLOSEST points on the whole leg outline --
-// knee circle, foot circle, AND both shin fillet arcs (computeRockyArcPoints'
-// shin1/shin2, the convex and concave curves connecting them) -- to the
-// environment right now. rockyTopplePivotWorld below wants the closest, to
-// pivot Probe 2's rotation around; rockyDanglingPointClearance wants the
-// second-closest, the "next in line" contact Probe 2's rotation is actually
-// trying to bring down.
-//
-// This used to only ever compare the knee and foot CIRCLES -- correct when
-// one of those two joints is what's actually touching, but wrong whenever
-// the leg rests on its SIDE instead, where the shin fillet arc between them
-// genuinely bulges out past both circles (that's the whole point of a
-// fillet: a smooth outer curve instead of a sharp inner corner) and is the
-// TRUE contact. Neither knee nor foot is a clean winner in that case -- both
-// merely hover nearby, roughly tied -- so which one used to "win" the old
-// knee-vs-foot comparison could flip from tick to tick on tiny numeric
-// noise. Since Probe 2 pivots around whatever rockyTopplePivotWorld
-// returns, a flip meant the rotation suddenly held a DIFFERENT point fixed
-// than the tick before, undoing whatever alignment progress had just been
-// made and restarting around the new point -- exactly what read as the leg
-// oscillating back and forth forever instead of settling once its convex
-// side was what actually touched the ground. Including the arc samples as
-// candidates here fixes that: the true lowest point on the whole leg
-// outline wins, arc included, so the pivot stops jumping between two
-// points that were never the real contact to begin with.
-static void rockyLegContactPoints(const Rocky* r, RockyLegContact* closest, RockyLegContact* secondClosest)
-{
-    PointF center = getRockyCenter(*r);
-    PointF kneeWorld = rotatePoint(r->kneeCircle, center, r->angle);
-    PointF footWorld = jointToWorld(r->footCircle, r->kneeCircle, r->kneeAngle, center, r->angle);
-
-    float kecx, kecy, fecx, fecy;
-    robotPointToEnvWorld(kneeWorld.x, kneeWorld.y, &kecx, &kecy);
-    robotPointToEnvWorld(footWorld.x, footWorld.y, &fecx, &fecy);
-
-    float kneeCombinedRadius = robotLengthToEnvWorld(r->kneeRadius) + simEnvLineHalfWidthWorld();
-    float footCombinedRadius = robotLengthToEnvWorld(r->footRadius) + simEnvLineHalfWidthWorld();
-
-    RockyLegContact best = { kneeWorld, nearestEnvDistance(kecx, kecy) - kneeCombinedRadius, ROCKY_LEG_CONTACT_KNEE };
-    RockyLegContact second = { footWorld, nearestEnvDistance(fecx, fecy) - footCombinedRadius, ROCKY_LEG_CONTACT_FOOT };
-    if (second.clearance < best.clearance)
-    {
-        RockyLegContact tmp = best;
-        best = second;
-        second = tmp;
-    }
-
-    // Bare curves, same eArcThickness stand-in for their own missing
-    // thickness that robotCollidesWithEnvironment's own arc test already
-    // uses (see its comment) -- consistent with treating a circle's
-    // clearance as nearestEnvDistance minus its OWN radius plus the
-    // environment's half-width, just with eArcThickness standing in for
-    // "the arc's own radius" since a bare curve has none of its own.
-    float eArcThickness = robotLengthToEnvWorld(SIMULATION_ARC_COLLISION_THICKNESS);
-    float arcCombinedRadius = eArcThickness + simEnvLineHalfWidthWorld();
-
-    PointF arcPts[NUM_ROCKY_CIRCLE_SEGMENTS][ARC_SAMPLE_COUNT];
-    int arcCounts[NUM_ROCKY_CIRCLE_SEGMENTS];
-    computeRockyArcPoints(*r, arcPts, arcCounts);
-
-    for (int a = 0; a < NUM_ROCKY_CIRCLE_SEGMENTS; a++)
-    {
-        for (int i = 0; i < arcCounts[a]; i++)
-        {
-            float aecx, aecy;
-            robotPointToEnvWorld(arcPts[a][i].x, arcPts[a][i].y, &aecx, &aecy);
-            float clearance = nearestEnvDistance(aecx, aecy) - arcCombinedRadius;
-
-            if (clearance < best.clearance)
-            {
-                second = best;
-                best.world = arcPts[a][i];
-                best.clearance = clearance;
-                best.kind = ROCKY_LEG_CONTACT_ARC;
-            }
-            else if (clearance < second.clearance)
-            {
-                second.world = arcPts[a][i];
-                second.clearance = clearance;
-                second.kind = ROCKY_LEG_CONTACT_ARC;
-            }
-        }
-    }
-
-    *closest = best;
-    *secondClosest = second;
-}
 
 // The leg's own current world position (robot-scene space, same as
 // bodyX/bodyY/translateActiveRobot, not env-pixel space) of whichever
@@ -2395,61 +2206,91 @@ static void advanceRockySettle(void)
 
     Rocky* r = &app.robotScene.rocky;
 
-    // Whether the leg's CURRENT ground contact is somewhere Probe 1's own
-    // knee bend structurally cannot move -- either one of the shin fillet
-    // arcs, or the KNEE CIRCLE ITSELF -- if so, Probe 1 below is skipped
-    // for this tick.
+    // Whether the leg's CURRENT ground contact is somewhere Probe 1 should
+    // leave alone -- if so, Probe 1 below is skipped for this tick. Covers
+    // all three parts of the leg (ARC, KNEE, and now FOOT too -- see its
+    // own paragraph below for why FOOT was added), each for its own
+    // distinct reason.
     //
-    // Bending the knee rotates the WHOLE shin, arc included, rigidly
-    // around the knee joint: that can still preserve a FOOT contact (it
-    // stays the same fixed distance from the knee, so a small bend just
-    // swings it along its own circle, and Probe 1's own clearance checks
-    // below still judge that fairly), but it CANNOT preserve an ARC
-    // contact -- the specific arc point currently touching sweeps around
-    // the knee as it bends while the ground stays put, so the instant the
-    // knee moves at all, that exact point lifts away while the rest of the
-    // arc swings past without ever re-touching the same spot.
-    // dropActiveRobotToRest then correctly (by its own narrow measure)
-    // reports a real drop into the gap Probe 1 itself just pried open --
-    // not genuine progress, just Probe 1 repeatedly prying a real,
-    // already-settled arc contact loose and falling into the gap it made,
-    // tick after tick, never converging. A real report showed exactly
-    // this: a leg-only Rocky correctly balancing on its convex shin arc
-    // (see rockyLegContactPoints' own comment above), then kneeAngle
-    // drifting steadily for hundreds of ticks afterward until the contact
-    // finally landed back on the knee circle instead.
+    // ARC: bending the knee rotates the WHOLE shin, arc included, rigidly
+    // around the knee joint, which CANNOT preserve an ARC contact -- the
+    // specific arc point currently touching sweeps around the knee as it
+    // bends while the ground stays put, so the instant the knee moves at
+    // all, that exact point lifts away while the rest of the arc swings
+    // past without ever re-touching the same spot. dropActiveRobotToRest
+    // then correctly (by its own narrow measure) reports a real drop into
+    // the gap Probe 1 itself just pried open -- not genuine progress, just
+    // Probe 1 repeatedly prying a real, already-settled arc contact loose
+    // and falling into the gap it made, tick after tick, never converging.
+    // A real report showed exactly this: a leg-only Rocky correctly
+    // balancing on its convex shin arc (see rockyLegContactPoints' own
+    // comment above), then kneeAngle drifting steadily for hundreds of
+    // ticks afterward until the contact finally landed back on the knee
+    // circle instead.
     //
-    // The KNEE CIRCLE case is even more direct: kneeAngle is BY DEFINITION
-    // a rotation around the knee joint, so the knee's own position (and
-    // therefore its clearance to the ground) never changes no matter what
-    // kneeAngle is -- there is no candidate bend that can ever move an
-    // already-resting knee contact even a hair closer. This used to be
-    // assumed safe for Probe 1 (its clearance checks "judge that fairly",
-    // per an earlier version of this comment) -- but those checks only
-    // ever look at the DANGLING FOOT's clearance, never the knee's own, so
-    // with the knee genuinely already resting, that foot-clearance chase
-    // has nothing to do with the real contact at all. A real report showed
-    // exactly this going wrong: bodyAngle and kneeAngle drifting in
-    // lockstep by a full degree each, tick after tick, seemingly forever
-    // -- Probe 1 kept finding tiny "progress" swinging the dangling foot
-    // around the now-fixed knee, and Probe 2 kept finding tiny "progress"
-    // pivoting the body to compensate, netting almost no real movement of
-    // the foot but spinning the body around the planted knee indefinitely.
+    // KNEE: even more direct -- kneeAngle is BY DEFINITION a rotation
+    // around the knee joint, so the knee's own position (and therefore its
+    // clearance to the ground) never changes no matter what kneeAngle is
+    // -- there is no candidate bend that can ever move an already-resting
+    // knee contact even a hair closer. This used to be assumed safe for
+    // Probe 1 (its clearance checks "judge that fairly", per an earlier
+    // version of this comment) -- but those checks only ever look at the
+    // DANGLING FOOT's clearance, never the knee's own, so with the knee
+    // genuinely already resting, that foot-clearance chase has nothing to
+    // do with the real contact at all. A real report showed exactly this
+    // going wrong: bodyAngle and kneeAngle drifting in lockstep by a full
+    // degree each, tick after tick, seemingly forever -- Probe 1 kept
+    // finding tiny "progress" swinging the dangling foot around the
+    // now-fixed knee, and Probe 2 kept finding tiny "progress" pivoting
+    // the body to compensate, netting almost no real movement of the foot
+    // but spinning the body around the planted knee indefinitely.
+    //
+    // FOOT: unlike the other two, bending the knee CAN genuinely move a
+    // planted foot -- it stays the same fixed distance from the knee, so a
+    // small bend just swings it along its own circle -- which is exactly
+    // why this used to be the one contact Probe 1 was still allowed to
+    // work against. The trouble: once the foot is already flush,
+    // dropActiveRobotToRest is a WHOLE-BODY drop test, not just a check of
+    // the foot's own clearance, and further knee bends can keep uncovering
+    // more real, non-noise room to fall -- not by moving the foot's
+    // contact closer (it's already flush), but by crouching the body down
+    // over it. With nothing modeling the muscular effort a real crouch
+    // requires, that has no natural stopping point of its own: it either
+    // winds all the way until the knee circle takes over as the resting
+    // contact instead (a real report showed kneeAngle reaching -137
+    // degrees that way), or -- as a real report showed by explicit
+    // request -- it can also converge cleanly with the foot still correctly
+    // planted, red contact marker and all, but only after curling the shin
+    // into an exaggerated hook shape first (kneeAngle winding ~11 degrees
+    // from its landing angle before the scout fallback finally found
+    // bending further would start hurting the foot's own clearance).
+    // Neither is the natural "just stay where it landed" pose a planted
+    // foot should settle into, so FOOT now joins ARC and KNEE here: once
+    // the foot itself is genuinely resting (clearance already ~0), Probe 1
+    // leaves it alone too, freezing kneeAngle at whatever angle the foot
+    // happened to land at. This does NOT block Probe 1's other,
+    // still-legitimate job of swinging a still-DANGLING foot down to first
+    // reach the ground (e.g. the rectangle resting on its own corner, foot
+    // hanging in the air) -- rockyLegContactPoints only ever looks at the
+    // leg's own three parts, so a dangling foot with nothing on the leg
+    // yet resting reports a large, not-yet-near-zero clearance regardless
+    // of which part happens to be closest, and this check stays FALSE
+    // until something on the leg genuinely settles.
     //
     // Probe 2's body rotation (pivoting the whole assembly around whatever
     // point is actually touching, fixed) is already the correct settling
-    // mechanism for BOTH cases -- see its own comment further below -- so
-    // Probe 1 just steps aside until neither is true anymore. Compared
-    // against SIMULATION_LEG_SETTLE_MIN_DROP (not a bare < 0.0f) for the
-    // same reason every other clearance check in this function is: a hair
-    // of float noise right at 0 shouldn't flip this on and off tick to
-    // tick.
+    // mechanism for ALL THREE cases -- see its own comment further below
+    // -- so Probe 1 just steps aside until none of them is true anymore.
+    // Compared against SIMULATION_LEG_SETTLE_MIN_DROP (not a bare < 0.0f)
+    // for the same reason every other clearance check in this function is:
+    // a hair of float noise right at 0 shouldn't flip this on and off tick
+    // to tick.
     BOOL legRestingOnImmovableJoint = FALSE;
     if (!r->legHidden)
     {
         RockyLegContact currentContact, currentSecondContact;
         rockyLegContactPoints(r, &currentContact, &currentSecondContact);
-        legRestingOnImmovableJoint = (currentContact.kind == ROCKY_LEG_CONTACT_ARC || currentContact.kind == ROCKY_LEG_CONTACT_KNEE)
+        legRestingOnImmovableJoint = (currentContact.kind == ROCKY_LEG_CONTACT_ARC || currentContact.kind == ROCKY_LEG_CONTACT_KNEE || currentContact.kind == ROCKY_LEG_CONTACT_FOOT)
                                    && (currentContact.clearance < SIMULATION_LEG_SETTLE_MIN_DROP);
     }
 
@@ -2479,8 +2320,12 @@ static void advanceRockySettle(void)
     // hundreds of degrees for no visible effect, flooding the console
     // with [SETTLE] lines about a foot nobody can see or collide with.
     // Also skipped while legRestingOnImmovableJoint (see its own comment
-    // just above).
-    if (!r->legHidden && !rockyKneeSettleSuppressed && !legRestingOnImmovableJoint && rockyKneeSettleStep >= SIMULATION_LEG_SETTLE_MIN_STEP_DEG)
+    // just above), and while rockyProbe1Enabled is FALSE -- the top-right
+    // "Probe 1 Settle" checkbox (WM_CREATE/WM_COMMAND's ID_PROBE1_TOGGLE)
+    // lets this whole probe be switched off at runtime, leaving only
+    // Probe 2's whole-body pivot-around-current-contact toppling active,
+    // without deleting any of this code.
+    if (!r->legHidden && !rockyKneeSettleSuppressed && !legRestingOnImmovableJoint && rockyProbe1Enabled && rockyKneeSettleStep >= SIMULATION_LEG_SETTLE_MIN_STEP_DEG)
     {
         float baseKneeAngle = r->kneeAngle;
         float bestDrop = 0.0f;
@@ -4703,8 +4548,16 @@ void canvasRenderFrame(float dimAmount)
     glMatrixMode(GL_MODELVIEW);
     glPushMatrix(); glLoadIdentity();
 
-    // NEW: corner hover indicator - shows exactly where to hover to
-    // reveal the UI panel, and brightens while you're hovering it.
+    // Corner hover indicator - shows exactly where to hover to reveal the
+    // UI panel, and brightens while you're hovering it. That panel is
+    // Design > Environment-only tooling (see envDesignActive's comment,
+    // WM_TIMER's UI_HOTZONE_TIMER_ID handling below), so this indicator
+    // has no reason to exist outside that mode either -- left ungated
+    // before, it kept drawing (and lighting up on hover) in the exact
+    // same top-right corner Simulation's own Probe 1 toggle button now
+    // lives in, which is exactly the "ui hover in simulation mode" this
+    // fixes.
+    if (appMode == APP_MODE_DESIGN && designLayer == LAYER_ENVIRONMENT)
     {
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -5279,8 +5132,8 @@ void renderCombinedFrame(void)
         // ...ArcSpline on top
         canvasRenderFrame(canvasDimAmount);
 
-        // Contact debug dots (plain C toggle) -- drawn LAST, after BOTH
-        // the robot and the environment, so nothing painted on top of
+        // Contact dots (plain C toggle) -- drawn LAST, after BOTH the
+        // robot and the environment, so nothing painted on top of
         // Simulation mode's own environment ribbon/strokes can cover them
         // (this used to run right after renderRobotScene, BEFORE
         // canvasRenderFrame -- if the environment's own drawing happened
@@ -5292,7 +5145,11 @@ void renderCombinedFrame(void)
         // coordinates, same convention drawRockyMassCenterTrack/
         // drawRockyReferencePoint already use, not whatever ArcSpline just
         // left bound. No-ops instantly unless both showContactDebug is on
-        // and we're actually in Simulation mode.
+        // and we're actually in Simulation mode. The old full-sample
+        // diagnostic overlay this toggle used to gate is gone entirely --
+        // by explicit request, plain-C now shows/hides
+        // drawSimulationLiveContactDots instead, replacing it rather than
+        // layering on top of it.
         graphicsOnResize(glWindowWidth, glWindowHeight);
         glMatrixMode(GL_MODELVIEW);
         glLoadIdentity();
@@ -5312,7 +5169,6 @@ void renderCombinedFrame(void)
         }
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        drawSimulationContactDebug();
         drawSimulationLiveContactDots();
     }
 
@@ -5539,6 +5395,26 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
                             10, 44, 120, 28, hWnd, (HMENU)ID_SLOW_MOTION,
                             GetModuleHandle(NULL), NULL);
 
+        // Probe 1 toggle -- top-right corner of the client area instead of
+        // the fixed top-left column Reset/Slow Motion/Walk use (see
+        // hProbe1ToggleBtn's own comment up near hRC/hDC for why). Same
+        // BS_AUTOCHECKBOX | BS_PUSHLIKE toggle-look style; starts CHECKED
+        // to match rockyProbe1Enabled's default-TRUE, so behavior is
+        // unchanged until the user actually unchecks it. WM_SIZE below
+        // keeps it pinned to this same corner as the window is resized.
+        {
+            RECT probe1ClientRect;
+            GetClientRect(hWnd, &probe1ClientRect);
+            hProbe1ToggleBtn = CreateWindowEx(0, L"BUTTON", L"Probe 1 Settle",
+                                WS_CHILD | BS_AUTOCHECKBOX | BS_PUSHLIKE,
+                                probe1ClientRect.right - PROBE1_TOGGLE_MARGIN_PX - PROBE1_TOGGLE_WIDTH_PX,
+                                PROBE1_TOGGLE_MARGIN_PX,
+                                PROBE1_TOGGLE_WIDTH_PX, PROBE1_TOGGLE_HEIGHT_PX,
+                                hWnd, (HMENU)ID_PROBE1_TOGGLE,
+                                GetModuleHandle(NULL), NULL);
+            SendMessage(hProbe1ToggleBtn, BM_SETCHECK, BST_CHECKED, 0);
+        }
+
         // "Walk" toggle (Shift+W) button removed for now -- hWalkBtn is
         // left NULL (its window is simply never created). All other
         // usages of hWalkBtn elsewhere in this file are already guarded
@@ -5745,7 +5621,18 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             hotZone.top    = clientTopRight.y;
             hotZone.bottom = clientTopRight.y + UI_HOTZONE_HEIGHT;
 
-            BOOL inHotZone = cursorOverOurWindows && PtInRect(&hotZone, pt);
+            // This whole hot-zone/panel mechanism is Design > Environment-
+            // only tooling (see the wantVisible gate a few lines down for
+            // the panel itself) -- computed up here now, rather than only
+            // further down, so it can gate hotZoneHighlighted (the corner
+            // indicator's own highlighted look, drawn by canvasRenderFrame)
+            // too. Without this, hovering that corner in Simulation mode
+            // (where Probe 1's toggle button now happens to live) still
+            // lit up a leftover Environment-mode indicator with nothing
+            // behind it to reveal.
+            BOOL envDesignActive = (appMode == APP_MODE_DESIGN && designLayer == LAYER_ENVIRONMENT);
+
+            BOOL inHotZone = envDesignActive && cursorOverOurWindows && PtInRect(&hotZone, pt);
 
             if (inHotZone != hotZoneHighlighted)
             {
@@ -5768,8 +5655,9 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             // none of it applies to Robot design mode or Simulation, so
             // only ever let the hot corner reveal it while Environment is
             // actually the active design layer, even if the cursor is
-            // sitting in its hot corner in some other mode.
-            BOOL envDesignActive = (appMode == APP_MODE_DESIGN && designLayer == LAYER_ENVIRONMENT);
+            // sitting in its hot corner in some other mode. (envDesignActive
+            // itself is computed further up now, so it can also gate
+            // inHotZone/hotZoneHighlighted -- reused here as-is.)
             if (!envDesignActive)
                 wantVisible = FALSE;
 
@@ -5823,6 +5711,22 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         if (glWindowHeight == 0) glWindowHeight = 1;
         glViewport(0, 0, glWindowWidth, glWindowHeight);
         UpdateProjection();
+
+        // Keep hProbe1ToggleBtn pinned to the top-right corner as the
+        // window is resized -- unlike Reset/Slow Motion/Walk's fixed
+        // top-left offset (never needs adjusting), a top-right anchor's
+        // absolute X position depends on the current window width, so it
+        // has to be recomputed and moved every resize. No-op if the
+        // button hasn't been created yet (shouldn't happen -- WM_CREATE
+        // always runs first -- but SetWindowPos on a NULL HWND would
+        // otherwise be undefined, so guard it anyway).
+        if (hProbe1ToggleBtn)
+        {
+            SetWindowPos(hProbe1ToggleBtn, NULL,
+                         glWindowWidth - PROBE1_TOGGLE_MARGIN_PX - PROBE1_TOGGLE_WIDTH_PX,
+                         PROBE1_TOGGLE_MARGIN_PX,
+                         0, 0, SWP_NOSIZE | SWP_NOZORDER);
+        }
 
         // Simulation mode's ground-collision data (segmentPointsWorld/
         // segmentThicknessWorld) is traced from a raster sized to
@@ -6160,14 +6064,13 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             return 0;
         }
 
-        // Plain C (no modifier): toggles the "show contact" debug overlay
-        // -- see drawSimulationContactDebug's own comment for exactly what
-        // it draws and why. Not gated to any one robot kind (unlike E/Q)
-        // since it's just as useful for Semni/Stilo.
+        // Plain C (no modifier): toggles the pivot/non-pivot contact dot
+        // overlay -- see drawSimulationLiveContactDots' own comment for
+        // exactly what it draws and why. Not gated to any one robot kind
+        // (unlike E/Q) since it's just as useful for Semni/Stilo.
         if (wParam == 'C' && appMode == APP_MODE_SIMULATION)
         {
             showContactDebug = !showContactDebug;
-            contactDebugLoggedThisToggle = FALSE; // re-arm the one-shot dump below
             printf("[CONTACT] overlay toggled %s (activeKind=%d)\n",
                    showContactDebug ? "ON" : "off", app.robotScene.activeKind);
             InvalidateRect(hWnd, NULL, FALSE);
@@ -6844,6 +6747,22 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	        // keeps working immediately, with no extra click needed.
 	        SetFocus(hWnd);
 	    }
+	    else if (LOWORD(wParam) == ID_PROBE1_TOGGLE)
+	    {
+	        // Same BS_AUTOCHECKBOX pattern as ID_SLOW_MOTION just above --
+	        // the button already flipped its own check state before this
+	        // notification fires, so read it back into rockyProbe1Enabled
+	        // rather than tracking a separate bool. advanceRockySettle reads
+	        // this flag directly on its next tick -- unchecking it here takes
+	        // effect immediately, no other state to reset (Probe 1 has no
+	        // ongoing timer/animation of its own the way Slow Motion/Walk do).
+	        rockyProbe1Enabled = (SendMessage(hProbe1ToggleBtn, BM_GETCHECK, 0, 0) == BST_CHECKED);
+
+	        // Same reasoning as ID_SLOW_MOTION's SetFocus above -- hand
+	        // keyboard focus back so G/Shift+G/E/Q/arrow keys etc. keep
+	        // working immediately after the click.
+	        SetFocus(hWnd);
+	    }
 	    else if (LOWORD(wParam) == ID_WALK_TOGGLE)
 	    {
 	        // ToggleGait maintains its own authoritative gaitActive bool
@@ -6932,6 +6851,18 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	            app.hoverHip = FALSE;
 	            app.hoverKnee = FALSE;
 	            simHoveredJoint = -1;
+
+	            // Design > Environment's own hover state (segment highlight +
+	            // endpoint-snap ring) is just as stale here as the Robot-mode
+	            // flags above -- switching straight from Design > Environment
+	            // to Simulation via the Mode menu (no intervening mouse move)
+	            // otherwise leaves hoveredSegment/snapEndpointAvailable pointing
+	            // at whatever was last hovered, and the paint code that draws
+	            // them (segment highlight color, snap-endpoint ring) has no
+	            // appMode gate of its own -- so it would keep drawing on top of
+	            // the Simulation view until the next WM_MOUSEMOVE/WM_MOUSELEAVE.
+	            hoveredSegment = -1;
+	            snapEndpointAvailable = FALSE;
 
 	            // Belt-and-suspenders alongside the hover reset above: these
 	            // normally always get cleared on WM_LBUTTONUP (input.c), but
@@ -7125,6 +7056,26 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	        if (hResetBtn)
 	        {
 	            ShowWindow(hResetBtn, appMode == APP_MODE_SIMULATION ? SW_SHOW : SW_HIDE);
+	        }
+
+	        // Probe 1 toggle -- same show/hide-on-mode-switch treatment as
+	        // Slow Motion above. Leaving Simulation also resets it back to
+	        // checked/enabled (rockyProbe1Enabled = TRUE) rather than leaving
+	        // it silently disabled the next time Simulation is entered --
+	        // same "temporary aid, not a persisted setting" reasoning Slow
+	        // Motion's own reset uses.
+	        if (hProbe1ToggleBtn)
+	        {
+	            if (appMode == APP_MODE_SIMULATION)
+	            {
+	                ShowWindow(hProbe1ToggleBtn, SW_SHOW);
+	            }
+	            else
+	            {
+	                ShowWindow(hProbe1ToggleBtn, SW_HIDE);
+	                SendMessage(hProbe1ToggleBtn, BM_SETCHECK, BST_CHECKED, 0);
+	                rockyProbe1Enabled = TRUE;
+	            }
 	        }
 
 	        // The Environment-only panel (hWndUI) can't rely on WM_TIMER to
