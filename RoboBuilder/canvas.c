@@ -6348,8 +6348,18 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             // gravity step, same visible "rotating it steps the gravity"
             // symptom, same fix, by explicit request -- arrow-key rotation
             // here should just rotate, no automatic settle/drop tacked on.
+            // Also now requires autoGravityActive, same reasoning and
+            // same explicit request as the Simulation-entry embed
+            // correction above (see its own comment): resolving
+            // whatever interpenetration a rotate just caused is a
+            // gravity-style settle exactly like that one (same
+            // applyGravityStep-per-tick driver), so it should be just
+            // as silent with Auto Gravity off -- a rotate that leaves
+            // the robot clipping the ground just stays clipping until
+            // gravity is turned on, same as any other overlap now.
             if (!(app.robotScene.activeKind == ROBOT_KIND_ROCKY
-                  && (app.robotScene.rocky.legHidden || app.robotScene.rocky.bodyHidden)))
+                  && (app.robotScene.rocky.legHidden || app.robotScene.rocky.bodyHidden))
+                && autoGravityActive)
             {
                 rockySettleConverged = FALSE;
                 rockyKneeSettleStep = SIMULATION_LEG_SETTLE_STEP_DEG;
@@ -6555,7 +6565,15 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             // -- a robot released genuinely airborne is supposed to just
             // hang there until the user turns gravity on or presses G,
             // same as it always has.
-            if (robotCollidesWithEnvironment())
+            // Also now requires autoGravityActive -- same explicit
+            // request as the other two postRotateSettleActive kickoffs
+            // (Simulation-entry embed correction, VK_LEFT/RIGHT rotate,
+            // both above): a hand-released robot left overlapping the
+            // ground now just stays overlapping until gravity is turned
+            // on, instead of quietly correcting itself (visibly, since
+            // this same driver is also nudged forward by every
+            // WM_MOUSEMOVE) with Auto Gravity off.
+            if (robotCollidesWithEnvironment() && autoGravityActive)
             {
                 // Re-arms the convergence flag and both step sizes first,
                 // same reason the other two kickoffs do it: a robot that
