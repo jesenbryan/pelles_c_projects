@@ -67,8 +67,15 @@
 // sphere-tracing search itself (see that function's own comment for why
 // it sphere-traces instead of stepping by a fixed increment) -- normally
 // only a handful of steps are needed, this is just a hard ceiling so a
-// pathological/glancing case can't spin forever.
-#define SIM_MASS_CENTER_DROP_MAX_LENGTH 3.0f
+// pathological/glancing case can't spin forever. MAX_LENGTH raised from
+// 3.0f (roughly the default view's whole -1.5..1.5 ortho height) to
+// 20.0f, by explicit request -- a robot dragged high enough above the
+// ground (well past what fits in the default view) had its dashed
+// mass-center drop line visibly stop short of actually reaching the
+// environment. MAX_ITERATIONS left as-is: sphere-tracing already
+// converges in only a handful of steps for typical open space, so the
+// existing ceiling comfortably covers the longer search too.
+#define SIM_MASS_CENTER_DROP_MAX_LENGTH 20.0f
 #define SIM_MASS_CENTER_DROP_MAX_ITERATIONS 64
 
 // handle for the top/bottom seam fillet arcs -- sits at each arc's
