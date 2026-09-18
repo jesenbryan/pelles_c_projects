@@ -950,6 +950,22 @@ static float simFindGroundBelowRobotPoint(PointF from)
     return from.y - SIM_MASS_CENTER_DROP_MAX_LENGTH;
 }
 
+// Purely for the cyan "sampled but not touching" dots drawSimulationLiveContactDots
+// restores around the knee/foot circles below, by explicit request -- NOT
+// used for any actual hit detection, which still goes through the exact,
+// unsampled findCircleContactDirections just below. Re-added after being
+// removed as dead code once its old caller (drawSimulationContactDebug)
+// was deleted; brought back now that there's a new caller again.
+static void computeCircleSamplePoints(PointF center, float radius, PointF outPts[ARC_SAMPLE_COUNT])
+{
+    for (int i = 0; i < ARC_SAMPLE_COUNT; i++)
+    {
+        float theta = (2.0f * 3.14159265f * i) / ARC_SAMPLE_COUNT;
+        outPts[i].x = center.x + radius * cosf(theta);
+        outPts[i].y = center.y + radius * sinf(theta);
+    }
+}
+
 // Max distinct simultaneous contact points findCircleContactDirections
 // (below) will ever report for one circle -- a robot's leg circle only
 // realistically touches a small handful of separate places at once (a
@@ -1424,6 +1440,17 @@ static void drawSimulationLiveContactDots(void)
     const float liveContactDotRadiusPivot = 0.016f;
     const float liveContactDotRadiusNonPivot = liveContactDotRadiusPivot;
 
+    // Restores the dim "sampled but not touching" dots a real report
+    // pointed out as missing since drawSimulationContactDebug (the old
+    // toggle-gated diagnostic overlay this function replaced) was deleted
+    // -- that one drew a small cyan dot at every point it tested, hit or
+    // miss, not just the hits; this function only ever drew the hits.
+    // Every case below now draws one of these wherever it already has a
+    // sample point in hand that DIDN'T register as touching, alongside
+    // (never instead of) its own existing hit-color logic.
+    const float liveMissDotRadius = 0.006f;
+    const float liveMissR = 0.25f, liveMissG = 0.85f, liveMissB = 0.95f, liveMissA = 0.7f;
+
     float eArcThickness = robotLengthToEnvWorld(SIMULATION_ARC_COLLISION_THICKNESS);
 
     switch (app.robotScene.activeKind)
@@ -1515,6 +1542,26 @@ static void drawSimulationLiveContactDots(void)
                             drawMarkerDisc(rx, ry, liveContactDotRadiusNonPivot, 1.0f, 0.55f, 0.0f, 1.0f);
                         }
                     }
+
+                    // Cyan "sampled but not touching" dots around this
+                    // circle's own circumference -- separate from the
+                    // exact findCircleContactDirections test just above,
+                    // which only ever reports genuine hits and has no
+                    // notion of "the points that were checked and missed."
+                    // Skips drawing anywhere a sample happens to fall
+                    // close enough to register as a hit itself, so this
+                    // never fights the real (red/orange) dot for the same
+                    // spot -- it only fills in what's actually NOT
+                    // touching around the rest of the circle.
+                    PointF circleSamplePts[ARC_SAMPLE_COUNT];
+                    computeCircleSamplePoints(bodyCircles[c].center, bodyCircles[c].radius, circleSamplePts);
+                    for (int s = 0; s < ARC_SAMPLE_COUNT; s++)
+                    {
+                        float secx, secy;
+                        robotPointToEnvWorld(circleSamplePts[s].x, circleSamplePts[s].y, &secx, &secy);
+                        if (!pointVisuallyContactsEnvironmentStroke(secx, secy, eArcThickness))
+                            drawMarkerDisc(circleSamplePts[s].x, circleSamplePts[s].y, liveMissDotRadius, liveMissR, liveMissG, liveMissB, liveMissA);
+                    }
                 }
 
                 PointF arcPts[NUM_ROCKY_CIRCLE_SEGMENTS][ARC_SAMPLE_COUNT];
@@ -1555,6 +1602,10 @@ static void drawSimulationLiveContactDots(void)
                                 drawMarkerDisc(arcPts[a][i].x, arcPts[a][i].y, liveContactDotRadiusNonPivot, 1.0f, 0.55f, 0.0f, 1.0f);
                             }
                         }
+                        else
+                        {
+                            drawMarkerDisc(arcPts[a][i].x, arcPts[a][i].y, liveMissDotRadius, liveMissR, liveMissG, liveMissB, liveMissA);
+                        }
                     }
                 }
 
@@ -1572,30 +1623,54 @@ static void drawSimulationLiveContactDots(void)
                 RockyEdgeSegment rectEdges[NUM_ROCKY_RECT_SEGMENTS];
                 computeRockyRectSegments(app.robotScene.rocky, rectEdges);
 
-                // Back to per-edge ARC_SAMPLE_COUNT point sampling, by
-                // explicit request -- this used to hand back just the ONE
-                // true closest point per edge (an exact edge-to-stroke
-                // distance test, no longer needed anywhere and removed),
-                // which is exact and cheap but means a rectangle lying
-                // flat along a whole line only ever showed a single dot
-                // (or two, wherever each of the two perpendicular short
-                // edges' own closest point happened to land, usually right
-                // at a corner) instead of a dot running the full length of
-                // the actual contact -- a real report: "when its lying
-                // down it should show a lot of contact points on the line
-                // and not just 2 on each corner". Same sampling style the
-                // STILO/SEMNI cases and the knee/foot circles above
-                // already use in this function (pointVisuallyContactsEnvironmentStroke
-                // per sample, draw only the hits) -- purely a visual
-                // choice for THIS overlay; actual collision/settle logic
-                // elsewhere (robotCollidesWithEnvironment,
-                // dropActiveRobotToRest, etc.) is untouched and still uses
-                // its own exact tests.
+                // Per-edge point sampling (not the old single-closest-point
+                // test), so a rectangle lying flat along a whole line shows
+                // a dot running the full length of the actual contact
+                // instead of just one or two near the corners -- a real
+                // report: "when its lying down it should show a lot of
+                // contact points on the line and not just 2 on each
+                // corner". Same sampling style the STILO/SEMNI cases and
+                // the knee/foot circles above already use in this function
+                // (pointVisuallyContactsEnvironmentStroke per sample, draw
+                // only the hits) -- purely a visual choice for THIS
+                // overlay; actual collision/settle logic elsewhere
+                // (robotCollidesWithEnvironment, dropActiveRobotToRest,
+                // etc.) is untouched and still uses its own exact tests.
+                //
+                // Point COUNT is scaled per edge by its own length, not a
+                // flat ARC_SAMPLE_COUNT for every edge -- by explicit
+                // request, after a flat count made the short sides read as
+                // noticeably denser than the long ones (same point count,
+                // packed into a much shorter run). Matches the long
+                // sides' own point-to-point SPACING instead (using the
+                // longest edge's spacing at the usual ARC_SAMPLE_COUNT as
+                // the target), so every edge's dots read at a consistent
+                // density regardless of that edge's length.
+                float edgeLen[NUM_ROCKY_RECT_SEGMENTS];
+                float longestEdgeLen = 0.0f;
                 for (int e = 0; e < NUM_ROCKY_RECT_SEGMENTS; e++)
                 {
-                    for (int i = 0; i < ARC_SAMPLE_COUNT; i++)
+                    float dx = rectEdges[e].end.x - rectEdges[e].start.x;
+                    float dy = rectEdges[e].end.y - rectEdges[e].start.y;
+                    edgeLen[e] = sqrtf(dx * dx + dy * dy);
+                    if (edgeLen[e] > longestEdgeLen)
+                        longestEdgeLen = edgeLen[e];
+                }
+                float targetSpacing = longestEdgeLen / (float)(ARC_SAMPLE_COUNT - 1);
+
+                for (int e = 0; e < NUM_ROCKY_RECT_SEGMENTS; e++)
+                {
+                    int pointCount = ARC_SAMPLE_COUNT;
+                    if (targetSpacing > 0.0f)
                     {
-                        float t = (float)i / (float)(ARC_SAMPLE_COUNT - 1);
+                        pointCount = (int)(edgeLen[e] / targetSpacing + 0.5f) + 1;
+                        if (pointCount < 2) pointCount = 2;
+                        if (pointCount > ARC_SAMPLE_COUNT) pointCount = ARC_SAMPLE_COUNT;
+                    }
+
+                    for (int i = 0; i < pointCount; i++)
+                    {
+                        float t = (float)i / (float)(pointCount - 1);
                         float rx = rectEdges[e].start.x + (rectEdges[e].end.x - rectEdges[e].start.x) * t;
                         float ry = rectEdges[e].start.y + (rectEdges[e].end.y - rectEdges[e].start.y) * t;
 
@@ -1612,6 +1687,8 @@ static void drawSimulationLiveContactDots(void)
                         // consistent scale.
                         if (pointVisuallyContactsEnvironmentStroke(ecx, ecy, 0.0f))
                             drawMarkerDisc(rx, ry, liveContactDotRadiusPivot, 0.95f, 0.1f, 0.1f, 1.0f);
+                        else
+                            drawMarkerDisc(rx, ry, liveMissDotRadius, liveMissR, liveMissG, liveMissB, liveMissA);
                     }
                 }
             }
@@ -1630,6 +1707,8 @@ static void drawSimulationLiveContactDots(void)
                 float eRadius = robotLengthToEnvWorld(bodyCircles[c].radius);
                 if (pointVisuallyContactsEnvironmentStroke(ecx, ecy, eRadius))
                     drawMarkerDisc(bodyCircles[c].center.x, bodyCircles[c].center.y, liveContactDotRadius, 0.95f, 0.1f, 0.1f, 1.0f);
+                else
+                    drawMarkerDisc(bodyCircles[c].center.x, bodyCircles[c].center.y, liveMissDotRadius, liveMissR, liveMissG, liveMissB, liveMissA);
             }
 
             PointF arcPts[NUM_STILO_CIRCLE_SEGMENTS][ARC_SAMPLE_COUNT];
@@ -1644,6 +1723,8 @@ static void drawSimulationLiveContactDots(void)
                     robotPointToEnvWorld(arcPts[a][i].x, arcPts[a][i].y, &ecx, &ecy);
                     if (pointVisuallyContactsEnvironmentStroke(ecx, ecy, eArcThickness))
                         drawMarkerDisc(arcPts[a][i].x, arcPts[a][i].y, liveContactDotRadius, 0.95f, 0.1f, 0.1f, 1.0f);
+                    else
+                        drawMarkerDisc(arcPts[a][i].x, arcPts[a][i].y, liveMissDotRadius, liveMissR, liveMissG, liveMissB, liveMissA);
                 }
             }
             break;
@@ -1662,6 +1743,8 @@ static void drawSimulationLiveContactDots(void)
                 float eRadius = robotLengthToEnvWorld(bodyCircles[c].radius);
                 if (pointVisuallyContactsEnvironmentStroke(ecx, ecy, eRadius))
                     drawMarkerDisc(bodyCircles[c].center.x, bodyCircles[c].center.y, liveContactDotRadius, 0.95f, 0.1f, 0.1f, 1.0f);
+                else
+                    drawMarkerDisc(bodyCircles[c].center.x, bodyCircles[c].center.y, liveMissDotRadius, liveMissR, liveMissG, liveMissB, liveMissA);
             }
 
             PointF arcPts[NUM_ROBOT_CIRCLE_SEGMENTS][ARC_SAMPLE_COUNT];
@@ -1676,6 +1759,8 @@ static void drawSimulationLiveContactDots(void)
                     robotPointToEnvWorld(arcPts[a][i].x, arcPts[a][i].y, &ecx, &ecy);
                     if (pointVisuallyContactsEnvironmentStroke(ecx, ecy, eArcThickness))
                         drawMarkerDisc(arcPts[a][i].x, arcPts[a][i].y, liveContactDotRadius, 0.95f, 0.1f, 0.1f, 1.0f);
+                    else
+                        drawMarkerDisc(arcPts[a][i].x, arcPts[a][i].y, liveMissDotRadius, liveMissR, liveMissG, liveMissB, liveMissA);
                 }
             }
             break;
