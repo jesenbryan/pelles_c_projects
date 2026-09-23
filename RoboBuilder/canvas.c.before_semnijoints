@@ -5237,62 +5237,6 @@ static void advanceRockyKneeHold(HWND hWnd)
     UpdateWindow(hWnd);
 }
 
-// ---- Semni joint control in Simulation (Q/E = hip, Shift+Q/E = knee) ----
-//
-// Same hold-to-rotate model as Rocky's E/Q knee (advanceRockyKneeHold
-// above): the first press rotates one SIMULATION_JOINT_ROTATE_STEP_DEG step
-// immediately, then its own timer keeps rotating at
-// SIMULATION_JOINT_ROTATE_RATE_DEG_PER_MS for as long as the key is held
-// (Windows' auto-repeat only re-arms the held flag). Q = +angle, E = -angle,
-// matching Rocky. Shift is read LIVE on every tick, so pressing or
-// releasing Shift mid-hold switches between hip and knee without having to
-// let go of Q/E. Rotating a joint pushes the limb into the ground only
-// upward (resolveUpwardIfPenetrating), and auto gravity (if on) keeps
-// running during the hold, same as Rocky -- Semni has no rotational settle
-// (toppling) of its own yet, so it only ever falls straight down.
-#define SEMNI_JOINT_HOLD_TIMER_ID 1005
-
-static BOOL semniJointHoldE = FALSE;
-static BOOL semniJointHoldQ = FALSE;
-static DWORD semniJointHoldLastTickTime = 0;
-
-// Rotates Semni's hip (Shift up) or knee (Shift down) by deltaDeg, then
-// lifts the robot out of the ground if that pushed a limb into it.
-static void rotateSemniJoint(HWND hWnd, float deltaDeg)
-{
-    Semni* s = &app.robotScene.robot;
-    if (GetAsyncKeyState(VK_SHIFT) & 0x8000)
-        s->kneeAngle += deltaDeg;
-    else
-        s->hipAngle += deltaDeg;
-
-    resolveUpwardIfPenetrating(hWnd, SIMULATION_SLOPE_CORRECTION_MAX);
-}
-
-static void advanceSemniJointHold(HWND hWnd)
-{
-    if (appMode != APP_MODE_SIMULATION || app.robotScene.activeKind != ROBOT_KIND_SEMNI) return;
-    if (!semniJointHoldE && !semniJointHoldQ) return;
-
-    DWORD now = GetTickCount();
-    DWORD elapsed = now - semniJointHoldLastTickTime;
-    if (elapsed == 0) { InvalidateRect(hWnd, NULL, FALSE); return; }
-    if (elapsed > SIMULATION_JOINT_ROTATE_HOLD_MAX_DT_MS)
-        elapsed = SIMULATION_JOINT_ROTATE_HOLD_MAX_DT_MS; // avoid a big catch-up jump after a stall
-    semniJointHoldLastTickTime = now;
-
-    int dir = (semniJointHoldQ ? 1 : 0) + (semniJointHoldE ? -1 : 0); // both held cancel out
-    if (dir != 0)
-        rotateSemniJoint(hWnd, (float)dir * SIMULATION_JOINT_ROTATE_RATE_DEG_PER_MS * (float)elapsed);
-
-    advanceAutoGravity(hWnd);
-    advancePostRotateSettle(hWnd);
-    advanceGait(hWnd);
-
-    InvalidateRect(hWnd, NULL, FALSE);
-    UpdateWindow(hWnd);
-}
-
 // Bottom-left "AUTO GRAVITY ON"/"AUTO GRAVITY OFF" toast (canvasRenderFrame
 // draws it, WM_KEYDOWN's Shift+G branch below sets these). Stateless fade:
 // gravityToastStartTick is just a GetTickCount() snapshot from the moment
@@ -6776,25 +6720,6 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         // structural gap rotateKeyHeld already has, nothing new introduced
         // here), this notices and stops itself within one tick instead of
         // spinning forever on a no-op.
-        // Semni's Q/E / Shift+Q/E joint hold -- see advanceSemniJointHold.
-        // Stops itself if Simulation was left, the robot kind changed, or
-        // both keys are somehow no longer held (e.g. a missed WM_KEYUP).
-        if (wParam == SEMNI_JOINT_HOLD_TIMER_ID)
-        {
-            if (appMode == APP_MODE_SIMULATION && app.robotScene.activeKind == ROBOT_KIND_SEMNI
-                && (semniJointHoldE || semniJointHoldQ))
-            {
-                advanceSemniJointHold(hWnd);
-            }
-            else
-            {
-                semniJointHoldE = FALSE;
-                semniJointHoldQ = FALSE;
-                KillTimer(hWnd, SEMNI_JOINT_HOLD_TIMER_ID);
-            }
-            return 0;
-        }
-
         if (wParam == ROCKY_KNEE_HOLD_TIMER_ID)
         {
             if (appMode == APP_MODE_SIMULATION && (rockyKneeHoldE || rockyKneeHoldQ))
@@ -7491,31 +7416,6 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         // overlay -- see drawSimulationLiveContactDots' own comment for
         // exactly what it draws and why. Not gated to any one robot kind
         // (unlike E/Q) since it's just as useful for Semni/Stilo.
-        // Semni: Q/E rotates the hip, Shift+Q/Shift+E rotates the knee --
-        // see advanceSemniJointHold. wParam is still 'Q'/'E' with Shift
-        // held (Shift doesn't change the virtual-key code).
-        if ((wParam == 'E' || wParam == 'Q') && appMode == APP_MODE_SIMULATION && app.robotScene.activeKind == ROBOT_KIND_SEMNI)
-        {
-            BOOL isAutoRepeat = (lParam & 0x40000000) != 0;
-            if (wParam == 'E') semniJointHoldE = TRUE; else semniJointHoldQ = TRUE;
-            if (isAutoRepeat)
-                return 0; // the hold timer is already rotating -- just keep the flag armed
-
-            float step = (wParam == 'E') ? -SIMULATION_JOINT_ROTATE_STEP_DEG : SIMULATION_JOINT_ROTATE_STEP_DEG;
-            rotateSemniJoint(hWnd, step);
-
-            semniJointHoldLastTickTime = GetTickCount();
-            SetTimer(hWnd, SEMNI_JOINT_HOLD_TIMER_ID, SIMULATION_AUTO_GRAVITY_INTERVAL_MS, NULL);
-
-            advanceAutoGravity(hWnd);
-            advancePostRotateSettle(hWnd);
-            advanceGait(hWnd);
-
-            InvalidateRect(hWnd, NULL, FALSE);
-            UpdateWindow(hWnd);
-            return 0;
-        }
-
         if (wParam == 'C' && appMode == APP_MODE_SIMULATION)
         {
             showContactDebug = !showContactDebug;
@@ -7798,12 +7698,6 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 SIM_LOG("[SETTLE] E/Q keyup reset fired -- reviving knee+body probe step sizes, leaving body pivot direction/identity memory untouched\n");
                 reviveRockyBodyProbeStepSizes(hWnd);
             }
-        }
-        if ((wParam == 'E' || wParam == 'Q') && appMode == APP_MODE_SIMULATION && app.robotScene.activeKind == ROBOT_KIND_SEMNI)
-        {
-            if (wParam == 'E') semniJointHoldE = FALSE; else semniJointHoldQ = FALSE;
-            if (!semniJointHoldE && !semniJointHoldQ)
-                KillTimer(hWnd, SEMNI_JOINT_HOLD_TIMER_ID);
         }
         return 0;
     }
@@ -8749,12 +8643,6 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	        // rockyKneeHoldE/Q still TRUE, ready to start rotating a knee
 	        // that isn't even on screen anymore the moment Simulation is
 	        // re-entered and E/Q happens to still be physically held down.
-	        if (appMode != APP_MODE_SIMULATION && (semniJointHoldE || semniJointHoldQ))
-	        {
-	            semniJointHoldE = FALSE;
-	            semniJointHoldQ = FALSE;
-	            KillTimer(hWnd, SEMNI_JOINT_HOLD_TIMER_ID);
-	        }
 	        if (appMode != APP_MODE_SIMULATION && (rockyKneeHoldE || rockyKneeHoldQ))
 	        {
 	            rockyKneeHoldE = FALSE;
@@ -9022,7 +8910,7 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	    return 0;
 	}
     case WM_ERASEBKGND: return 1;
-    case WM_DESTROY: KillTimer(hWnd, UI_HOTZONE_TIMER_ID); KillTimer(hWnd, AUTO_GRAVITY_TIMER_ID); KillTimer(hWnd, ROCKY_KNEE_HOLD_TIMER_ID); KillTimer(hWnd, SEMNI_JOINT_HOLD_TIMER_ID); PostQuitMessage(0); return 0;
+    case WM_DESTROY: KillTimer(hWnd, UI_HOTZONE_TIMER_ID); KillTimer(hWnd, AUTO_GRAVITY_TIMER_ID); KillTimer(hWnd, ROCKY_KNEE_HOLD_TIMER_ID); PostQuitMessage(0); return 0;
     }
     return DefWindowProc(hWnd, msg, wParam, lParam);
 }

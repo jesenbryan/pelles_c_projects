@@ -32,8 +32,6 @@ static const HelpRow kHelpRows[] = {
     { L"Simulation (Work in Progress)",  L"Left-click + Drag",   L"Move the robot" },
     { NULL,                              L"Shift + Scroll",      L"Rotate the hovered joint" },
     { NULL,                              L"Left / Right Arrow",  L"Rotate the whole robot" },
-    { NULL,                              L"Q / E (hold)",        L"Semni: rotate the hip \x2014 Rocky: bend the knee" },
-    { NULL,                              L"Shift + Q / E (hold)", L"Semni: rotate the knee" },
     { NULL,                              L"G",                   L"Nudge the robot down" },
     { NULL,                              L"Shift + G",           L"Toggle auto gravity" },
     { NULL,                              L"Shift + W",           L"Toggle Walk" },
