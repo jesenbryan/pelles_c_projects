@@ -1473,9 +1473,6 @@ static BOOL showContactDebug = TRUE;
 // (ID_ROCKY_TOGGLE_LEG_BUTTON/ID_ROCKY_TOGGLE_BODY_BUTTON) -- a hidden
 // part isn't sampled here either, consistent with it not being sampled
 // for real collision.
-// Defined further down with the robot-generic settle accessors.
-static void semniContactCandidates(const Semni* sm, BOOL legPart, RockyLegContact* best, RockyLegContact* second);
-
 static void drawSimulationLiveContactDots(void)
 {
     if (appMode != APP_MODE_SIMULATION) return;
@@ -1796,27 +1793,6 @@ static void drawSimulationLiveContactDots(void)
         case ROBOT_KIND_SEMNI:
         default:
         {
-            // Same overlay as Rocky's case above (it used to draw one tiny dot
-            // at each circle's CENTER, which is why no contact ever showed on
-            // Semni's circles): exact rim contact points via
-            // findCircleContactDirections, the current topple pivot in red
-            // (drawn last, on top), every other touching point in orange,
-            // cyan "sampled but not touching" dots around each circle and
-            // along each fillet.
-            //
-            // Pivot = the lowest of Semni's leg/body contact candidates (the
-            // same candidates Probe 2 pivots around -- semniContactCandidates).
-            // Deliberately NOT settleToppleContactPoints: that updates the
-            // settle's leg/body hysteresis state, and drawing must never
-            // change what the simulation does.
-            RockyLegContact legBest, legSecond, bodyBest, bodySecond;
-            semniContactCandidates(&app.robotScene.robot, TRUE, &legBest, &legSecond);
-            semniContactCandidates(&app.robotScene.robot, FALSE, &bodyBest, &bodySecond);
-            RockyLegContact pivotContact = (legBest.clearance <= bodyBest.clearance) ? legBest : bodyBest;
-
-            BOOL pivotHasContact = FALSE;
-            float pivotDrawX = 0.0f, pivotDrawY = 0.0f;
-
             CircleSegment bodyCircles[NUM_ROBOT_BODY_CIRCLES];
             computeSemniBodyCircles(app.robotScene.robot, bodyCircles);
 
@@ -1825,38 +1801,10 @@ static void drawSimulationLiveContactDots(void)
                 float ecx, ecy;
                 robotPointToEnvWorld(bodyCircles[c].center.x, bodyCircles[c].center.y, &ecx, &ecy);
                 float eRadius = robotLengthToEnvWorld(bodyCircles[c].radius);
-
-                // Circle candidates carry the circle's own center as .world
-                // (same computeSemniBodyCircles call), so exact equality is safe.
-                BOOL isPivotCircle = (pivotContact.kind != ROCKY_LEG_CONTACT_ARC
-                                      && pivotContact.world.x == bodyCircles[c].center.x
-                                      && pivotContact.world.y == bodyCircles[c].center.y);
-
-                float contactDirX[MAX_CIRCLE_CONTACT_POINTS], contactDirY[MAX_CIRCLE_CONTACT_POINTS];
-                int contactCount = findCircleContactDirections(ecx, ecy, eRadius, contactDirX, contactDirY, MAX_CIRCLE_CONTACT_POINTS);
-                for (int k = 0; k < contactCount; k++)
-                {
-                    float rx = bodyCircles[c].center.x + contactDirX[k] * bodyCircles[c].radius;
-                    float ry = bodyCircles[c].center.y + contactDirY[k] * bodyCircles[c].radius;
-                    if (isPivotCircle)
-                    {
-                        if (!pivotHasContact) { pivotHasContact = TRUE; pivotDrawX = rx; pivotDrawY = ry; }
-                    }
-                    else
-                    {
-                        drawMarkerDisc(rx, ry, liveContactDotRadiusNonPivot, 1.0f, 0.55f, 0.0f, 1.0f);
-                    }
-                }
-
-                PointF circleSamplePts[ARC_SAMPLE_COUNT];
-                computeCircleSamplePoints(bodyCircles[c].center, bodyCircles[c].radius, circleSamplePts);
-                for (int sIdx = 0; sIdx < ARC_SAMPLE_COUNT; sIdx++)
-                {
-                    float secx, secy;
-                    robotPointToEnvWorld(circleSamplePts[sIdx].x, circleSamplePts[sIdx].y, &secx, &secy);
-                    if (!pointVisuallyContactsEnvironmentStroke(secx, secy, eArcThickness))
-                        drawMarkerDisc(circleSamplePts[sIdx].x, circleSamplePts[sIdx].y, liveMissDotRadius, liveMissR, liveMissG, liveMissB, liveMissA);
-                }
+                if (pointVisuallyContactsEnvironmentStroke(ecx, ecy, eRadius))
+                    drawMarkerDisc(bodyCircles[c].center.x, bodyCircles[c].center.y, liveContactDotRadius, 0.95f, 0.1f, 0.1f, 1.0f);
+                else
+                    drawMarkerDisc(bodyCircles[c].center.x, bodyCircles[c].center.y, liveMissDotRadius, liveMissR, liveMissG, liveMissB, liveMissA);
             }
 
             PointF arcPts[NUM_ROBOT_CIRCLE_SEGMENTS][ARC_SAMPLE_COUNT];
@@ -1870,32 +1818,11 @@ static void drawSimulationLiveContactDots(void)
                     float ecx, ecy;
                     robotPointToEnvWorld(arcPts[a][i].x, arcPts[a][i].y, &ecx, &ecy);
                     if (pointVisuallyContactsEnvironmentStroke(ecx, ecy, eArcThickness))
-                    {
-                        // Arc candidates carry the exact sample as .world
-                        // (same computeSemniArcPoints call) -- the seam arcs'
-                        // kind is BODY_CORNER, so match by position only.
-                        BOOL isPivotSample = (pivotContact.world.x == arcPts[a][i].x
-                                              && pivotContact.world.y == arcPts[a][i].y);
-                        if (isPivotSample)
-                        {
-                            pivotHasContact = TRUE;
-                            pivotDrawX = arcPts[a][i].x;
-                            pivotDrawY = arcPts[a][i].y;
-                        }
-                        else
-                        {
-                            drawMarkerDisc(arcPts[a][i].x, arcPts[a][i].y, liveContactDotRadiusNonPivot, 1.0f, 0.55f, 0.0f, 1.0f);
-                        }
-                    }
+                        drawMarkerDisc(arcPts[a][i].x, arcPts[a][i].y, liveContactDotRadius, 0.95f, 0.1f, 0.1f, 1.0f);
                     else
-                    {
                         drawMarkerDisc(arcPts[a][i].x, arcPts[a][i].y, liveMissDotRadius, liveMissR, liveMissG, liveMissB, liveMissA);
-                    }
                 }
             }
-
-            if (pivotHasContact)
-                drawMarkerDisc(pivotDrawX, pivotDrawY, liveContactDotRadiusPivot, 0.95f, 0.1f, 0.1f, 1.0f);
             break;
         }
     }
