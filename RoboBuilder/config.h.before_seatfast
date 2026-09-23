@@ -554,11 +554,11 @@
 //   lift the robot to undo float rounding at the pivot before it counts
 //   as blocked (kept tiny, well under the visual tolerance, so the pivot
 //   itself stays flush).
-// SIMULATION_ROCKY_SEAT_SEARCH_ITERATIONS: bisection depth; 10 halvings
-//   of a bracket ~2x the gap leave well under a pixel at any reachable zoom.
+// SIMULATION_ROCKY_SEAT_SEARCH_ITERATIONS: bisection depth; 16 halvings
+//   of a <=1 deg bracket is far below a pixel at any reachable zoom.
 #define SIMULATION_ROCKY_SEAT_MAX_GAP 0.02f
 #define SIMULATION_ROCKY_SEAT_MAX_PIVOT_LIFT 0.0001f
-#define SIMULATION_ROCKY_SEAT_SEARCH_ITERATIONS 10 // was 16; the bracket is only ~2x the gap, so 10 halvings leave <0.2% of it
+#define SIMULATION_ROCKY_SEAT_SEARCH_ITERATIONS 16
 
 // applyGravityStep (canvas.c) used to just undo a WHOLE gravity step the
 // instant it detected a collision -- simple, but it means the robot always

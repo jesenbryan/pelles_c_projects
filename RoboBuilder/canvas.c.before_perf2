@@ -2580,24 +2580,18 @@ static BOOL rockySeatProbe(Rocky* r, PointF pivot, float deltaDeg,
     float baseAngle = r->angle;
     PointF shift = rotateRockyBodyAroundPivot(r, pivot, deltaDeg);
 
-    // Dangling point below the surface -> blocked, no collision test needed.
-    float clearance = rockyDanglingPointClearance(r);
-    BOOL blocked = (clearance < 0.0f);
-
-    // Otherwise: a collision here is either float rounding at the pivot
-    // (fine) or something real. Instead of clearPivotRoundingResidual's
-    // 12-step search for the exact lift (this made the whole seat pass
-    // cost ~60-70 ms -- real [PERF] report), just test the one lift we'd
-    // accept: if lifting by SIMULATION_ROCKY_SEAT_MAX_PIVOT_LIFT clears
-    // it, it was rounding; if not, it's blocked. At most 2 checks.
     float lift = 0.0f;
-    if (!blocked && robotCollidesWithEnvironment())
+    BOOL blocked = FALSE;
+    if (robotCollidesWithEnvironment())
     {
-        lift = SIMULATION_ROCKY_SEAT_MAX_PIVOT_LIFT;
-        translateActiveRobot(0.0f, lift);
-        if (robotCollidesWithEnvironment())
+        lift = clearPivotRoundingResidual();
+        if (lift > SIMULATION_ROCKY_SEAT_MAX_PIVOT_LIFT || robotCollidesWithEnvironment())
             blocked = TRUE;
     }
+
+    float clearance = rockyDanglingPointClearance(r);
+    if (clearance < 0.0f)
+        blocked = TRUE;
 
     if (outDanglingClearance) *outDanglingClearance = clearance;
     if (outComY) *outComY = computeRockyMassCenterWorld(*r).y;
@@ -2623,16 +2617,10 @@ static void seatRockyDanglingPoint(Rocky* r)
     float envPerRobot = robotLengthToEnvWorld(1.0f);
     float gapRobot = (envPerRobot > 0.0f) ? dangling.clearance / envPerRobot : 0.0f;
 
-    // Skip when the gap is already small enough to register as a visible
-    // contact (half of SIMULATION_CONTACT_VISUAL_TOLERANCE, for margin) --
-    // nothing a viewer could see would change, and most convergences land
-    // here, so this also avoids the whole search's cost.
-    if (dangling.clearance <= 0.0f
-        || gapRobot <= 0.5f * SIMULATION_CONTACT_VISUAL_TOLERANCE
-        || gapRobot > SIMULATION_ROCKY_SEAT_MAX_GAP)
+    if (dangling.clearance <= 0.0f || gapRobot > SIMULATION_ROCKY_SEAT_MAX_GAP)
     {
         gSuppressGravityDebug = savedSuppress;
-        return; // already touching (or visibly so), or genuinely dangling -- nothing to seat
+        return; // already touching, or genuinely dangling -- nothing to seat
     }
 
     PointF pivot = pivotContact.world;
@@ -2711,18 +2699,8 @@ static void seatRockyDanglingPoint(Rocky* r)
     gSuppressGravityDebug = savedSuppress;
 }
 
-// [PERF] breakdown of the most recent advanceRockySettle call's two
-// convergence-only extras (the sanity-check scout and the seat pass) --
-// reset at the top of every call, read by the settle fast-forward's
-// [PERF] line so a slow call can be attributed. 0 when that part didn't run.
-static double perfLastSettleSanityMs = 0.0;
-static double perfLastSettleSeatMs = 0.0;
-
 static void advanceRockySettle(void)
 {
-    perfLastSettleSanityMs = 0.0;
-    perfLastSettleSeatMs = 0.0;
-
     if (app.robotScene.activeKind != ROBOT_KIND_ROCKY)
         return;
 
@@ -4045,12 +4023,7 @@ static void advanceRockySettle(void)
         // to check that assumption before trusting it, then fully undoes
         // itself either way -- no committed state changes as a result of
         // this block, converged or not.
-        //
-        // Only runs while View > Simulation Log is on: its whole output is
-        // one [SETTLE] log line, and it costs two full 20 deg scout drops
-        // (a real report showed convergence ticks taking ~80 ms).
-        double perfSanityStart = perfNowMs();
-        if (simPhysicsLogEnabled && !(r->bodyHidden && r->legHidden))
+        if (!(r->bodyHidden && r->legHidden))
         {
             PointF sanityPivot = rockyTopplePivotWorld(r);
             float sanityBaseAngle = r->angle;
@@ -4089,11 +4062,7 @@ static void advanceRockySettle(void)
         // for the same nothing.
         // Close any small leftover gap under the second contact point
         // before calling this the rest pose -- see seatRockyDanglingPoint.
-        perfLastSettleSanityMs = perfNowMs() - perfSanityStart;
-
-        double perfSeatStart = perfNowMs();
         seatRockyDanglingPoint(r);
-        perfLastSettleSeatMs = perfNowMs() - perfSeatStart;
 
         rockySettleConverged = TRUE;
         SIM_LOG("[SETTLE] converged -- kneeAngle=%.2f bodyAngle=%.2f, no further improvement found\n",
@@ -4483,7 +4452,6 @@ static BOOL applyGravityStep(HWND hWnd, float step)
             double perfSettleStart = perfNowMs();
             int perfSettleCalls = 0;
             double perfSlowestCallMs = 0.0; // most expensive advanceRockySettle call so far this tick
-            double perfSlowestSanityMs = 0.0, perfSlowestSeatMs = 0.0; // that call's convergence extras
 
             for (int ff = 0; ff < SIMULATION_LEG_SETTLE_FAST_FORWARD_TICKS; ff++)
             {
@@ -4518,11 +4486,7 @@ static BOOL applyGravityStep(HWND hWnd, float step)
                 advanceRockySettle();
                 double perfCallMs = perfNowMs() - perfCallStart;
                 if (perfCallMs > perfSlowestCallMs)
-                {
                     perfSlowestCallMs = perfCallMs;
-                    perfSlowestSanityMs = perfLastSettleSanityMs;
-                    perfSlowestSeatMs = perfLastSettleSeatMs;
-                }
                 perfSettleCalls++;
 
                 if (rockySettleConverged)
@@ -4539,12 +4503,10 @@ static BOOL applyGravityStep(HWND hWnd, float step)
             double perfSettleElapsed = perfNowMs() - perfSettleStart;
             if (perfSettleElapsed >= (double)SIMULATION_PERF_WARN_FRAME_MS)
             {
-                SIM_FPS_LOG("[PERF] settle fast-forward took %.2fms across %d advanceRockySettle call(s) (avg %.2fms/call, slowest %.2fms [sanityCheck=%.2fms seat=%.2fms probes=%.2fms], budget %dms) -- this ran INSIDE the current WM_TIMER tick, before its own repaint was even scheduled\n",
+                SIM_FPS_LOG("[PERF] settle fast-forward took %.2fms across %d advanceRockySettle call(s) (avg %.2fms/call, slowest %.2fms, budget %dms) -- this ran INSIDE the current WM_TIMER tick, before its own repaint was even scheduled\n",
                        perfSettleElapsed, perfSettleCalls,
                        perfSettleCalls > 0 ? perfSettleElapsed / (double)perfSettleCalls : 0.0,
-                       perfSlowestCallMs, perfSlowestSanityMs, perfSlowestSeatMs,
-                       perfSlowestCallMs - perfSlowestSanityMs - perfSlowestSeatMs,
-                       SIMULATION_LEG_SETTLE_FAST_FORWARD_BUDGET_MS);
+                       perfSlowestCallMs, SIMULATION_LEG_SETTLE_FAST_FORWARD_BUDGET_MS);
             }
         }
     }

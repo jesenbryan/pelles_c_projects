@@ -2580,24 +2580,18 @@ static BOOL rockySeatProbe(Rocky* r, PointF pivot, float deltaDeg,
     float baseAngle = r->angle;
     PointF shift = rotateRockyBodyAroundPivot(r, pivot, deltaDeg);
 
-    // Dangling point below the surface -> blocked, no collision test needed.
-    float clearance = rockyDanglingPointClearance(r);
-    BOOL blocked = (clearance < 0.0f);
-
-    // Otherwise: a collision here is either float rounding at the pivot
-    // (fine) or something real. Instead of clearPivotRoundingResidual's
-    // 12-step search for the exact lift (this made the whole seat pass
-    // cost ~60-70 ms -- real [PERF] report), just test the one lift we'd
-    // accept: if lifting by SIMULATION_ROCKY_SEAT_MAX_PIVOT_LIFT clears
-    // it, it was rounding; if not, it's blocked. At most 2 checks.
     float lift = 0.0f;
-    if (!blocked && robotCollidesWithEnvironment())
+    BOOL blocked = FALSE;
+    if (robotCollidesWithEnvironment())
     {
-        lift = SIMULATION_ROCKY_SEAT_MAX_PIVOT_LIFT;
-        translateActiveRobot(0.0f, lift);
-        if (robotCollidesWithEnvironment())
+        lift = clearPivotRoundingResidual();
+        if (lift > SIMULATION_ROCKY_SEAT_MAX_PIVOT_LIFT || robotCollidesWithEnvironment())
             blocked = TRUE;
     }
+
+    float clearance = rockyDanglingPointClearance(r);
+    if (clearance < 0.0f)
+        blocked = TRUE;
 
     if (outDanglingClearance) *outDanglingClearance = clearance;
     if (outComY) *outComY = computeRockyMassCenterWorld(*r).y;
@@ -2623,16 +2617,10 @@ static void seatRockyDanglingPoint(Rocky* r)
     float envPerRobot = robotLengthToEnvWorld(1.0f);
     float gapRobot = (envPerRobot > 0.0f) ? dangling.clearance / envPerRobot : 0.0f;
 
-    // Skip when the gap is already small enough to register as a visible
-    // contact (half of SIMULATION_CONTACT_VISUAL_TOLERANCE, for margin) --
-    // nothing a viewer could see would change, and most convergences land
-    // here, so this also avoids the whole search's cost.
-    if (dangling.clearance <= 0.0f
-        || gapRobot <= 0.5f * SIMULATION_CONTACT_VISUAL_TOLERANCE
-        || gapRobot > SIMULATION_ROCKY_SEAT_MAX_GAP)
+    if (dangling.clearance <= 0.0f || gapRobot > SIMULATION_ROCKY_SEAT_MAX_GAP)
     {
         gSuppressGravityDebug = savedSuppress;
-        return; // already touching (or visibly so), or genuinely dangling -- nothing to seat
+        return; // already touching, or genuinely dangling -- nothing to seat
     }
 
     PointF pivot = pivotContact.world;
