@@ -6660,25 +6660,13 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
                             10, 44, 120, 28, hWnd, (HMENU)ID_SLOW_MOTION,
                             GetModuleHandle(NULL), NULL);
 
-        // Probe 1 toggle -- top-right corner of the client area instead of
-        // the fixed top-left column Reset/Slow Motion/Walk use (see
-        // hProbe1ToggleBtn's own comment up near hRC/hDC for why). Same
-        // BS_AUTOCHECKBOX | BS_PUSHLIKE toggle-look style; starts CHECKED
-        // to match rockyProbe1Enabled's default-TRUE, so behavior is
-        // unchanged until the user actually unchecks it. WM_SIZE below
-        // keeps it pinned to this same corner as the window is resized.
-        {
-            RECT probe1ClientRect;
-            GetClientRect(hWnd, &probe1ClientRect);
-            hProbe1ToggleBtn = CreateWindowEx(0, L"BUTTON", L"Probe 1 Settle",
-                                WS_CHILD | BS_AUTOCHECKBOX | BS_PUSHLIKE,
-                                probe1ClientRect.right - PROBE1_TOGGLE_MARGIN_PX - PROBE1_TOGGLE_WIDTH_PX,
-                                PROBE1_TOGGLE_MARGIN_PX + FPS_OVERLAY_RESERVED_HEIGHT_PX,
-                                PROBE1_TOGGLE_WIDTH_PX, PROBE1_TOGGLE_HEIGHT_PX,
-                                hWnd, (HMENU)ID_PROBE1_TOGGLE,
-                                GetModuleHandle(NULL), NULL);
-            SendMessage(hProbe1ToggleBtn, BM_SETCHECK, BST_CHECKED, 0);
-        }
+        // "Probe 1 Settle" toggle button (top-right) removed by request --
+        // same approach as the Walk button just below: hProbe1ToggleBtn is
+        // left NULL (never created). Every other use of it in this file is
+        // already guarded by "if (hProbe1ToggleBtn)", and without the
+        // button ID_PROBE1_TOGGLE can never fire, so rockyProbe1Enabled
+        // simply stays at its default TRUE -- Probe 1 (knee settle) keeps
+        // running exactly as before, it just can't be switched off anymore.
 
         // "Walk" toggle (Shift+W) button removed for now -- hWalkBtn is
         // left NULL (its window is simply never created). All other
@@ -8251,8 +8239,26 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	            autoGravityVelocity = 0.0f;
 
 	            SIM_LOG("[RESET] robot restored to its Simulation-start pose (kind=%d)\n", app.robotScene.activeKind);
-	            InvalidateRect(hWnd, NULL, FALSE);
 	        }
+
+	        // Reset also resets the VIEW: 100% zoom, centered on the robot
+	        // (its center of mass, the same point the green mass-center line
+	        // is drawn from). The camera stores pan as a fraction of the
+	        // current half-extent (sim_camera.c), shared by both the robot
+	        // and environment projections, so centering the robot means
+	        // panFrac = robotPoint / robotHalfExtent at the new (1.0) zoom --
+	        // same half-extent math robotPointToEnvWorld uses.
+	        simCameraReset();
+	        if (glWindowWidth > 0 && glWindowHeight > 0)
+	        {
+	            float aspect = (float)glWindowWidth / (float)glWindowHeight;
+	            float robotHalfY = ROBOT_VIEW_HALF_EXTENT / (simCameraGetZoom() * graphicsGetRobotScale());
+	            float robotHalfX = robotHalfY * aspect;
+	            PointF robotCenter = computeSimulationMassCenterWorld(&app);
+	            if (robotHalfX > 0.0f && robotHalfY > 0.0f)
+	                simCameraSetPanFraction(robotCenter.x / robotHalfX, robotCenter.y / robotHalfY);
+	        }
+	        InvalidateRect(hWnd, NULL, FALSE);
 
 	        // Same reasoning as ID_SLOW_MOTION's SetFocus just above.
 	        SetFocus(hWnd);

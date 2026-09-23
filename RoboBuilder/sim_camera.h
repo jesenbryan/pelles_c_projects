@@ -63,3 +63,9 @@ void simCameraGetWorldPan(float halfExtentX, float halfExtentY, float* panX, flo
 // size, not a camera position, same reasoning as everywhere else this
 // camera deliberately leaves it alone.
 void simCameraReset(void);
+
+// Sets the pan directly, in the same fraction-of-half-extent units the
+// camera stores (see simCameraGetWorldPan) -- so a pan of (fx * halfX,
+// fy * halfY) world units in whichever subsystem's space is asking. Used
+// by Simulation's Reset button to center the view on the robot.
+void simCameraSetPanFraction(float fracX, float fracY);
