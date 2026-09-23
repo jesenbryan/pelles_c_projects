@@ -13,7 +13,6 @@
 #include "save.h"          // For saveCanvasAsBMP/saveRockyAsEquations/saveRockyAsRobArm/saveSemniAsRobLeg/saveStiloAsRobLeg -- File > Save (ID_SAVE below) now dispatches to these directly, folded in from the old Robot editor Save button. saveRobotAsEquations/saveStiloAsEquations are declared here too but no longer called from this file -- they're still used by input.c's Standing/Home pose buttons (Poses\*.txt).
 #include "help_dialog.h"   // For showControlsHelpDialog -- Help > Controls Help... (ID_HELP below)
 #include "env_export.h"   // For saveEnvironmentSegmentsAsTxt (moved out of this file)
-#include "input.h"        // For commitWeightEdit -- File > Save confirms the Weight box first
 #include "debug.h"        // For ClearConsoleLog -- Simulation's Reset button (ID_RESET_ROBOT below)
 #include <math.h>
 #include <string.h>
@@ -6384,8 +6383,7 @@ void canvasRenderFrame(float dimAmount)
     // above -- this reflects real-time engine performance, not ArcSpline-
     // specific content, so it stays fully readable even while this canvas
     // is the dimmed/inactive subsystem.
-    // Simulation only -- not shown in Design > Environment or Design > Robot.
-    if (showFpsOverlay && appMode == APP_MODE_SIMULATION)
+    if (showFpsOverlay)
     {
         char fpsStr[32];
         int fpsRounded = (int)(fpsDisplayValue + 0.5f); // wsprintfA has no float specifier -- see ROTATION's own comment below for the same fix
@@ -9111,11 +9109,6 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	        // Each kind saves into its own export folder so posing one
 	        // robot never overwrites another's saved files. Exact same
 	        // per-kind logic the old Robot editor Save button used.
-	        // Confirm a Weight value that's typed but not yet confirmed
-	        // (Enter / click-away) so Save always writes what's in the box --
-	        // for every robot kind, not just Rocky.
-	        commitWeightEdit(&app);
-
 	        switch (app.robotScene.activeKind)
 	        {
 	            case ROBOT_KIND_ROCKY:
@@ -9141,6 +9134,20 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	                // GetWindowText here, same as Stilo/Semni's own cases
 	                // below already just trust the live struct for the
 	                // ratio.
+	                wchar_t weightBuf[64];
+	                GetWindowText(app.ui.hActualWeightEdit, weightBuf, 64);
+	                // Same tolerant parse as input.c's Weight box handler: ','
+	                // counts as a decimal point, and empty/non-numeric text
+	                // leaves the weight alone instead of zeroing it.
+	                for (int wi = 0; weightBuf[wi]; wi++)
+	                    if (weightBuf[wi] == L',') weightBuf[wi] = L'.';
+	                {
+	                    wchar_t* weightEnd = NULL;
+	                    double parsedWeight = wcstod(weightBuf, &weightEnd);
+	                    if (weightEnd != weightBuf && parsedWeight >= 0.0)
+	                        app.robotScene.rocky.actualWeight = (float)parsedWeight;
+	                }
+
 	                saveRockyAsRobArm(&app);
 	                break;
 	            }

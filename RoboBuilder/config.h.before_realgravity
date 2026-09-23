@@ -604,22 +604,34 @@
 // specific printf calls fire.
 #define SIMULATION_PERF_WARN_FRAME_MS 30
 
-// Auto gravity uses REAL gravity: canvas.c's advanceAutoGravity converts
-// this m/s^2 value into robot world units through MM_PER_WORLD_UNIT and the
-// Robot Size slider (the same scale as the "Size: W x H mm" readout), so a
-// fall takes as long as it would in real life for the robot's displayed
-// size. Replaces the old hand-tuned 0.001 units/ms^2 (~75 m/s^2, ~7.6 g at
-// Robot Size 1.0) and the weight multiplier -- mass doesn't change fall
-// speed without air resistance.
-#define SIMULATION_GRAVITY_MPS2 9.81f
+// Auto gravity accelerates instead of falling at one flat speed -- two
+// flat-speed attempts (0.02/40ms, then 0.02/16ms) both still read as
+// floaty "slow motion" no matter how fast, because constant-velocity
+// motion always looks artificial for something that's supposedly falling;
+// real gravity noticeably speeds up as it goes, and that ramp-up is what
+// actually reads as "falling" rather than "gliding." Expressed as a real
+// acceleration (world units / ms^2) rather than "per tick" -- since
+// advanceAutoGravity (canvas.c) now scales by the ACTUAL elapsed time
+// between calls (GetTickCount deltas), not an assumed fixed tick length,
+// it stays correct however often/rarely it actually gets called.
+//
+// Raised 4x (was 0.00025f) per explicit user request -- the whole-body
+// fall read as too slow at the default actualWeight (1.0, see
+// app_init.c), and weight is meant to represent the robot's actual mass
+// rather than double as a global fall-speed knob, so the base speed got
+// bumped directly here instead of via a heavier default weight.
+#define SIMULATION_AUTO_GRAVITY_ACCEL_PER_MS2 0.001f
 
-// Safety cap on fall speed, in m/s. Not air resistance -- just a ceiling so
-// a very long fall (or a huge time gap) can't turn into an enormous single
-// tick. Well above anything reachable on screen: falling the full visible
-// height (~1.35 m at Robot Size 1.0) only reaches ~5 m/s. (The old cap was
-// 1.5 m/s, which the robot hit within ~20 ms, making every fall a constant
-// glide.)
-#define SIMULATION_AUTO_GRAVITY_MAX_VELOCITY_MPS 10.0f
+// Terminal velocity (world units / ms) the acceleration above builds up
+// to and caps at -- quick enough to feel like it's at full speed almost
+// immediately, not a slow gradual creep. Reset back to 0 the instant it
+// lands on something (robotCollidesWithEnvironment), so the next fall
+// also starts from rest instead of carrying over speed through solid
+// ground. Raised 4x alongside the acceleration above (was 0.005f), same
+// reasoning and same proportion kept between the two so the ramp-up
+// shape/timing to reach terminal velocity is unchanged, just faster
+// overall.
+#define SIMULATION_AUTO_GRAVITY_MAX_VELOCITY_PER_MS 0.02f
 
 // advanceAutoGravity (canvas.c) can be called from arbitrarily far-apart
 // real-time gaps -- e.g. the window was blocked on something else for a

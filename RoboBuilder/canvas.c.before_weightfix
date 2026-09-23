@@ -13,7 +13,6 @@
 #include "save.h"          // For saveCanvasAsBMP/saveRockyAsEquations/saveRockyAsRobArm/saveSemniAsRobLeg/saveStiloAsRobLeg -- File > Save (ID_SAVE below) now dispatches to these directly, folded in from the old Robot editor Save button. saveRobotAsEquations/saveStiloAsEquations are declared here too but no longer called from this file -- they're still used by input.c's Standing/Home pose buttons (Poses\*.txt).
 #include "help_dialog.h"   // For showControlsHelpDialog -- Help > Controls Help... (ID_HELP below)
 #include "env_export.h"   // For saveEnvironmentSegmentsAsTxt (moved out of this file)
-#include "input.h"        // For commitWeightEdit -- File > Save confirms the Weight box first
 #include "debug.h"        // For ClearConsoleLog -- Simulation's Reset button (ID_RESET_ROBOT below)
 #include <math.h>
 #include <string.h>
@@ -367,7 +366,7 @@ static HDC hDC;
 // Declared up here (rather than next to autoGravityActive further down,
 // where it's toggled) because applyGravityStep -- defined earlier in this
 // file than that -- already needs to read it.
-static float simTimeScale = SIMULATION_SLOW_MOTION_SCALE; // Slow Motion is ON by default (by request)
+static float simTimeScale = 1.0f;
 
 // The Simulation-mode-only "Slow Motion" button itself -- a plain WS_CHILD
 // of hWndGL (unlike hWndUI's buttons, which live in their own floating
@@ -4388,6 +4387,41 @@ static float activeRobotAngleDegrees(void)
     return app.robotScene.robot.angle;
 }
 
+// How much heavier/lighter than the 1.0f baseline the active robot's real
+// mass is -- multiplies straight into both gravity paths below (the plain
+// G nudge's step size, and auto-gravity's acceleration + terminal-velocity
+// cap) so a heavier robot actually falls faster, not just exports a bigger
+// number. All three kinds now have their own real total-mass field
+// (actualWeight -- Rocky's own SemniExport/StiloExport-flavored siblings,
+// see save.c's saveSemniAsRobLeg/saveStiloAsRobLeg for the other place
+// each one is read), each defaulted to 1.0f (app_init.c), so a fresh
+// robot of any kind still sitting at its default weight is a no-op here,
+// same as before this was extended past Rocky. Clamped away from 0/
+// negative so a blank or garbage Weight box (wcstod returns 0.0f for
+// that) can't freeze or reverse the fall instead of just falling slowly.
+static float activeRobotWeightFactor(void)
+{
+    float w = 1.0f;
+    switch (app.robotScene.activeKind)
+    {
+        case ROBOT_KIND_ROCKY:
+            w = app.robotScene.rocky.actualWeight;
+            break;
+        case ROBOT_KIND_STILO:
+            w = app.robotScene.stilo.actualWeight;
+            break;
+        case ROBOT_KIND_SEMNI:
+        default:
+            w = app.robotScene.robot.actualWeight;
+            break;
+    }
+
+    if (w < 0.05f)
+        w = 0.05f;
+
+    return w;
+}
+
 static BOOL applyGravityStep(HWND hWnd, float step)
 {
     // wasLanded persists across calls (it's a local static): TRUE means the
@@ -5012,20 +5046,16 @@ static void advanceAutoGravity(HWND hWnd)
     // down, defeating the whole point of the cap.
     float simElapsed = (float)elapsed * simTimeScale;
 
-    // Real-world gravity (SIMULATION_GRAVITY_MPS2, 9.81 m/s^2), converted
-    // into robot world units with the same mm-per-unit scale the "Size:
-    // W x H mm" readout uses (MM_PER_WORLD_UNIT x the Robot Size slider) --
-    // so the robot falls at its real physical speed for its displayed size.
-    // Mass deliberately plays no part: without air resistance every object
-    // falls the same way regardless of weight (weight still feeds the
-    // exported masses and the mass-center position). 1 m/s^2 = 0.001
-    // mm/ms^2, and 1 m/s = 1 mm/ms.
-    float mmPerUnit = MM_PER_WORLD_UNIT * graphicsGetRobotScale();
-    if (mmPerUnit <= 0.0f) mmPerUnit = MM_PER_WORLD_UNIT;
-    float accelUnitsPerMs2 = (SIMULATION_GRAVITY_MPS2 * 0.001f) / mmPerUnit;
-    float maxVelocity = SIMULATION_AUTO_GRAVITY_MAX_VELOCITY_MPS / mmPerUnit;
+    // Both the acceleration and the terminal-velocity cap it climbs
+    // toward are scaled by the same weight factor (see
+    // activeRobotWeightFactor's own comment) -- heavier ramps up faster
+    // AND settles into a higher top speed, lighter does the opposite,
+    // exactly mirroring how the plain G nudge above scales its step.
+    float weightFactor = activeRobotWeightFactor();
 
-    autoGravityVelocity += accelUnitsPerMs2 * simElapsed;
+    autoGravityVelocity += SIMULATION_AUTO_GRAVITY_ACCEL_PER_MS2 * weightFactor * simElapsed;
+
+    float maxVelocity = SIMULATION_AUTO_GRAVITY_MAX_VELOCITY_PER_MS * weightFactor;
     if (autoGravityVelocity > maxVelocity)
         autoGravityVelocity = maxVelocity;
 
@@ -5128,7 +5158,7 @@ static void advancePostRotateSettle(HWND hWnd)
     // this is meant to read as "settling into place" after a rotate, not
     // "falling from height", and a topple is normally a short trip
     // either way.
-    BOOL landed = applyGravityStep(hWnd, SIMULATION_GRAVITY_STEP); // weight no longer changes fall speed -- see advanceAutoGravity
+    BOOL landed = applyGravityStep(hWnd, SIMULATION_GRAVITY_STEP * activeRobotWeightFactor());
 
     // Done once there's nothing left for gravity OR (for Rocky) the
     // settle probes to improve -- the same "fully at rest" condition the
@@ -6384,8 +6414,7 @@ void canvasRenderFrame(float dimAmount)
     // above -- this reflects real-time engine performance, not ArcSpline-
     // specific content, so it stays fully readable even while this canvas
     // is the dimmed/inactive subsystem.
-    // Simulation only -- not shown in Design > Environment or Design > Robot.
-    if (showFpsOverlay && appMode == APP_MODE_SIMULATION)
+    if (showFpsOverlay)
     {
         char fpsStr[32];
         int fpsRounded = (int)(fpsDisplayValue + 0.5f); // wsprintfA has no float specifier -- see ROTATION's own comment below for the same fix
@@ -6951,7 +6980,6 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
                             WS_CHILD | BS_AUTOCHECKBOX | BS_PUSHLIKE,
                             10, 44, 120, 28, hWnd, (HMENU)ID_SLOW_MOTION,
                             GetModuleHandle(NULL), NULL);
-        SendMessage(hSlowMotionBtn, BM_SETCHECK, BST_CHECKED, 0); // on by default, matching simTimeScale's initial value
 
         // "Probe 1 Settle" toggle button (top-right) removed by request --
         // same approach as the Walk button just below: hProbe1ToggleBtn is
@@ -7583,9 +7611,11 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         // even after the key is released).
         if (wParam == 'G' && appMode == APP_MODE_SIMULATION)
         {
-            // Same notch for every weight -- mass doesn't change how fast
-            // things fall (see advanceAutoGravity).
-            applyGravityStep(hWnd, SIMULATION_GRAVITY_STEP);
+            // Scaled by the active robot's own weight (see
+            // activeRobotWeightFactor's comment) so a heavier robot drops
+            // a bigger notch per press/repeat, same idea as auto-gravity's
+            // acceleration scaling just below.
+            applyGravityStep(hWnd, SIMULATION_GRAVITY_STEP * activeRobotWeightFactor());
             return 0;
         }
 
@@ -8884,10 +8914,11 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	        }
 
 	        // Slow Motion button: only makes sense in Simulation, so it
-	        // shows/hides right alongside it. Slow Motion is ON by default
-	        // (by request), so leaving Simulation resets it back to that
-	        // default -- checked, SIMULATION_SLOW_MOTION_SCALE -- and every
-	        // Simulation session starts in slow motion.
+	        // shows/hides right alongside it. Leaving Simulation also resets
+	        // simTimeScale/the checkbox back to normal speed rather than
+	        // leaving Slow Motion silently armed for the next time Simulation
+	        // is entered -- it's a temporary "watch this closely" aid, not a
+	        // setting that should persist invisibly across sessions.
 	        if (hSlowMotionBtn)
 	        {
 	            if (appMode == APP_MODE_SIMULATION)
@@ -8897,8 +8928,8 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	            else
 	            {
 	                ShowWindow(hSlowMotionBtn, SW_HIDE);
-	                SendMessage(hSlowMotionBtn, BM_SETCHECK, BST_CHECKED, 0);
-	                simTimeScale = SIMULATION_SLOW_MOTION_SCALE;
+	                SendMessage(hSlowMotionBtn, BM_SETCHECK, BST_UNCHECKED, 0);
+	                simTimeScale = 1.0f;
 	            }
 	        }
 
@@ -9111,11 +9142,6 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	        // Each kind saves into its own export folder so posing one
 	        // robot never overwrites another's saved files. Exact same
 	        // per-kind logic the old Robot editor Save button used.
-	        // Confirm a Weight value that's typed but not yet confirmed
-	        // (Enter / click-away) so Save always writes what's in the box --
-	        // for every robot kind, not just Rocky.
-	        commitWeightEdit(&app);
-
 	        switch (app.robotScene.activeKind)
 	        {
 	            case ROBOT_KIND_ROCKY:
@@ -9141,6 +9167,10 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	                // GetWindowText here, same as Stilo/Semni's own cases
 	                // below already just trust the live struct for the
 	                // ratio.
+	                wchar_t weightBuf[64];
+	                GetWindowText(app.ui.hActualWeightEdit, weightBuf, 64);
+	                app.robotScene.rocky.actualWeight = (float)wcstod(weightBuf, NULL);
+
 	                saveRockyAsRobArm(&app);
 	                break;
 	            }

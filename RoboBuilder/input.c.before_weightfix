@@ -297,29 +297,6 @@ static void updateRobotSizeLabel(AppState* app)
 // mm rounding and WM_HSCROLL's own Scale label ("wsprintf has no floating-
 // point conversion at all"). Only ever called with a non-negative weight
 // value (bodyWeight/legWeight/actualWeight) -- doesn't handle negatives.
-// Parses the Weight box's text. Accepts '.' or ',' as the decimal
-// separator (a German-locale habit, "1,5"), and returns FALSE -- leaving
-// the robot's current weight untouched -- for empty or non-numeric text,
-// instead of wcstod's silent 0.0 (which is how a half-typed or cleared box
-// used to zero a robot's weight).
-static BOOL parseWeightText(const wchar_t* text, float* out)
-{
-    wchar_t buf[64];
-    int n = 0;
-    for (const wchar_t* p = text; *p && n < 63; p++)
-        buf[n++] = (*p == L',') ? L'.' : *p;
-    buf[n] = 0;
-
-    wchar_t* end = NULL;
-    double v = wcstod(buf, &end);
-    if (end == buf) return FALSE;          // nothing numeric at all
-    while (*end == L' ' || *end == L'\t') end++;
-    if (*end != 0) return FALSE;           // trailing junk
-    if (v < 0.0) return FALSE;
-    *out = (float)v;
-    return TRUE;
-}
-
 static void formatNonNegativeFloat2dp(float value, wchar_t* out)
 {
     int whole = (int)value;
@@ -330,48 +307,6 @@ static void formatNonNegativeFloat2dp(float value, wchar_t* out)
         whole += 1;
     }
     wsprintf(out, L"%d.%02d", whole, hundredths);
-}
-
-// The active robot kind's actualWeight (the Weight box's backing value).
-static float* activeKindActualWeightPtr(AppState* app)
-{
-    switch (app->robotScene.activeKind)
-    {
-        case ROBOT_KIND_ROCKY: return &app->robotScene.rocky.actualWeight;
-        case ROBOT_KIND_STILO: return &app->robotScene.stilo.actualWeight;
-        case ROBOT_KIND_SEMNI:
-        default:               return &app->robotScene.robot.actualWeight;
-    }
-}
-
-// Rewrites the Weight box from the active kind's weight, always in the same
-// "1.00" two-decimal format (it used to start as "1.0" and only switch to
-// "1.00" after a robot switch). Typing is only ever read back on focus loss
-// (commitWeightEdit), never on EN_CHANGE, so writing the text here can't be
-// mistaken for user input.
-static void refreshWeightEdit(AppState* app)
-{
-    if (!app->ui.hActualWeightEdit) return;
-    wchar_t buf[32];
-    formatNonNegativeFloat2dp(*activeKindActualWeightPtr(app), buf);
-    SetWindowText(app->ui.hActualWeightEdit, buf);
-}
-
-// Confirms whatever is typed in the Weight box: a valid number becomes the
-// active kind's weight; anything else (empty, half-typed, letters) is
-// discarded. Either way the box is then reformatted from the stored value,
-// so it always shows what's actually in effect. Called when the box loses
-// focus (Enter, or clicking anything else -- see weightEditSubclassProc and
-// the ID_ACTUAL_WEIGHT_EDIT EN_KILLFOCUS handler) and by File > Save.
-void commitWeightEdit(AppState* app)
-{
-    if (!app->ui.hActualWeightEdit) return;
-    wchar_t buf[64];
-    GetWindowText(app->ui.hActualWeightEdit, buf, 64);
-    float value;
-    if (parseWeightText(buf, &value))
-        *activeKindActualWeightPtr(app) = value;
-    refreshWeightEdit(app);
 }
 
 // Moves hWeightRatioSlider (and refreshes hWeightRatioLabel) to match
@@ -605,22 +540,12 @@ static void ensureSemniUIFonts(void)
 // same panel color. WS_EX_STATICEDGE (applied at CreateWindowEx time,
 // not here) gives it a thin flat frame instead of the dated sunken-3D
 // look of WS_EX_CLIENTEDGE.
-// The robot panel's background: a click on empty panel space moves focus to
-// the main window, so it also confirms a value being typed in the Weight
-// box (EN_KILLFOCUS -> commitWeightEdit), same as clicking the canvas.
-static LRESULT CALLBACK semniPanelWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
-{
-    if (msg == WM_LBUTTONDOWN)
-        SetFocus(GetParent(hwnd));
-    return DefWindowProc(hwnd, msg, wParam, lParam);
-}
-
 static void ensureSemniPanelClassRegistered(void)
 {
     if (g_semniPanelClassRegistered) return;
 
     WNDCLASS wc = {0};
-    wc.lpfnWndProc = semniPanelWndProc;
+    wc.lpfnWndProc = DefWindowProc;
     wc.hInstance = GetModuleHandle(NULL);
     wc.lpszClassName = L"SemniControlPanel";
     wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
@@ -644,22 +569,8 @@ static void ensureSemniPanelClassRegistered(void)
 // focus back.
 static LRESULT CALLBACK weightEditSubclassProc(HWND hEdit, UINT msg, WPARAM wParam, LPARAM lParam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData)
 {
-    if (msg == WM_KEYDOWN && wParam == VK_ESCAPE)
-    {
-        // Esc cancels the edit: drop the typed text, then leave the box.
-        // commitWeightEdit on the focus loss re-reads the (restored) text.
-        refreshWeightEdit(&app);
-        SetFocus((HWND)dwRefData);
-        return 0;
-    }
-
-    if (msg == WM_CHAR && (wParam == VK_RETURN || wParam == VK_ESCAPE))
-        return 0;   // no beep for the Enter/Esc handled on WM_KEYDOWN
-
     if (msg == WM_KEYDOWN && wParam == VK_RETURN)
     {
-        // Enter confirms: moving focus away fires EN_KILLFOCUS, which
-        // commits the value (commitWeightEdit).
         SetFocus((HWND)dwRefData);
         return 0;   // swallow it -- DefSubclassProc's default handling for an
                     // unclaimed Enter in a single-line edit is just a beep
@@ -711,11 +622,6 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
         }
         case WM_LBUTTONDOWN:
         {
-            // Clicking the canvas confirms a value being typed in the
-            // Weight box (focus leaves it -> EN_KILLFOCUS -> commitWeightEdit).
-            if (GetFocus() != hwnd)
-                SetFocus(hwnd);
-
             int mx = LOWORD(lParam);
             int my = HIWORD(lParam);
 
@@ -4193,7 +4099,7 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
              app->ui.hActualWeightEdit = CreateWindowEx(
                 WS_EX_CLIENTEDGE,
                 L"EDIT",
-                L"1.00",   // same two-decimal format refreshWeightEdit always uses
+                L"1.0",
                 WS_VISIBLE | WS_CHILD | ES_AUTOHSCROLL,
                 0, 0, 10, 10,
                 hwnd,
@@ -4508,8 +4414,9 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                                     break;
                             }
 
-                            (void)aw;
-                            refreshWeightEdit(app);
+                            wchar_t weightBuf[32];
+                            formatNonNegativeFloat2dp(aw, weightBuf);
+                            SetWindowText(app->ui.hActualWeightEdit, weightBuf);
                             syncWeightRatioSlider(app, bw, lw);
                         }
 
@@ -4553,12 +4460,25 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 // typed in without needing a redundant GetWindowText of
                 // its own first.
                 case ID_ACTUAL_WEIGHT_EDIT:
-                    // Typing no longer applies live -- the value is confirmed
-                    // only when the box loses focus: pressing Enter
-                    // (weightEditSubclassProc) or clicking anything else
-                    // (canvas, panel, another control). Esc cancels.
-                    if (HIWORD(wParam) == EN_KILLFOCUS)
-                        commitWeightEdit(app);
+                    if (HIWORD(wParam) == EN_CHANGE)
+                    {
+                        wchar_t weightBuf[64];
+                        GetWindowText(app->ui.hActualWeightEdit, weightBuf, 64);
+                        float actualWeightVal = (float)wcstod(weightBuf, NULL);
+                        switch (app->robotScene.activeKind)
+                        {
+                            case ROBOT_KIND_ROCKY:
+                                app->robotScene.rocky.actualWeight = actualWeightVal;
+                                break;
+                            case ROBOT_KIND_STILO:
+                                app->robotScene.stilo.actualWeight = actualWeightVal;
+                                break;
+                            case ROBOT_KIND_SEMNI:
+                            default:
+                                app->robotScene.robot.actualWeight = actualWeightVal;
+                                break;
+                        }
+                    }
                     break;
 
                 case ID_MIRROR_LEG2_BUTTON:
