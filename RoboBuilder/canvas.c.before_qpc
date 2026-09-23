@@ -18,21 +18,6 @@
 #include <string.h>
 #include <stdlib.h>        // For wcstod (Rocky's Body/Leg Weight edit boxes, read in ID_SAVE below)
 #include <wchar.h>
-
-// High-resolution clock for the [PERF] timings and the settle fast-forward
-// budget, in milliseconds (fractional). GetTickCount() only advances every
-// ~15.6 ms on Windows, so every duration it measured came out as 0, 15/16
-// or 31/32 ms -- too coarse to diagnose a hitch, and it made the 8 ms
-// fast-forward budget effectively a 15.6 ms one.
-static double perfNowMs(void)
-{
-    static LARGE_INTEGER freq = { 0 };
-    LARGE_INTEGER now;
-    if (freq.QuadPart == 0)
-        QueryPerformanceFrequency(&freq);
-    QueryPerformanceCounter(&now);
-    return (double)now.QuadPart * 1000.0 / (double)freq.QuadPart;
-}
 #include <stdio.h>         // For fopen/fprintf/fscanf -- Environment autosave (saveEnvironmentAutosave/loadEnvironmentAutosave below)
 
 HWND hWndGL = NULL;
@@ -4449,9 +4434,8 @@ static BOOL applyGravityStep(HWND hWnd, float step)
             // renderCombinedFrame itself was slow. See renderCombinedFrame's
             // own [PERF] instrumentation for the render-side half of this
             // same investigation.
-            double perfSettleStart = perfNowMs();
+            DWORD perfSettleStart = GetTickCount();
             int perfSettleCalls = 0;
-            double perfSlowestCallMs = 0.0; // most expensive advanceRockySettle call so far this tick
 
             for (int ff = 0; ff < SIMULATION_LEG_SETTLE_FAST_FORWARD_TICKS; ff++)
             {
@@ -4465,28 +4449,13 @@ static BOOL applyGravityStep(HWND hWnd, float step)
                 // simply picked back up on the NEXT WM_TIMER tick, since
                 // this whole loop just runs again as long as
                 // rockySettleConverged is still FALSE.
-                //
-                // Also stops BEFORE a call that would overshoot the budget,
-                // not just after the budget is already gone: one call can
-                // itself take longer than the whole budget, so "elapsed <
-                // budget" alone let a tick run e.g. 8 ms + one more 15 ms
-                // call. Predicts the next call's cost from the slowest call
-                // seen so far this tick.
-                if (ff > 0)
-                {
-                    double spentMs = perfNowMs() - perfSettleStart;
-                    if (spentMs + perfSlowestCallMs > (double)SIMULATION_LEG_SETTLE_FAST_FORWARD_BUDGET_MS)
-                        break; // next call would blow this tick's settle budget -- finish on a later tick
-                }
+                if (ff > 0 && (GetTickCount() - perfSettleStart) >= (DWORD)SIMULATION_LEG_SETTLE_FAST_FORWARD_BUDGET_MS)
+                    break; // spent this tick's settle budget -- stop stalling the current frame, finish later
 
                 float kneeBefore = app.robotScene.rocky.kneeAngle;
                 float bodyBefore = app.robotScene.rocky.angle;
 
-                double perfCallStart = perfNowMs();
                 advanceRockySettle();
-                double perfCallMs = perfNowMs() - perfCallStart;
-                if (perfCallMs > perfSlowestCallMs)
-                    perfSlowestCallMs = perfCallMs;
                 perfSettleCalls++;
 
                 if (rockySettleConverged)
@@ -4500,13 +4469,12 @@ static BOOL applyGravityStep(HWND hWnd, float step)
                     break; // that call moved something by a visually real amount -- don't batch any further this tick
             }
 
-            double perfSettleElapsed = perfNowMs() - perfSettleStart;
-            if (perfSettleElapsed >= (double)SIMULATION_PERF_WARN_FRAME_MS)
+            DWORD perfSettleElapsed = GetTickCount() - perfSettleStart;
+            if (perfSettleElapsed >= (DWORD)SIMULATION_PERF_WARN_FRAME_MS)
             {
-                SIM_FPS_LOG("[PERF] settle fast-forward took %.2fms across %d advanceRockySettle call(s) (avg %.2fms/call, slowest %.2fms, budget %dms) -- this ran INSIDE the current WM_TIMER tick, before its own repaint was even scheduled\n",
-                       perfSettleElapsed, perfSettleCalls,
-                       perfSettleCalls > 0 ? perfSettleElapsed / (double)perfSettleCalls : 0.0,
-                       perfSlowestCallMs, SIMULATION_LEG_SETTLE_FAST_FORWARD_BUDGET_MS);
+                SIM_FPS_LOG("[PERF] settle fast-forward took %lums across %d advanceRockySettle call(s) (avg %.1fms/call) -- this ran INSIDE the current WM_TIMER tick, before its own repaint was even scheduled\n",
+                       (unsigned long)perfSettleElapsed, perfSettleCalls,
+                       perfSettleCalls > 0 ? (float)perfSettleElapsed / (float)perfSettleCalls : 0.0f);
             }
         }
     }
@@ -6295,23 +6263,23 @@ void renderCombinedFrame(void)
     // settle fast-forward timing). perfRobotMs/perfCanvasMs/perfDotsMs are
     // each just the elapsed time around that one call, summed across
     // whichever of the two branches below actually runs (only one does).
-    double perfFrameStart = perfNowMs();
-    double perfRobotMs = 0.0, perfCanvasMs = 0.0, perfDotsMs = 0.0;
+    DWORD perfFrameStart = GetTickCount();
+    DWORD perfRobotMs = 0, perfCanvasMs = 0, perfDotsMs = 0;
 
     if (semniActive)
     {
         // ArcSpline underneath...
-        double perfT0 = perfNowMs();
+        DWORD perfT0 = GetTickCount();
         canvasRenderFrame(canvasDimAmount);
-        perfCanvasMs = perfNowMs() - perfT0;
+        perfCanvasMs = GetTickCount() - perfT0;
 
         // ...Semni on top
         graphicsOnResize(glWindowWidth, glWindowHeight);
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        perfT0 = perfNowMs();
+        perfT0 = GetTickCount();
         renderRobotScene(&app, robotDimAmount, massCenterDropStopY);
-        perfRobotMs = perfNowMs() - perfT0;
+        perfRobotMs = GetTickCount() - perfT0;
     }
     else
     {
@@ -6319,14 +6287,14 @@ void renderCombinedFrame(void)
         graphicsOnResize(glWindowWidth, glWindowHeight);
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        double perfT0 = perfNowMs();
+        DWORD perfT0 = GetTickCount();
         renderRobotScene(&app, robotDimAmount, massCenterDropStopY);
-        perfRobotMs = perfNowMs() - perfT0;
+        perfRobotMs = GetTickCount() - perfT0;
 
         // ...ArcSpline on top
-        perfT0 = perfNowMs();
+        perfT0 = GetTickCount();
         canvasRenderFrame(canvasDimAmount);
-        perfCanvasMs = perfNowMs() - perfT0;
+        perfCanvasMs = GetTickCount() - perfT0;
 
         // Contact dots (plain C toggle) -- drawn LAST, after BOTH the
         // robot and the environment, so nothing painted on top of
@@ -6365,9 +6333,9 @@ void renderCombinedFrame(void)
         }
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        double perfT1 = perfNowMs();
+        DWORD perfT1 = GetTickCount();
         drawSimulationLiveContactDots();
-        perfDotsMs = perfNowMs() - perfT1;
+        perfDotsMs = GetTickCount() - perfT1;
     }
 
     // SwapBuffers itself is timed separately from the draw calls above --
@@ -6377,9 +6345,9 @@ void renderCombinedFrame(void)
     // it. A [PERF] line dominated by this instead of robot/canvas/dots
     // would point at vsync/driver/GPU load rather than anything in this
     // app's own per-frame logic.
-    double perfSwapStart = perfNowMs();
+    DWORD perfSwapStart = GetTickCount();
     SwapBuffers(hDC);
-    double perfSwapMs = perfNowMs() - perfSwapStart;
+    DWORD perfSwapMs = GetTickCount() - perfSwapStart;
 
     // [PERF] diagnostic, temporary (by explicit request, to chase down a
     // real report of FPS occasionally dropping to ~20 with no cause yet
@@ -6394,11 +6362,12 @@ void renderCombinedFrame(void)
     // exactly the total (glClear, graphicsOnResize, and the various GL
     // state calls between them aren't separately timed), but they cover
     // the expensive parts.
-    double perfFrameElapsed = perfNowMs() - perfFrameStart;
-    if (perfFrameElapsed >= (double)SIMULATION_PERF_WARN_FRAME_MS)
+    DWORD perfFrameElapsed = GetTickCount() - perfFrameStart;
+    if (perfFrameElapsed >= (DWORD)SIMULATION_PERF_WARN_FRAME_MS)
     {
-        SIM_FPS_LOG("[PERF] slow frame: total=%.2fms robot=%.2fms canvas=%.2fms contactDots=%.2fms swapBuffers=%.2fms\n",
-               perfFrameElapsed, perfRobotMs, perfCanvasMs, perfDotsMs, perfSwapMs);
+        SIM_FPS_LOG("[PERF] slow frame: total=%lums robot=%lums canvas=%lums contactDots=%lums swapBuffers=%lums\n",
+               (unsigned long)perfFrameElapsed, (unsigned long)perfRobotMs, (unsigned long)perfCanvasMs,
+               (unsigned long)perfDotsMs, (unsigned long)perfSwapMs);
     }
 }
 
