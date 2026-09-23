@@ -3252,31 +3252,8 @@ static void advanceRockySettle(void)
         // contact, the torque direction is unambiguous -- the body simply
         // has to topple that way -- so blocking or shrinking that move just
         // freezes an impossible pose (see SIMULATION_ROCKY_REVERSAL_GUARD_MAX_COM_OFFSET).
-        //
-        // "Far from the pivot" alone isn't enough, though: resting on TWO
-        // contacts (e.g. knee AND foot both on the ground) with the center
-        // of mass BETWEEN them is a stable rest pose even though the center
-        // of mass is far from either one. There, no rotation is physically
-        // possible, and without the guard Probe 2 just alternates pivots
-        // (knee, foot, knee, ...) nudging +/- one step forever (real
-        // report: bodyAngle bouncing 451.00 <-> 451.25). So the guard stays
-        // armed whenever the second-closest contact is also touching and
-        // the center of mass lies horizontally between the two.
-        float reversalGuardComX = computeRockyMassCenterWorld(*r).x;
-        float reversalGuardComOffset = fabsf(pivot.x - reversalGuardComX);
+        float reversalGuardComOffset = fabsf(pivot.x - computeRockyMassCenterWorld(*r).x);
         BOOL reversalGuardArmed = (reversalGuardComOffset <= SIMULATION_ROCKY_REVERSAL_GUARD_MAX_COM_OFFSET);
-        if (!reversalGuardArmed && !(r->legHidden && r->bodyHidden))
-        {
-            RockyLegContact supportA, supportB;
-            rockyToppleContactPoints(r, &supportA, &supportB);
-            if (supportB.clearance <= robotLengthToEnvWorld(SIMULATION_ROCKY_SUPPORT_CONTACT_TOL))
-            {
-                float supportLo = (supportA.world.x < supportB.world.x) ? supportA.world.x : supportB.world.x;
-                float supportHi = (supportA.world.x < supportB.world.x) ? supportB.world.x : supportA.world.x;
-                if (reversalGuardComX >= supportLo && reversalGuardComX <= supportHi)
-                    reversalGuardArmed = TRUE; // supported on both sides -- a real rest pose, keep anti-oscillation on
-            }
-        }
 
         // Binary-division fix for a specific vibration report, by explicit
         // request -- see rockyPivotSide's own comment above for the full
@@ -3293,7 +3270,7 @@ static void advanceRockySettle(void)
             }
             else if (rockyPivotSide != 0 && currentPivotSide != rockyPivotSide)
             {
-                SIM_LOG("[SETTLE] bodyAngle=%.2f pivot flipped sides of the center of mass (side=%d -> %d), but the center of mass is %.4f away and not between two contacts -- a real topple, not vibration, so not halving and not reversal-guarding\n",
+                SIM_LOG("[SETTLE] bodyAngle=%.2f pivot flipped sides of the center of mass (side=%d -> %d), but the center of mass is %.4f away -- a real topple, not vibration, so not halving and not reversal-guarding\n",
                        r->angle, rockyPivotSide, currentPivotSide, reversalGuardComOffset);
                 rockyBodyReversalBlockedStreak = 0;
             }
@@ -3455,15 +3432,10 @@ static void advanceRockySettle(void)
                     float clearance = rockyDanglingPointClearance(r);
                     float gain = baseDanglingClearance - clearance;
 
-                    // A "dangling point closer" move must not RAISE the center of mass:
-                    // gravity never lifts a body just to bring a hovering point down.
-                    // Without this, a COM-drop commit one tick and a gain commit back
-                    // the other way the next tick bounced bodyAngle +/- one step forever
-                    // (real report: 334.39 <-> 335.39, COM rising 0.01465 on every gain step).
-                    if (clearance >= 0.0f && comDrop >= -SIMULATION_LEG_SETTLE_MIN_COM_DROP)
+                    if (clearance >= 0.0f)
                         gainAtDir[dirIndex] = gain;
 
-                    if (clearance >= 0.0f && comDrop >= -SIMULATION_LEG_SETTLE_MIN_COM_DROP && gain > bestClearanceGain)
+                    if (clearance >= 0.0f && gain > bestClearanceGain)
                     {
                         bestClearanceGain = gain;
                         bestClearanceBodyAngle = r->angle;
@@ -3742,8 +3714,7 @@ static void advanceRockySettle(void)
                     tier = 1;
                     value = scoutComDropAtDir[i];
                 }
-                else if (scoutClearAtDir[i] && scoutGainAtDir[i] > SIMULATION_LEG_SETTLE_MIN_CLEARANCE_GAIN
-                         && scoutComDropAtDir[i] >= -SIMULATION_LEG_SETTLE_MIN_COM_DROP) // same "never raise the COM" rule as the direct gain branch
+                else if (scoutClearAtDir[i] && scoutGainAtDir[i] > SIMULATION_LEG_SETTLE_MIN_CLEARANCE_GAIN)
                 {
                     tier = 0;
                     value = scoutGainAtDir[i];

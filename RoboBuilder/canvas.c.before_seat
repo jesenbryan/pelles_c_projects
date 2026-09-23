@@ -59,11 +59,6 @@ BOOL hideInactiveLayer = TRUE;
 // they can even start diagnosing that.
 BOOL showFpsOverlay = TRUE;
 
-// Simulation-only console log toggles -- see ui_state.h's own comment and
-// the SIM_LOG/SIM_FPS_LOG macros there. Off by default.
-BOOL simPhysicsLogEnabled = FALSE;
-BOOL simFpsLogEnabled = FALSE;
-
 float segmentPointsWorld[MAX_SEGMENT_POINTS * 2];   // NEW
 int   segmentStarts[MAX_ARC_SEGMENTS];              // NEW
 int   segmentCounts[MAX_ARC_SEGMENTS];              // NEW
@@ -799,7 +794,7 @@ static BOOL pointCollidesWithAnyEnvironmentStroke(float ecx, float ecy, float eR
             if (dist < combinedRadius)
             {
                 if (!gSuppressGravityDebug)
-                    SIM_LOG("[COLLIDE] seg=%d line=(%.5f,%.5f)-(%.5f,%.5f) pt=(%.5f,%.5f) dist=%.5f eRadius=%.5f combined=%.5f\n",
+                    printf("[COLLIDE] seg=%d line=(%.5f,%.5f)-(%.5f,%.5f) pt=(%.5f,%.5f) dist=%.5f eRadius=%.5f combined=%.5f\n",
                            s, ax, ay, bx, by, ecx, ecy, dist, eRadius, combinedRadius);
                 return TRUE;
             }
@@ -871,7 +866,7 @@ static BOOL edgeCollidesWithAnyEnvironmentStroke(float ax, float ay, float bx, f
             if (dist < combinedRadius)
             {
                 if (!gSuppressGravityDebug)
-                    SIM_LOG("[COLLIDE] seg=%d line=(%.5f,%.5f)-(%.5f,%.5f) edge=(%.5f,%.5f)-(%.5f,%.5f) dist=%.5f eRadius=%.5f combined=%.5f\n",
+                    printf("[COLLIDE] seg=%d line=(%.5f,%.5f)-(%.5f,%.5f) edge=(%.5f,%.5f)-(%.5f,%.5f) dist=%.5f eRadius=%.5f combined=%.5f\n",
                            s, ex0, ey0, ex1, ey1, ax, ay, bx, by, dist, eRadius, combinedRadius);
                 // t is the parametric position (0=A's start, 1=A's end)
                 // of the closest point ON THE CALLER'S EDGE -- handed
@@ -2514,176 +2509,6 @@ static float clearPivotRoundingResidual(void)
     return safe;
 }
 
-// Halves rockyBodySettleStep for a reversal-guard block, but never below
-// SIMULATION_LEG_SETTLE_MIN_STEP_DEG. The guard is meant to give up after
-// SIMULATION_ROCKY_BODY_REVERSAL_BLOCK_STREAK consecutive blocks and let
-// the reversal through -- but a plain halving on every block (plus the
-// pivot-side-flip halving) took a 1 deg step below the floor in 7 halvings,
-// so Probe 2 stopped running before the guard ever released, and the
-// settle "converged" with the body still visibly toppling (real report:
-// Rocky balanced on its foot with the center of mass far to one side).
-static void shrinkRockyBodyStepForReversalGuard(void)
-{
-    rockyBodySettleStep *= 0.5f;
-    if (rockyBodySettleStep < SIMULATION_LEG_SETTLE_MIN_STEP_DEG)
-        rockyBodySettleStep = SIMULATION_LEG_SETTLE_MIN_STEP_DEG;
-}
-
-// ---- Final "seat the dangling point" pass (run once, right before
-// advanceRockySettle latches rockySettleConverged) ----
-//
-// Probe 2 stops once its step size falls below
-// SIMULATION_LEG_SETTLE_MIN_STEP_DEG, and that alone doesn't guarantee
-// the second contact point (e.g. the foot, while the knee is the pivot)
-// actually reached the ground. A real report showed a Rocky resting on
-// its knee with the foot visibly flush but NOT registering as a contact
-// (no orange dot): it was hovering a sub-pixel gap above the line, just
-// past SIMULATION_CONTACT_VISUAL_TOLERANCE. Same fix applyGravityStep
-// already uses for a vertical drop: binary-search the remaining rotation
-// around the pivot for the largest angle that does NOT collide, so the
-// dangling point converges onto the surface instead of stopping
-// wherever the last whole step happened to land.
-//
-// Only fires for a SMALL remaining gap (SIMULATION_ROCKY_SEAT_MAX_GAP) --
-// a point genuinely dangling far above the ground is left alone -- and
-// only commits if the rotation doesn't raise the center of mass (a
-// physically real rest pose never needs to climb to close a gap).
-//
-// Unlike Probe 2, a candidate here is NOT allowed to "fix" a collision by
-// lifting the whole robot (clearPivotRoundingResidual's full
-// SIMULATION_SLOPE_CORRECTION_MAX budget): any lift bigger than
-// SIMULATION_ROCKY_SEAT_MAX_PIVOT_LIFT counts as blocked. Otherwise a
-// dangling point pushed INTO the ground would just be "cured" by lifting
-// the pivot off it instead -- trading one hovering contact for another.
-
-// Rotates by deltaDeg around pivot, measures, then fully undoes itself.
-// Returns TRUE if that orientation is blocked (collides beyond a
-// rounding-sized pivot lift, or the dangling point went below zero).
-static BOOL rockySeatProbe(Rocky* r, PointF pivot, float deltaDeg,
-                           float* outDanglingClearance, float* outComY)
-{
-    float baseAngle = r->angle;
-    PointF shift = rotateRockyBodyAroundPivot(r, pivot, deltaDeg);
-
-    float lift = 0.0f;
-    BOOL blocked = FALSE;
-    if (robotCollidesWithEnvironment())
-    {
-        lift = clearPivotRoundingResidual();
-        if (lift > SIMULATION_ROCKY_SEAT_MAX_PIVOT_LIFT || robotCollidesWithEnvironment())
-            blocked = TRUE;
-    }
-
-    float clearance = rockyDanglingPointClearance(r);
-    if (clearance < 0.0f)
-        blocked = TRUE;
-
-    if (outDanglingClearance) *outDanglingClearance = clearance;
-    if (outComY) *outComY = computeRockyMassCenterWorld(*r).y;
-
-    if (lift > 0.0f)
-        translateActiveRobot(0.0f, -lift);
-    translateActiveRobot(-shift.x, -shift.y);
-    r->angle = baseAngle;
-    return blocked;
-}
-
-static void seatRockyDanglingPoint(Rocky* r)
-{
-    if (r->legHidden && r->bodyHidden)
-        return;
-
-    BOOL savedSuppress = gSuppressGravityDebug;
-    gSuppressGravityDebug = TRUE; // this search calls robotCollidesWithEnvironment dozens of times
-
-    RockyLegContact pivotContact, dangling;
-    rockyToppleContactPoints(r, &pivotContact, &dangling);
-
-    float envPerRobot = robotLengthToEnvWorld(1.0f);
-    float gapRobot = (envPerRobot > 0.0f) ? dangling.clearance / envPerRobot : 0.0f;
-
-    if (dangling.clearance <= 0.0f || gapRobot > SIMULATION_ROCKY_SEAT_MAX_GAP)
-    {
-        gSuppressGravityDebug = savedSuppress;
-        return; // already touching, or genuinely dangling -- nothing to seat
-    }
-
-    PointF pivot = pivotContact.world;
-    float lx = dangling.world.x - pivot.x;
-    float ly = dangling.world.y - pivot.y;
-    float lever = sqrtf(lx * lx + ly * ly);
-    if (lever < 1e-5f)
-    {
-        gSuppressGravityDebug = savedSuppress;
-        return;
-    }
-
-    // Rotation (deg) that would close the gap if the dangling point moved
-    // straight down; doubled so the bracket's far end is safely past it.
-    float spanDeg = 2.0f * (gapRobot / lever) * (180.0f / 3.14159265f);
-    if (spanDeg > SIMULATION_BODY_SETTLE_STEP_DEG) spanDeg = SIMULATION_BODY_SETTLE_STEP_DEG;
-    if (spanDeg < 1e-4f) spanDeg = 1e-4f;
-
-    float baseComY = computeRockyMassCenterWorld(*r).y;
-
-    // Which way lowers the dangling point? Try a small nudge each way.
-    float cMinus = 0.0f, cPlus = 0.0f;
-    BOOL bMinus = rockySeatProbe(r, pivot, -0.1f * spanDeg, &cMinus, NULL);
-    BOOL bPlus  = rockySeatProbe(r, pivot,  0.1f * spanDeg, &cPlus, NULL);
-    int dir = 0;
-    if (!bMinus && cMinus < dangling.clearance && (bPlus || cMinus <= cPlus)) dir = -1;
-    else if (!bPlus && cPlus < dangling.clearance) dir = 1;
-
-    if (dir == 0)
-    {
-        SIM_LOG("[SETTLE] seat: dangling kind=%d gap=%.6f (robot units) -- neither rotation direction lowers it, leaving as is\n",
-               (int)dangling.kind, gapRobot);
-        gSuppressGravityDebug = savedSuppress;
-        return;
-    }
-
-    if (!rockySeatProbe(r, pivot, dir * spanDeg, NULL, NULL))
-    {
-        SIM_LOG("[SETTLE] seat: dangling kind=%d gap=%.6f -- still not blocked %.5f deg out, leaving as is (not a small residual gap)\n",
-               (int)dangling.kind, gapRobot, dir * spanDeg);
-        gSuppressGravityDebug = savedSuppress;
-        return;
-    }
-
-    float safe = 0.0f, blockedAt = spanDeg;
-    for (int i = 0; i < SIMULATION_ROCKY_SEAT_SEARCH_ITERATIONS; i++)
-    {
-        float mid = 0.5f * (safe + blockedAt);
-        if (rockySeatProbe(r, pivot, dir * mid, NULL, NULL)) blockedAt = mid;
-        else                                                  safe = mid;
-    }
-
-    float seatedClearance = 0.0f, seatedComY = baseComY;
-    rockySeatProbe(r, pivot, dir * safe, &seatedClearance, &seatedComY);
-
-    if (seatedComY > baseComY + 1e-6f)
-    {
-        SIM_LOG("[SETTLE] seat: dangling kind=%d gap=%.6f -- closing it would RAISE the center of mass by %.6f, leaving as is\n",
-               (int)dangling.kind, gapRobot, seatedComY - baseComY);
-        gSuppressGravityDebug = savedSuppress;
-        return;
-    }
-
-    rotateRockyBodyAroundPivot(r, pivot, dir * safe);
-    float lift = 0.0f;
-    if (robotCollidesWithEnvironment())
-        lift = clearPivotRoundingResidual();
-
-    float seatedGapRobot = (envPerRobot > 0.0f) ? seatedClearance / envPerRobot : 0.0f;
-    SIM_LOG("[SETTLE] seat: pivot kind=%d, dangling kind=%d gap %.6f -> %.6f (robot units) after rotating %.6f deg (pivot lift %.6f)%s\n",
-           (int)pivotContact.kind, (int)dangling.kind, gapRobot, seatedGapRobot, dir * safe, lift,
-           (seatedGapRobot > SIMULATION_CONTACT_VISUAL_TOLERANCE)
-               ? " -- STILL above tolerance: something else (arc/body edge) blocked the rotation first"
-               : "");
-
-    gSuppressGravityDebug = savedSuppress;
-}
-
 static void advanceRockySettle(void)
 {
     if (app.robotScene.activeKind != ROBOT_KIND_ROCKY)
@@ -2991,7 +2816,7 @@ static void advanceRockySettle(void)
         // visible vibration instead of a clean stop.
         if (crossCriterionStraddle)
         {
-            SIM_LOG("[SETTLE] kneeAngle=%.2f both directions improve but by different criteria (drop=%.5f/%.5f gain=%.5f/%.5f) -- shrinking instead of picking one, to avoid rocking back and forth\n",
+            printf("[SETTLE] kneeAngle=%.2f both directions improve but by different criteria (drop=%.5f/%.5f gain=%.5f/%.5f) -- shrinking instead of picking one, to avoid rocking back and forth\n",
                    r->kneeAngle, dropAtDir[0], dropAtDir[1], gainAtDir[0], gainAtDir[1]);
             rockyKneeSettleStep *= 0.5f;
         }
@@ -3012,7 +2837,7 @@ static void advanceRockySettle(void)
             translateActiveRobot(0.0f, -appliedDrop);
             probe1Committed = TRUE;
             probe1DirectCommit = TRUE;
-            SIM_LOG("[SETTLE] kneeAngle=%.2f bent the knee %.4f deg, body fell %.5f further this tick (of %.5f available)\n",
+            printf("[SETTLE] kneeAngle=%.2f bent the knee %.4f deg, body fell %.5f further this tick (of %.5f available)\n",
                    r->kneeAngle, rockyKneeSettleStep, appliedDrop, bestDrop);
             // Keep this probe's step size as-is -- it's still finding
             // real gains at this scale, no need to refine yet.
@@ -3027,7 +2852,7 @@ static void advanceRockySettle(void)
             r->kneeAngle = bestClearanceKneeAngle;
             probe1Committed = TRUE;
             probe1DirectCommit = TRUE;
-            SIM_LOG("[SETTLE] kneeAngle=%.2f swung the dangling foot %.4f deg closer to the ground (clearance improved %.5f, body stayed put)\n",
+            printf("[SETTLE] kneeAngle=%.2f swung the dangling foot %.4f deg closer to the ground (clearance improved %.5f, body stayed put)\n",
                    r->kneeAngle, rockyKneeSettleStep, bestClearanceGain);
         }
         else
@@ -3182,7 +3007,7 @@ static void advanceRockySettle(void)
                     }
                 }
 
-                SIM_LOG("[SETTLE] kneeAngle=%.2f scouted real improvement %.1f deg out (drop=%.5f clearanceGain=%.5f), fell %.5f this tick -- nudging that way instead of shrinking\n",
+                printf("[SETTLE] kneeAngle=%.2f scouted real improvement %.1f deg out (drop=%.5f clearanceGain=%.5f), fell %.5f this tick -- nudging that way instead of shrinking\n",
                        r->kneeAngle, dir * SIMULATION_LEG_SETTLE_SCOUT_STEP_DEG, scoutDrop, scoutGain, nudgeAppliedDrop);
                 scoutedKnee = TRUE;
                 probe1Committed = TRUE;
@@ -3209,7 +3034,7 @@ static void advanceRockySettle(void)
         // and reset to FALSE -- so it can't be the real cause; this
         // prints whichever of the four OTHER conditions is actually
         // false instead of guessing further.
-        SIM_LOG("[SETTLE] Probe 1 (knee) skipped this tick -- suppressed=%d legRestingOnImmovableJoint=%d(kind=%d clearance=%.5f) probe1Enabled=%d kneeStep=%.5f (min=%.5f)\n",
+        printf("[SETTLE] Probe 1 (knee) skipped this tick -- suppressed=%d legRestingOnImmovableJoint=%d(kind=%d clearance=%.5f) probe1Enabled=%d kneeStep=%.5f (min=%.5f)\n",
                rockyKneeSettleSuppressed, legRestingOnImmovableJoint,
                legRestingOnImmovableJoint ? (int)pivotKindForDiagnostic : -1,
                legRestingOnImmovableJointClearanceForDiagnostic,
@@ -3245,39 +3070,6 @@ static void advanceRockySettle(void)
         float baseBodyAngle = r->angle;
         PointF pivot = rockyTopplePivotWorld(r); // same contact point for both directions below
 
-        // The anti-oscillation machinery below (pivot-side-flip halving and
-        // the reversal guard) is only meant for a body rocking back and
-        // forth near BALANCE, where the center of mass sits almost over the
-        // pivot. When the center of mass is far off to one side of the only
-        // contact, the torque direction is unambiguous -- the body simply
-        // has to topple that way -- so blocking or shrinking that move just
-        // freezes an impossible pose (see SIMULATION_ROCKY_REVERSAL_GUARD_MAX_COM_OFFSET).
-        //
-        // "Far from the pivot" alone isn't enough, though: resting on TWO
-        // contacts (e.g. knee AND foot both on the ground) with the center
-        // of mass BETWEEN them is a stable rest pose even though the center
-        // of mass is far from either one. There, no rotation is physically
-        // possible, and without the guard Probe 2 just alternates pivots
-        // (knee, foot, knee, ...) nudging +/- one step forever (real
-        // report: bodyAngle bouncing 451.00 <-> 451.25). So the guard stays
-        // armed whenever the second-closest contact is also touching and
-        // the center of mass lies horizontally between the two.
-        float reversalGuardComX = computeRockyMassCenterWorld(*r).x;
-        float reversalGuardComOffset = fabsf(pivot.x - reversalGuardComX);
-        BOOL reversalGuardArmed = (reversalGuardComOffset <= SIMULATION_ROCKY_REVERSAL_GUARD_MAX_COM_OFFSET);
-        if (!reversalGuardArmed && !(r->legHidden && r->bodyHidden))
-        {
-            RockyLegContact supportA, supportB;
-            rockyToppleContactPoints(r, &supportA, &supportB);
-            if (supportB.clearance <= robotLengthToEnvWorld(SIMULATION_ROCKY_SUPPORT_CONTACT_TOL))
-            {
-                float supportLo = (supportA.world.x < supportB.world.x) ? supportA.world.x : supportB.world.x;
-                float supportHi = (supportA.world.x < supportB.world.x) ? supportB.world.x : supportA.world.x;
-                if (reversalGuardComX >= supportLo && reversalGuardComX <= supportHi)
-                    reversalGuardArmed = TRUE; // supported on both sides -- a real rest pose, keep anti-oscillation on
-            }
-        }
-
         // Binary-division fix for a specific vibration report, by explicit
         // request -- see rockyPivotSide's own comment above for the full
         // reasoning. Measured off the CURRENT (pre-rotation) mass center,
@@ -3285,17 +3077,11 @@ static void advanceRockySettle(void)
         {
             float pivotComX = computeRockyMassCenterWorld(*r).x;
             int currentPivotSide = (pivot.x < pivotComX) ? -1 : 1;
-            if (rockyPivotSide != 0 && currentPivotSide != rockyPivotSide && reversalGuardArmed)
+            if (rockyPivotSide != 0 && currentPivotSide != rockyPivotSide)
             {
-                SIM_LOG("[SETTLE] bodyAngle=%.2f pivot flipped sides of the center of mass (side=%d -> %d) -- halving rockyBodySettleStep to stop it vibrating across center\n",
+                printf("[SETTLE] bodyAngle=%.2f pivot flipped sides of the center of mass (side=%d -> %d) -- halving rockyBodySettleStep to stop it vibrating across center\n",
                        r->angle, rockyPivotSide, currentPivotSide);
                 rockyBodySettleStep *= 0.5f;
-            }
-            else if (rockyPivotSide != 0 && currentPivotSide != rockyPivotSide)
-            {
-                SIM_LOG("[SETTLE] bodyAngle=%.2f pivot flipped sides of the center of mass (side=%d -> %d), but the center of mass is %.4f away and not between two contacts -- a real topple, not vibration, so not halving and not reversal-guarding\n",
-                       r->angle, rockyPivotSide, currentPivotSide, reversalGuardComOffset);
-                rockyBodyReversalBlockedStreak = 0;
             }
             rockyPivotSide = currentPivotSide;
         }
@@ -3455,15 +3241,10 @@ static void advanceRockySettle(void)
                     float clearance = rockyDanglingPointClearance(r);
                     float gain = baseDanglingClearance - clearance;
 
-                    // A "dangling point closer" move must not RAISE the center of mass:
-                    // gravity never lifts a body just to bring a hovering point down.
-                    // Without this, a COM-drop commit one tick and a gain commit back
-                    // the other way the next tick bounced bodyAngle +/- one step forever
-                    // (real report: 334.39 <-> 335.39, COM rising 0.01465 on every gain step).
-                    if (clearance >= 0.0f && comDrop >= -SIMULATION_LEG_SETTLE_MIN_COM_DROP)
+                    if (clearance >= 0.0f)
                         gainAtDir[dirIndex] = gain;
 
-                    if (clearance >= 0.0f && comDrop >= -SIMULATION_LEG_SETTLE_MIN_COM_DROP && gain > bestClearanceGain)
+                    if (clearance >= 0.0f && gain > bestClearanceGain)
                     {
                         bestClearanceGain = gain;
                         bestClearanceBodyAngle = r->angle;
@@ -3513,13 +3294,12 @@ static void advanceRockySettle(void)
 
         if (directionsStraddle)
         {
-            SIM_LOG("[SETTLE] bodyAngle=%.2f both directions still improve (drop=%.5f/%.5f comDrop=%.5f/%.5f gain=%.5f/%.5f) -- shrinking instead of picking one, to avoid oscillating across the exact resting angle\n",
+            printf("[SETTLE] bodyAngle=%.2f both directions still improve (drop=%.5f/%.5f comDrop=%.5f/%.5f gain=%.5f/%.5f) -- shrinking instead of picking one, to avoid oscillating across the exact resting angle\n",
                    r->angle, dropAtDir[0], dropAtDir[1], comDropAtDir[0], comDropAtDir[1], gainAtDir[0], gainAtDir[1]);
             rockyBodySettleStep *= 0.5f;
         }
         else if (rockyBodyLastCommitDir != 0 && bestDrop > SIMULATION_LEG_SETTLE_MIN_DROP && bestDropDir == -rockyBodyLastCommitDir
-                 && rockyBodyReversalBlockedStreak < SIMULATION_ROCKY_BODY_REVERSAL_BLOCK_STREAK
-                 && reversalGuardArmed)
+                 && rockyBodyReversalBlockedStreak < SIMULATION_ROCKY_BODY_REVERSAL_BLOCK_STREAK)
         {
             // bestDrop would fire below, but in the OPPOSITE direction
             // from whatever Probe 2 actually committed last tick -- see
@@ -3533,9 +3313,9 @@ static void advanceRockySettle(void)
             // own comment for the extra trailing condition above.
             rockyBodyReversalBlockedStreak++;
             rockyBodyReversalGuardBlockedThisTick = TRUE;
-            SIM_LOG("[SETTLE] bodyAngle=%.2f bestDrop wants to pivot back the OPPOSITE way from last tick's own commit (dir %d -> %d) -- shrinking instead of reversing, to stop it bouncing between two angles forever (blocked streak %d/%d)\n",
+            printf("[SETTLE] bodyAngle=%.2f bestDrop wants to pivot back the OPPOSITE way from last tick's own commit (dir %d -> %d) -- shrinking instead of reversing, to stop it bouncing between two angles forever (blocked streak %d/%d)\n",
                    r->angle, rockyBodyLastCommitDir, bestDropDir, rockyBodyReversalBlockedStreak, SIMULATION_ROCKY_BODY_REVERSAL_BLOCK_STREAK);
-            shrinkRockyBodyStepForReversalGuard();
+            rockyBodySettleStep *= 0.5f;
         }
         else if (bestDrop > SIMULATION_LEG_SETTLE_MIN_DROP)
         {
@@ -3571,21 +3351,20 @@ static void advanceRockySettle(void)
             if (bestDropDir != rockyBodyLastCommitDir)
                 rockyBodyReversalBlockedStreak = 0;
             rockyBodyLastCommitDir = bestDropDir;
-            SIM_LOG("[SETTLE] bodyAngle=%.2f pivoted the assembly %.4f deg around its ground contact, it fell %.5f further this tick (of %.5f available)\n",
+            printf("[SETTLE] bodyAngle=%.2f pivoted the assembly %.4f deg around its ground contact, it fell %.5f further this tick (of %.5f available)\n",
                    r->angle, rockyBodySettleStep, appliedDrop, bestDrop);
         }
         else if (rockyBodyLastCommitDir != 0 && bestComDrop > SIMULATION_LEG_SETTLE_MIN_COM_DROP && bestComDropDir == -rockyBodyLastCommitDir
-                 && rockyBodyReversalBlockedStreak < SIMULATION_ROCKY_BODY_REVERSAL_BLOCK_STREAK
-                 && reversalGuardArmed)
+                 && rockyBodyReversalBlockedStreak < SIMULATION_ROCKY_BODY_REVERSAL_BLOCK_STREAK)
         {
             // Same reversal guard as bestDrop's own copy just above, for
             // the exact bestDrop-then-bestComDrop-reversing pairing the
             // real report showed -- see rockyBodyLastCommitDir's comment.
             rockyBodyReversalBlockedStreak++;
             rockyBodyReversalGuardBlockedThisTick = TRUE;
-            SIM_LOG("[SETTLE] bodyAngle=%.2f bestComDrop wants to pivot back the OPPOSITE way from last tick's own commit (dir %d -> %d) -- shrinking instead of reversing, to stop it bouncing between two angles forever (blocked streak %d/%d)\n",
+            printf("[SETTLE] bodyAngle=%.2f bestComDrop wants to pivot back the OPPOSITE way from last tick's own commit (dir %d -> %d) -- shrinking instead of reversing, to stop it bouncing between two angles forever (blocked streak %d/%d)\n",
                    r->angle, rockyBodyLastCommitDir, bestComDropDir, rockyBodyReversalBlockedStreak, SIMULATION_ROCKY_BODY_REVERSAL_BLOCK_STREAK);
-            shrinkRockyBodyStepForReversalGuard();
+            rockyBodySettleStep *= 0.5f;
         }
         else if (bestComDrop > SIMULATION_LEG_SETTLE_MIN_COM_DROP)
         {
@@ -3604,20 +3383,19 @@ static void advanceRockySettle(void)
             if (bestComDropDir != rockyBodyLastCommitDir)
                 rockyBodyReversalBlockedStreak = 0;
             rockyBodyLastCommitDir = bestComDropDir;
-            SIM_LOG("[SETTLE] bodyAngle=%.2f pivoted the assembly %.4f deg around its ground contact, center of mass dropped %.5f further (no further translation, gravity settling by mass alone)\n",
+            printf("[SETTLE] bodyAngle=%.2f pivoted the assembly %.4f deg around its ground contact, center of mass dropped %.5f further (no further translation, gravity settling by mass alone)\n",
                    r->angle, rockyBodySettleStep, bestComDrop);
         }
         else if (rockyBodyLastCommitDir != 0 && bestClearanceGain > SIMULATION_LEG_SETTLE_MIN_CLEARANCE_GAIN && bestClearanceGainDir == -rockyBodyLastCommitDir
-                 && rockyBodyReversalBlockedStreak < SIMULATION_ROCKY_BODY_REVERSAL_BLOCK_STREAK
-                 && reversalGuardArmed)
+                 && rockyBodyReversalBlockedStreak < SIMULATION_ROCKY_BODY_REVERSAL_BLOCK_STREAK)
         {
             // Same reversal guard again, this time for bestClearanceGain --
             // see rockyBodyLastCommitDir's comment above.
             rockyBodyReversalBlockedStreak++;
             rockyBodyReversalGuardBlockedThisTick = TRUE;
-            SIM_LOG("[SETTLE] bodyAngle=%.2f bestClearanceGain wants to pivot back the OPPOSITE way from last tick's own commit (dir %d -> %d) -- shrinking instead of reversing, to stop it bouncing between two angles forever (blocked streak %d/%d)\n",
+            printf("[SETTLE] bodyAngle=%.2f bestClearanceGain wants to pivot back the OPPOSITE way from last tick's own commit (dir %d -> %d) -- shrinking instead of reversing, to stop it bouncing between two angles forever (blocked streak %d/%d)\n",
                    r->angle, rockyBodyLastCommitDir, bestClearanceGainDir, rockyBodyReversalBlockedStreak, SIMULATION_ROCKY_BODY_REVERSAL_BLOCK_STREAK);
-            shrinkRockyBodyStepForReversalGuard();
+            rockyBodySettleStep *= 0.5f;
         }
         else if (bestClearanceGain > SIMULATION_LEG_SETTLE_MIN_CLEARANCE_GAIN)
         {
@@ -3642,7 +3420,7 @@ static void advanceRockySettle(void)
             if (bestClearanceGainDir != rockyBodyLastCommitDir)
                 rockyBodyReversalBlockedStreak = 0;
             rockyBodyLastCommitDir = bestClearanceGainDir;
-            SIM_LOG("[SETTLE] bodyAngle=%.2f pivoted the assembly %.4f deg around its ground contact, dangling point %.5f closer to the ground (no further translation)\n",
+            printf("[SETTLE] bodyAngle=%.2f pivoted the assembly %.4f deg around its ground contact, dangling point %.5f closer to the ground (no further translation)\n",
                    r->angle, rockyBodySettleStep, bestClearanceGain);
         }
         else
@@ -3742,8 +3520,7 @@ static void advanceRockySettle(void)
                     tier = 1;
                     value = scoutComDropAtDir[i];
                 }
-                else if (scoutClearAtDir[i] && scoutGainAtDir[i] > SIMULATION_LEG_SETTLE_MIN_CLEARANCE_GAIN
-                         && scoutComDropAtDir[i] >= -SIMULATION_LEG_SETTLE_MIN_COM_DROP) // same "never raise the COM" rule as the direct gain branch
+                else if (scoutClearAtDir[i] && scoutGainAtDir[i] > SIMULATION_LEG_SETTLE_MIN_CLEARANCE_GAIN)
                 {
                     tier = 0;
                     value = scoutGainAtDir[i];
@@ -3762,8 +3539,7 @@ static void advanceRockySettle(void)
             }
 
             if (scoutWinner != -1 && rockyBodyLastCommitDir != 0 && ((scoutWinner == 0) ? -1 : 1) == -rockyBodyLastCommitDir
-                && rockyBodyReversalBlockedStreak < SIMULATION_ROCKY_BODY_REVERSAL_BLOCK_STREAK
-                 && reversalGuardArmed)
+                && rockyBodyReversalBlockedStreak < SIMULATION_ROCKY_BODY_REVERSAL_BLOCK_STREAK)
             {
                 // Same reversal guard as the three direct branches above
                 // (see rockyBodyLastCommitDir's comment) -- the scouted
@@ -3778,7 +3554,7 @@ static void advanceRockySettle(void)
                 // extra trailing condition above.
                 rockyBodyReversalBlockedStreak++;
                 rockyBodyReversalGuardBlockedThisTick = TRUE;
-                SIM_LOG("[SETTLE] bodyAngle=%.2f scouted improvement is back the OPPOSITE way from last tick's own commit -- shrinking instead of reversing, same as the direct branches above (blocked streak %d/%d)\n",
+                printf("[SETTLE] bodyAngle=%.2f scouted improvement is back the OPPOSITE way from last tick's own commit -- shrinking instead of reversing, same as the direct branches above (blocked streak %d/%d)\n",
                        r->angle, rockyBodyReversalBlockedStreak, SIMULATION_ROCKY_BODY_REVERSAL_BLOCK_STREAK);
             }
             else if (scoutWinner != -1)
@@ -3826,7 +3602,7 @@ static void advanceRockySettle(void)
                     }
                 }
 
-                SIM_LOG("[SETTLE] bodyAngle=%.2f pivoted around its ground contact, scouted real improvement %.1f deg out (drop=%.5f comDrop=%.5f gain=%.5f), fell %.5f this tick -- nudging that way instead of shrinking\n",
+                printf("[SETTLE] bodyAngle=%.2f pivoted around its ground contact, scouted real improvement %.1f deg out (drop=%.5f comDrop=%.5f gain=%.5f), fell %.5f this tick -- nudging that way instead of shrinking\n",
                        r->angle, dir * SIMULATION_LEG_SETTLE_SCOUT_STEP_DEG, scoutDrop, scoutComDrop, scoutGain, nudgeAppliedDrop);
                 scoutedBody = TRUE;
                 probe2Committed = TRUE;
@@ -3839,7 +3615,7 @@ static void advanceRockySettle(void)
 
             if (!scoutedBody)
             {
-                if (rockyBodyReversalGuardBlockedThisTick) shrinkRockyBodyStepForReversalGuard(); else rockyBodySettleStep *= 0.5f;
+                rockyBodySettleStep *= 0.5f;
             }
         }
     }
@@ -3874,7 +3650,7 @@ static void advanceRockySettle(void)
         rockyBothProbesCommittedStreak++;
         if (rockyBothProbesCommittedStreak >= SIMULATION_LEG_SETTLE_STALEMATE_STREAK)
         {
-            SIM_LOG("[SETTLE] both probes have committed a move on every one of the last %d ticks -- treating as a stalemate (each one chasing an improvement the other's last move created) and shrinking both step sizes\n",
+            printf("[SETTLE] both probes have committed a move on every one of the last %d ticks -- treating as a stalemate (each one chasing an improvement the other's last move created) and shrinking both step sizes\n",
                    rockyBothProbesCommittedStreak);
             rockyKneeSettleStep *= 0.5f;
             rockyBodySettleStep *= 0.5f;
@@ -3904,7 +3680,7 @@ static void advanceRockySettle(void)
                 float grownKneeStep = rockyKneeSettleStep * 2.0f;
                 if (grownKneeStep > SIMULATION_LEG_SETTLE_STEP_DEG)
                     grownKneeStep = SIMULATION_LEG_SETTLE_STEP_DEG;
-                SIM_LOG("[SETTLE] kneeAngle=%.2f committed a clean improvement on every one of the last %d ticks with the body probe quiet -- growing the step back up from %.4f to %.4f deg to cover ground faster\n",
+                printf("[SETTLE] kneeAngle=%.2f committed a clean improvement on every one of the last %d ticks with the body probe quiet -- growing the step back up from %.4f to %.4f deg to cover ground faster\n",
                        r->kneeAngle, SIMULATION_LEG_SETTLE_GROWTH_STREAK, rockyKneeSettleStep, grownKneeStep);
                 rockyKneeSettleStep = grownKneeStep;
             }
@@ -3926,7 +3702,7 @@ static void advanceRockySettle(void)
                 float grownBodyStep = rockyBodySettleStep * 2.0f;
                 if (grownBodyStep > SIMULATION_BODY_SETTLE_STEP_DEG)
                     grownBodyStep = SIMULATION_BODY_SETTLE_STEP_DEG;
-                SIM_LOG("[SETTLE] bodyAngle=%.2f committed a clean improvement on every one of the last %d ticks with the knee probe quiet -- growing the step back up from %.4f to %.4f deg to cover ground faster\n",
+                printf("[SETTLE] bodyAngle=%.2f committed a clean improvement on every one of the last %d ticks with the knee probe quiet -- growing the step back up from %.4f to %.4f deg to cover ground faster\n",
                        r->angle, SIMULATION_LEG_SETTLE_GROWTH_STREAK, rockyBodySettleStep, grownBodyStep);
                 rockyBodySettleStep = grownBodyStep;
             }
@@ -4035,9 +3811,9 @@ static void advanceRockySettle(void)
                 translateActiveRobot(-sanityShift.x, -sanityShift.y);
                 r->angle = sanityBaseAngle;
             }
-            SIM_LOG("[SETTLE] convergence sanity check -- scouted %.1f deg each way from the current pivot: drop=%.5f/%.5f comDrop=%.5f/%.5f (min thresholds: drop>%.5f comDrop>%.5f)\n",
+            printf("[SETTLE] convergence sanity check -- scouted %.1f deg each way from the current pivot: drop=%.5f/%.5f comDrop=%.5f/%.5f (min thresholds: drop>%.5f comDrop>%.5f)\n",
                    SIMULATION_LEG_SETTLE_SCOUT_STEP_DEG, sanityDrop[0], sanityDrop[1], sanityComDrop[0], sanityComDrop[1],
-                   (double)SIMULATION_LEG_SETTLE_MIN_DROP, (double)SIMULATION_LEG_SETTLE_MIN_COM_DROP);
+                   SIMULATION_LEG_SETTLE_MIN_DROP, SIMULATION_LEG_SETTLE_MIN_COM_DROP);
         }
 
         // Both probes have been refined all the way down to the floor
@@ -4045,12 +3821,8 @@ static void advanceRockySettle(void)
         // resting pose. Stop actually testing from here on (until the
         // next fresh landing) rather than continuing to probe every tick
         // for the same nothing.
-        // Close any small leftover gap under the second contact point
-        // before calling this the rest pose -- see seatRockyDanglingPoint.
-        seatRockyDanglingPoint(r);
-
         rockySettleConverged = TRUE;
-        SIM_LOG("[SETTLE] converged -- kneeAngle=%.2f bodyAngle=%.2f, no further improvement found\n",
+        printf("[SETTLE] converged -- kneeAngle=%.2f bodyAngle=%.2f, no further improvement found\n",
                r->kneeAngle, r->angle);
     }
     else if (rockyBodyReversalGuardBlockedThisTick
@@ -4065,7 +3837,7 @@ static void advanceRockySettle(void)
         // line the log otherwise looks identical to any other blocked-
         // streak tick, giving no hint that this was the one tick
         // convergence would otherwise have latched on.
-        SIM_LOG("[SETTLE] convergence held off -- bodySettleStep is at its floor but the reversal guard just blocked a genuine improvement this tick, so this is not actually the resting pose yet\n");
+        printf("[SETTLE] convergence held off -- bodySettleStep is at its floor but the reversal guard just blocked a genuine improvement this tick, so this is not actually the resting pose yet\n");
     }
 }
 
@@ -4160,7 +3932,7 @@ static BOOL applyGravityStep(HWND hWnd, float step)
 
     BOOL landed = robotCollidesWithEnvironment();
     if (!suppressThisCall)
-        SIM_LOG("[GRAVITY] step=%.6f y_before=%.6f y_after_step=%.6f landed=%d\n",
+        printf("[GRAVITY] step=%.6f y_before=%.6f y_after_step=%.6f landed=%d\n",
                step, yBefore, activeRobotDebugY(), landed);
     if (landed)
     {
@@ -4189,7 +3961,7 @@ static BOOL applyGravityStep(HWND hWnd, float step)
 
         if (!suppressThisCall)
         {
-            SIM_LOG("[GRAVITY]   search: safe=%.6f blocked=%.6f y_final=%.6f\n",
+            printf("[GRAVITY]   search: safe=%.6f blocked=%.6f y_final=%.6f\n",
                    safe, blocked, activeRobotDebugY());
 
             // envHalfWidth: the SAME value simEnvLineHalfWidthWorld() gives
@@ -4216,7 +3988,7 @@ static BOOL applyGravityStep(HWND hWnd, float step)
             // way, and it works for a sloped or curved line just as well
             // as a flat one.
             float envHalfWidth = simEnvLineHalfWidthWorld();
-            SIM_LOG("[GRAVITY]   envHalfWidth=%.5f\n", envHalfWidth);
+            printf("[GRAVITY]   envHalfWidth=%.5f\n", envHalfWidth);
 
             if (app.robotScene.activeKind == ROBOT_KIND_SEMNI)
             {
@@ -4230,7 +4002,7 @@ static BOOL applyGravityStep(HWND hWnd, float step)
                     float eRadius = robotLengthToEnvWorld(dbgCircles[c].radius);
                     float combined = eRadius + envHalfWidth;
                     float dist = nearestEnvDistance(ecx, ecy);
-                    SIM_LOG("[GRAVITY]   circle=%-4s world=(%.5f,%.5f) radius=%.5f dist=%.5f combined=%.5f gap=%.5f\n",
+                    printf("[GRAVITY]   circle=%-4s world=(%.5f,%.5f) radius=%.5f dist=%.5f combined=%.5f gap=%.5f\n",
                            dbgNames[c], ecx, ecy, eRadius, dist, combined, dist - combined);
                 }
             }
@@ -4246,7 +4018,7 @@ static BOOL applyGravityStep(HWND hWnd, float step)
                     float eRadius = robotLengthToEnvWorld(dbgCircles[c].radius);
                     float combined = eRadius + envHalfWidth;
                     float dist = nearestEnvDistance(ecx, ecy);
-                    SIM_LOG("[GRAVITY]   circle=%-4s world=(%.5f,%.5f) radius=%.5f dist=%.5f combined=%.5f gap=%.5f\n",
+                    printf("[GRAVITY]   circle=%-4s world=(%.5f,%.5f) radius=%.5f dist=%.5f combined=%.5f gap=%.5f\n",
                            dbgNames[c], ecx, ecy, eRadius, dist, combined, dist - combined);
                 }
 
@@ -4284,7 +4056,7 @@ static BOOL applyGravityStep(HWND hWnd, float step)
                         if (minDist < 0.0f || d < minDist) minDist = d;
                     }
 
-                    SIM_LOG("[GRAVITY]   edge=%-6s world=(%.5f,%.5f)-(%.5f,%.5f) dist=%.5f combined=%.5f gap=%.5f\n",
+                    printf("[GRAVITY]   edge=%-6s world=(%.5f,%.5f)-(%.5f,%.5f) dist=%.5f combined=%.5f gap=%.5f\n",
                            edgeNames[e], esx, esy, eex, eey, minDist, edgeCombined, minDist - edgeCombined);
                 }
             }
@@ -4300,7 +4072,7 @@ static BOOL applyGravityStep(HWND hWnd, float step)
                     float eRadius = robotLengthToEnvWorld(dbgCircles[c].radius);
                     float combined = eRadius + envHalfWidth;
                     float dist = nearestEnvDistance(ecx, ecy);
-                    SIM_LOG("[GRAVITY]   circle=%-5s world=(%.5f,%.5f) radius=%.5f dist=%.5f combined=%.5f gap=%.5f\n",
+                    printf("[GRAVITY]   circle=%-5s world=(%.5f,%.5f) radius=%.5f dist=%.5f combined=%.5f gap=%.5f\n",
                            dbgNames[c], ecx, ecy, eRadius, dist, combined, dist - combined);
                 }
             }
@@ -4352,7 +4124,7 @@ static BOOL applyGravityStep(HWND hWnd, float step)
             // own sub-precision residual correction nudging the pivot
             // corner's world Y by a hair -- is the real culprit, not a UI
             // event.
-            SIM_LOG("[SETTLE] fresh landing detected (landed=FALSE -> TRUE) -- resetting probe step sizes and anti-oscillation state\n");
+            printf("[SETTLE] fresh landing detected (landed=FALSE -> TRUE) -- resetting probe step sizes and anti-oscillation state\n");
 
             rockySettleConverged = FALSE;
             rockyKneeSettleStep = SIMULATION_LEG_SETTLE_STEP_DEG;
@@ -4472,7 +4244,7 @@ static BOOL applyGravityStep(HWND hWnd, float step)
             DWORD perfSettleElapsed = GetTickCount() - perfSettleStart;
             if (perfSettleElapsed >= (DWORD)SIMULATION_PERF_WARN_FRAME_MS)
             {
-                SIM_FPS_LOG("[PERF] settle fast-forward took %lums across %d advanceRockySettle call(s) (avg %.1fms/call) -- this ran INSIDE the current WM_TIMER tick, before its own repaint was even scheduled\n",
+                printf("[PERF] settle fast-forward took %lums across %d advanceRockySettle call(s) (avg %.1fms/call) -- this ran INSIDE the current WM_TIMER tick, before its own repaint was even scheduled\n",
                        (unsigned long)perfSettleElapsed, perfSettleCalls,
                        perfSettleCalls > 0 ? (float)perfSettleElapsed / (float)perfSettleCalls : 0.0f);
             }
@@ -5143,7 +4915,7 @@ static void advanceRockyKneeHold(HWND hWnd)
         && (now - rockyEQHoldLastReviveTick) >= SIMULATION_ROCKY_EQ_HOLD_REVIVE_INTERVAL_MS)
     {
         rockyEQHoldLastReviveTick = now;
-        SIM_LOG("[SETTLE] E/Q hold periodic re-arm -- reviving knee+body probe step sizes mid-hold, same as a keyup, so a long hold doesn't spend its whole duration chasing an increasingly stale settle attempt\n");
+        printf("[SETTLE] E/Q hold periodic re-arm -- reviving knee+body probe step sizes mid-hold, same as a keyup, so a long hold doesn't spend its whole duration chasing an increasingly stale settle attempt\n");
         reviveRockyBodyProbeStepSizes(hWnd);
     }
 
@@ -5232,10 +5004,6 @@ void canvasRenderFrame(float dimAmount)
             fpsDisplayValue = (float)fpsFrameCount * 1000.0f / (float)fpsElapsed;
             fpsFrameCount = 0;
             fpsWindowStartTick = fpsNow;
-
-            // View > FPS Log (Simulation only) -- one line per measurement
-            // window (FPS_UPDATE_INTERVAL_MS).
-            SIM_FPS_LOG("[FPS] %.1f fps\n", (double)fpsDisplayValue);
         }
     }
 
@@ -6365,7 +6133,7 @@ void renderCombinedFrame(void)
     DWORD perfFrameElapsed = GetTickCount() - perfFrameStart;
     if (perfFrameElapsed >= (DWORD)SIMULATION_PERF_WARN_FRAME_MS)
     {
-        SIM_FPS_LOG("[PERF] slow frame: total=%lums robot=%lums canvas=%lums contactDots=%lums swapBuffers=%lums\n",
+        printf("[PERF] slow frame: total=%lums robot=%lums canvas=%lums contactDots=%lums swapBuffers=%lums\n",
                (unsigned long)perfFrameElapsed, (unsigned long)perfRobotMs, (unsigned long)perfCanvasMs,
                (unsigned long)perfDotsMs, (unsigned long)perfSwapMs);
     }
@@ -7362,7 +7130,7 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         if (wParam == 'C' && appMode == APP_MODE_SIMULATION)
         {
             showContactDebug = !showContactDebug;
-            SIM_LOG("[CONTACT] overlay toggled %s (activeKind=%d)\n",
+            printf("[CONTACT] overlay toggled %s (activeKind=%d)\n",
                    showContactDebug ? "ON" : "off", app.robotScene.activeKind);
             InvalidateRect(hWnd, NULL, FALSE);
             return 0;
@@ -7534,7 +7302,7 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
                   && (app.robotScene.rocky.legHidden || app.robotScene.rocky.bodyHidden))
                 && autoGravityActive)
             {
-                SIM_LOG("[SETTLE] VK_LEFT/RIGHT keyup reset fired -- resetting probe step sizes and anti-oscillation state\n");
+                printf("[SETTLE] VK_LEFT/RIGHT keyup reset fired -- resetting probe step sizes and anti-oscillation state\n");
                 rockySettleConverged = FALSE;
                 rockyKneeSettleStep = SIMULATION_LEG_SETTLE_STEP_DEG;
                 rockyBodySettleStep = SIMULATION_BODY_SETTLE_STEP_DEG;
@@ -7638,7 +7406,7 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 // guard-bypass, not the step size being large again (a
                 // large step with the guard still intact just gets
                 // reblocked and reshrunk correctly, no bypass).
-                SIM_LOG("[SETTLE] E/Q keyup reset fired -- reviving knee+body probe step sizes, leaving body pivot direction/identity memory untouched\n");
+                printf("[SETTLE] E/Q keyup reset fired -- reviving knee+body probe step sizes, leaving body pivot direction/identity memory untouched\n");
                 reviveRockyBodyProbeStepSizes(hWnd);
             }
         }
@@ -7824,7 +7592,7 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 // move beyond this -- advancePostRotateSettle notices
                 // there's nothing left to do and shuts its own timer back
                 // off within a tick or two.
-                SIM_LOG("[SETTLE] WM_LBUTTONUP drag-release reset fired -- resetting probe step sizes and anti-oscillation state\n");
+                printf("[SETTLE] WM_LBUTTONUP drag-release reset fired -- resetting probe step sizes and anti-oscillation state\n");
                 rockySettleConverged = FALSE;
                 rockyKneeSettleStep = SIMULATION_LEG_SETTLE_STEP_DEG;
                 rockyBodySettleStep = SIMULATION_BODY_SETTLE_STEP_DEG;
@@ -8181,7 +7949,7 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	            // having really happened.
 	            autoGravityVelocity = 0.0f;
 
-	            SIM_LOG("[RESET] robot restored to its Simulation-start pose (kind=%d)\n", app.robotScene.activeKind);
+	            printf("[RESET] robot restored to its Simulation-start pose (kind=%d)\n", app.robotScene.activeKind);
 	            InvalidateRect(hWnd, NULL, FALSE);
 	        }
 
@@ -8365,7 +8133,7 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	            // just turn Auto Gravity on for it now.
 	            if (robotCollidesWithEnvironment() && autoGravityActive)
 	            {
-	                SIM_LOG("[SETTLE] Simulation-mode-entry reset fired -- resetting probe step sizes and anti-oscillation state\n");
+	                printf("[SETTLE] Simulation-mode-entry reset fired -- resetting probe step sizes and anti-oscillation state\n");
 	                rockySettleConverged = FALSE;
 	                rockyKneeSettleStep = SIMULATION_LEG_SETTLE_STEP_DEG;
 	                rockyBodySettleStep = SIMULATION_BODY_SETTLE_STEP_DEG;
@@ -8381,7 +8149,7 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	                SetTimer(hWnd, AUTO_GRAVITY_TIMER_ID, SIMULATION_AUTO_GRAVITY_INTERVAL_MS, NULL);
 	            }
 
-	            SIM_LOG("[ENV] %d segment(s) traced:\n", canvas.segmentResultCount);
+	            printf("[ENV] %d segment(s) traced:\n", canvas.segmentResultCount);
 	            for (int s = 0; s < canvas.segmentResultCount; s++)
 	            {
 	                int start = segmentStarts[s];
@@ -8391,7 +8159,7 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	                float say = segmentPointsWorld[start * 2 + 1];
 	                float sbx = segmentPointsWorld[(start + count - 1) * 2];
 	                float sby = segmentPointsWorld[(start + count - 1) * 2 + 1];
-	                SIM_LOG("[ENV]   seg=%d start=(%.5f,%.5f) end=(%.5f,%.5f) thickness=%.5f\n",
+	                printf("[ENV]   seg=%d start=(%.5f,%.5f) end=(%.5f,%.5f) thickness=%.5f\n",
 	                       s, sax, say, sbx, sby, segmentThicknessWorld[s]);
 	            }
 
@@ -8443,17 +8211,6 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	        }
 
 	        CheckMenuItem(hModeMenu, ID_MODE_SIMULATION, MF_BYCOMMAND | (appMode == APP_MODE_SIMULATION ? MF_CHECKED : MF_UNCHECKED));
-
-	        // View > Simulation Log / FPS Log only exist in Simulation --
-	        // enabled here on entry, greyed out again on leaving. Their
-	        // checkmarks/flags are left as they were, so logging resumes
-	        // automatically the next time Simulation is entered.
-	        {
-	            HMENU hViewMenuForLogs = GetSubMenu(hMenuBar, 2);
-	            UINT logItemState = MF_BYCOMMAND | (appMode == APP_MODE_SIMULATION ? MF_ENABLED : MF_GRAYED);
-	            EnableMenuItem(hViewMenuForLogs, ID_TOGGLE_SIM_LOG, logItemState);
-	            EnableMenuItem(hViewMenuForLogs, ID_TOGGLE_FPS_LOG, logItemState);
-	        }
 
 	        // Slow Motion button: only makes sense in Simulation, so it
 	        // shows/hides right alongside it. Leaving Simulation also resets
@@ -8796,27 +8553,6 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	        CheckMenuItem(hViewMenu, ID_TOGGLE_SHOW_FPS, MF_BYCOMMAND | (showFpsOverlay ? MF_CHECKED : MF_UNCHECKED));
 
 	        InvalidateRect(hWnd, NULL, FALSE);
-	    }
-	    else if (LOWORD(wParam) == ID_TOGGLE_SIM_LOG || LOWORD(wParam) == ID_TOGGLE_FPS_LOG)
-	    {
-	        // View > Simulation Log / FPS Log -- same independent toggle
-	        // pattern as Show FPS above. Only reachable in Simulation (the
-	        // items are greyed out otherwise -- see the mode-switch handler),
-	        // but guarded here too in case of a stray WM_COMMAND.
-	        if (appMode == APP_MODE_SIMULATION)
-	        {
-	            BOOL isSimLog = (LOWORD(wParam) == ID_TOGGLE_SIM_LOG);
-	            BOOL* flag = isSimLog ? &simPhysicsLogEnabled : &simFpsLogEnabled;
-	            *flag = !*flag;
-
-	            HMENU hMenuBar = GetMenu(hWnd);
-	            HMENU hViewMenu = GetSubMenu(hMenuBar, 2);
-	            CheckMenuItem(hViewMenu, LOWORD(wParam), MF_BYCOMMAND | (*flag ? MF_CHECKED : MF_UNCHECKED));
-
-	            // Plain printf, not SIM_LOG -- the OFF message has to show
-	            // even though the flag was just cleared.
-	            printf("[LOG] %s %s\n", isSimLog ? "Simulation log" : "FPS log", *flag ? "ON" : "OFF");
-	        }
 	    }
 	    return 0;
 	}

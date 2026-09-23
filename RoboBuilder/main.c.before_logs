@@ -115,15 +115,6 @@ static HMENU buildMainMenu(void)
     // locates this same menu via GetSubMenu(hMenuBar, 2), same fixed-index
     // lookup ID_TOGGLE_HIDE_INACTIVE already relies on.
     AppendMenu(hViewMenu, MF_STRING | MF_CHECKED, ID_TOGGLE_SHOW_FPS, L"Show FPS");
-    // Simulation-only console log toggles (canvas.c's simPhysicsLogEnabled/
-    // simFpsLogEnabled, see ui_state.h). Start unchecked (off) and greyed
-    // out, since the app starts in Design mode -- canvas.c's mode-switch
-    // handler enables them on entering Simulation and greys them again on
-    // leaving. Appended at the END of View, so the fixed GetSubMenu(hMenuBar, 2)
-    // lookup the other View handlers rely on is unaffected.
-    AppendMenu(hViewMenu, MF_SEPARATOR, 0, NULL);
-    AppendMenu(hViewMenu, MF_STRING | MF_UNCHECKED | MF_GRAYED, ID_TOGGLE_SIM_LOG, L"Simulation Log (contact, gravity, settle)");
-    AppendMenu(hViewMenu, MF_STRING | MF_UNCHECKED | MF_GRAYED, ID_TOGGLE_FPS_LOG, L"FPS Log");
     AppendMenu(hMenuBar, MF_POPUP, (UINT_PTR)hViewMenu, L"&View");
 
     HMENU hHelpMenu = CreatePopupMenu();

@@ -3455,15 +3455,10 @@ static void advanceRockySettle(void)
                     float clearance = rockyDanglingPointClearance(r);
                     float gain = baseDanglingClearance - clearance;
 
-                    // A "dangling point closer" move must not RAISE the center of mass:
-                    // gravity never lifts a body just to bring a hovering point down.
-                    // Without this, a COM-drop commit one tick and a gain commit back
-                    // the other way the next tick bounced bodyAngle +/- one step forever
-                    // (real report: 334.39 <-> 335.39, COM rising 0.01465 on every gain step).
-                    if (clearance >= 0.0f && comDrop >= -SIMULATION_LEG_SETTLE_MIN_COM_DROP)
+                    if (clearance >= 0.0f)
                         gainAtDir[dirIndex] = gain;
 
-                    if (clearance >= 0.0f && comDrop >= -SIMULATION_LEG_SETTLE_MIN_COM_DROP && gain > bestClearanceGain)
+                    if (clearance >= 0.0f && gain > bestClearanceGain)
                     {
                         bestClearanceGain = gain;
                         bestClearanceBodyAngle = r->angle;
@@ -3742,8 +3737,7 @@ static void advanceRockySettle(void)
                     tier = 1;
                     value = scoutComDropAtDir[i];
                 }
-                else if (scoutClearAtDir[i] && scoutGainAtDir[i] > SIMULATION_LEG_SETTLE_MIN_CLEARANCE_GAIN
-                         && scoutComDropAtDir[i] >= -SIMULATION_LEG_SETTLE_MIN_COM_DROP) // same "never raise the COM" rule as the direct gain branch
+                else if (scoutClearAtDir[i] && scoutGainAtDir[i] > SIMULATION_LEG_SETTLE_MIN_CLEARANCE_GAIN)
                 {
                     tier = 0;
                     value = scoutGainAtDir[i];

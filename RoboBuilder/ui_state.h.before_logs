@@ -27,8 +27,6 @@
 #define ID_RESET_ROBOT       16
 #define ID_PROBE1_TOGGLE     17
 #define ID_TOGGLE_SHOW_FPS   18
-#define ID_TOGGLE_SIM_LOG    19
-#define ID_TOGGLE_FPS_LOG    20
 
 // App-wide mode, switched from the "Mode" menu on the GL window.
 // Design = draw/trace/edit arc-spline paths (current behavior).
@@ -43,22 +41,6 @@ typedef enum {
 } AppMode;
 
 extern AppMode appMode;
-
-// Simulation-only console logging, toggled from View > Simulation Log and
-// View > FPS Log (ID_TOGGLE_SIM_LOG/ID_TOGGLE_FPS_LOG above; both menu
-// items are greyed out outside Simulation mode). Both default to FALSE.
-// simPhysicsLogEnabled gates every contact/gravity/settle/collision/reset/
-// environment line ([CONTACT] [GRAVITY] [SETTLE] [COLLIDE] [RESET] [ENV]);
-// simFpsLogEnabled gates the periodic [FPS] line and the [PERF] slow-frame
-// warnings. Neither ever prints outside Simulation, even while toggled on
-// -- the toggle state is kept, so switching back to Simulation resumes
-// logging without having to turn it on again.
-extern BOOL simPhysicsLogEnabled;
-extern BOOL simFpsLogEnabled;
-
-#include <stdio.h>
-#define SIM_LOG(...)     do { if (appMode == APP_MODE_SIMULATION && simPhysicsLogEnabled) printf(__VA_ARGS__); } while (0)
-#define SIM_FPS_LOG(...) do { if (appMode == APP_MODE_SIMULATION && simFpsLogEnabled) printf(__VA_ARGS__); } while (0)
 
 // Sub-mode of APP_MODE_DESIGN, picked from the "Design Mode" submenu
 // (Mode > Design Mode > Robot (semni) / Environment). Every stroke is

@@ -2514,21 +2514,6 @@ static float clearPivotRoundingResidual(void)
     return safe;
 }
 
-// Halves rockyBodySettleStep for a reversal-guard block, but never below
-// SIMULATION_LEG_SETTLE_MIN_STEP_DEG. The guard is meant to give up after
-// SIMULATION_ROCKY_BODY_REVERSAL_BLOCK_STREAK consecutive blocks and let
-// the reversal through -- but a plain halving on every block (plus the
-// pivot-side-flip halving) took a 1 deg step below the floor in 7 halvings,
-// so Probe 2 stopped running before the guard ever released, and the
-// settle "converged" with the body still visibly toppling (real report:
-// Rocky balanced on its foot with the center of mass far to one side).
-static void shrinkRockyBodyStepForReversalGuard(void)
-{
-    rockyBodySettleStep *= 0.5f;
-    if (rockyBodySettleStep < SIMULATION_LEG_SETTLE_MIN_STEP_DEG)
-        rockyBodySettleStep = SIMULATION_LEG_SETTLE_MIN_STEP_DEG;
-}
-
 // ---- Final "seat the dangling point" pass (run once, right before
 // advanceRockySettle latches rockySettleConverged) ----
 //
@@ -3245,39 +3230,6 @@ static void advanceRockySettle(void)
         float baseBodyAngle = r->angle;
         PointF pivot = rockyTopplePivotWorld(r); // same contact point for both directions below
 
-        // The anti-oscillation machinery below (pivot-side-flip halving and
-        // the reversal guard) is only meant for a body rocking back and
-        // forth near BALANCE, where the center of mass sits almost over the
-        // pivot. When the center of mass is far off to one side of the only
-        // contact, the torque direction is unambiguous -- the body simply
-        // has to topple that way -- so blocking or shrinking that move just
-        // freezes an impossible pose (see SIMULATION_ROCKY_REVERSAL_GUARD_MAX_COM_OFFSET).
-        //
-        // "Far from the pivot" alone isn't enough, though: resting on TWO
-        // contacts (e.g. knee AND foot both on the ground) with the center
-        // of mass BETWEEN them is a stable rest pose even though the center
-        // of mass is far from either one. There, no rotation is physically
-        // possible, and without the guard Probe 2 just alternates pivots
-        // (knee, foot, knee, ...) nudging +/- one step forever (real
-        // report: bodyAngle bouncing 451.00 <-> 451.25). So the guard stays
-        // armed whenever the second-closest contact is also touching and
-        // the center of mass lies horizontally between the two.
-        float reversalGuardComX = computeRockyMassCenterWorld(*r).x;
-        float reversalGuardComOffset = fabsf(pivot.x - reversalGuardComX);
-        BOOL reversalGuardArmed = (reversalGuardComOffset <= SIMULATION_ROCKY_REVERSAL_GUARD_MAX_COM_OFFSET);
-        if (!reversalGuardArmed && !(r->legHidden && r->bodyHidden))
-        {
-            RockyLegContact supportA, supportB;
-            rockyToppleContactPoints(r, &supportA, &supportB);
-            if (supportB.clearance <= robotLengthToEnvWorld(SIMULATION_ROCKY_SUPPORT_CONTACT_TOL))
-            {
-                float supportLo = (supportA.world.x < supportB.world.x) ? supportA.world.x : supportB.world.x;
-                float supportHi = (supportA.world.x < supportB.world.x) ? supportB.world.x : supportA.world.x;
-                if (reversalGuardComX >= supportLo && reversalGuardComX <= supportHi)
-                    reversalGuardArmed = TRUE; // supported on both sides -- a real rest pose, keep anti-oscillation on
-            }
-        }
-
         // Binary-division fix for a specific vibration report, by explicit
         // request -- see rockyPivotSide's own comment above for the full
         // reasoning. Measured off the CURRENT (pre-rotation) mass center,
@@ -3285,17 +3237,11 @@ static void advanceRockySettle(void)
         {
             float pivotComX = computeRockyMassCenterWorld(*r).x;
             int currentPivotSide = (pivot.x < pivotComX) ? -1 : 1;
-            if (rockyPivotSide != 0 && currentPivotSide != rockyPivotSide && reversalGuardArmed)
+            if (rockyPivotSide != 0 && currentPivotSide != rockyPivotSide)
             {
                 SIM_LOG("[SETTLE] bodyAngle=%.2f pivot flipped sides of the center of mass (side=%d -> %d) -- halving rockyBodySettleStep to stop it vibrating across center\n",
                        r->angle, rockyPivotSide, currentPivotSide);
                 rockyBodySettleStep *= 0.5f;
-            }
-            else if (rockyPivotSide != 0 && currentPivotSide != rockyPivotSide)
-            {
-                SIM_LOG("[SETTLE] bodyAngle=%.2f pivot flipped sides of the center of mass (side=%d -> %d), but the center of mass is %.4f away and not between two contacts -- a real topple, not vibration, so not halving and not reversal-guarding\n",
-                       r->angle, rockyPivotSide, currentPivotSide, reversalGuardComOffset);
-                rockyBodyReversalBlockedStreak = 0;
             }
             rockyPivotSide = currentPivotSide;
         }
@@ -3455,15 +3401,10 @@ static void advanceRockySettle(void)
                     float clearance = rockyDanglingPointClearance(r);
                     float gain = baseDanglingClearance - clearance;
 
-                    // A "dangling point closer" move must not RAISE the center of mass:
-                    // gravity never lifts a body just to bring a hovering point down.
-                    // Without this, a COM-drop commit one tick and a gain commit back
-                    // the other way the next tick bounced bodyAngle +/- one step forever
-                    // (real report: 334.39 <-> 335.39, COM rising 0.01465 on every gain step).
-                    if (clearance >= 0.0f && comDrop >= -SIMULATION_LEG_SETTLE_MIN_COM_DROP)
+                    if (clearance >= 0.0f)
                         gainAtDir[dirIndex] = gain;
 
-                    if (clearance >= 0.0f && comDrop >= -SIMULATION_LEG_SETTLE_MIN_COM_DROP && gain > bestClearanceGain)
+                    if (clearance >= 0.0f && gain > bestClearanceGain)
                     {
                         bestClearanceGain = gain;
                         bestClearanceBodyAngle = r->angle;
@@ -3518,8 +3459,7 @@ static void advanceRockySettle(void)
             rockyBodySettleStep *= 0.5f;
         }
         else if (rockyBodyLastCommitDir != 0 && bestDrop > SIMULATION_LEG_SETTLE_MIN_DROP && bestDropDir == -rockyBodyLastCommitDir
-                 && rockyBodyReversalBlockedStreak < SIMULATION_ROCKY_BODY_REVERSAL_BLOCK_STREAK
-                 && reversalGuardArmed)
+                 && rockyBodyReversalBlockedStreak < SIMULATION_ROCKY_BODY_REVERSAL_BLOCK_STREAK)
         {
             // bestDrop would fire below, but in the OPPOSITE direction
             // from whatever Probe 2 actually committed last tick -- see
@@ -3535,7 +3475,7 @@ static void advanceRockySettle(void)
             rockyBodyReversalGuardBlockedThisTick = TRUE;
             SIM_LOG("[SETTLE] bodyAngle=%.2f bestDrop wants to pivot back the OPPOSITE way from last tick's own commit (dir %d -> %d) -- shrinking instead of reversing, to stop it bouncing between two angles forever (blocked streak %d/%d)\n",
                    r->angle, rockyBodyLastCommitDir, bestDropDir, rockyBodyReversalBlockedStreak, SIMULATION_ROCKY_BODY_REVERSAL_BLOCK_STREAK);
-            shrinkRockyBodyStepForReversalGuard();
+            rockyBodySettleStep *= 0.5f;
         }
         else if (bestDrop > SIMULATION_LEG_SETTLE_MIN_DROP)
         {
@@ -3575,8 +3515,7 @@ static void advanceRockySettle(void)
                    r->angle, rockyBodySettleStep, appliedDrop, bestDrop);
         }
         else if (rockyBodyLastCommitDir != 0 && bestComDrop > SIMULATION_LEG_SETTLE_MIN_COM_DROP && bestComDropDir == -rockyBodyLastCommitDir
-                 && rockyBodyReversalBlockedStreak < SIMULATION_ROCKY_BODY_REVERSAL_BLOCK_STREAK
-                 && reversalGuardArmed)
+                 && rockyBodyReversalBlockedStreak < SIMULATION_ROCKY_BODY_REVERSAL_BLOCK_STREAK)
         {
             // Same reversal guard as bestDrop's own copy just above, for
             // the exact bestDrop-then-bestComDrop-reversing pairing the
@@ -3585,7 +3524,7 @@ static void advanceRockySettle(void)
             rockyBodyReversalGuardBlockedThisTick = TRUE;
             SIM_LOG("[SETTLE] bodyAngle=%.2f bestComDrop wants to pivot back the OPPOSITE way from last tick's own commit (dir %d -> %d) -- shrinking instead of reversing, to stop it bouncing between two angles forever (blocked streak %d/%d)\n",
                    r->angle, rockyBodyLastCommitDir, bestComDropDir, rockyBodyReversalBlockedStreak, SIMULATION_ROCKY_BODY_REVERSAL_BLOCK_STREAK);
-            shrinkRockyBodyStepForReversalGuard();
+            rockyBodySettleStep *= 0.5f;
         }
         else if (bestComDrop > SIMULATION_LEG_SETTLE_MIN_COM_DROP)
         {
@@ -3608,8 +3547,7 @@ static void advanceRockySettle(void)
                    r->angle, rockyBodySettleStep, bestComDrop);
         }
         else if (rockyBodyLastCommitDir != 0 && bestClearanceGain > SIMULATION_LEG_SETTLE_MIN_CLEARANCE_GAIN && bestClearanceGainDir == -rockyBodyLastCommitDir
-                 && rockyBodyReversalBlockedStreak < SIMULATION_ROCKY_BODY_REVERSAL_BLOCK_STREAK
-                 && reversalGuardArmed)
+                 && rockyBodyReversalBlockedStreak < SIMULATION_ROCKY_BODY_REVERSAL_BLOCK_STREAK)
         {
             // Same reversal guard again, this time for bestClearanceGain --
             // see rockyBodyLastCommitDir's comment above.
@@ -3617,7 +3555,7 @@ static void advanceRockySettle(void)
             rockyBodyReversalGuardBlockedThisTick = TRUE;
             SIM_LOG("[SETTLE] bodyAngle=%.2f bestClearanceGain wants to pivot back the OPPOSITE way from last tick's own commit (dir %d -> %d) -- shrinking instead of reversing, to stop it bouncing between two angles forever (blocked streak %d/%d)\n",
                    r->angle, rockyBodyLastCommitDir, bestClearanceGainDir, rockyBodyReversalBlockedStreak, SIMULATION_ROCKY_BODY_REVERSAL_BLOCK_STREAK);
-            shrinkRockyBodyStepForReversalGuard();
+            rockyBodySettleStep *= 0.5f;
         }
         else if (bestClearanceGain > SIMULATION_LEG_SETTLE_MIN_CLEARANCE_GAIN)
         {
@@ -3742,8 +3680,7 @@ static void advanceRockySettle(void)
                     tier = 1;
                     value = scoutComDropAtDir[i];
                 }
-                else if (scoutClearAtDir[i] && scoutGainAtDir[i] > SIMULATION_LEG_SETTLE_MIN_CLEARANCE_GAIN
-                         && scoutComDropAtDir[i] >= -SIMULATION_LEG_SETTLE_MIN_COM_DROP) // same "never raise the COM" rule as the direct gain branch
+                else if (scoutClearAtDir[i] && scoutGainAtDir[i] > SIMULATION_LEG_SETTLE_MIN_CLEARANCE_GAIN)
                 {
                     tier = 0;
                     value = scoutGainAtDir[i];
@@ -3762,8 +3699,7 @@ static void advanceRockySettle(void)
             }
 
             if (scoutWinner != -1 && rockyBodyLastCommitDir != 0 && ((scoutWinner == 0) ? -1 : 1) == -rockyBodyLastCommitDir
-                && rockyBodyReversalBlockedStreak < SIMULATION_ROCKY_BODY_REVERSAL_BLOCK_STREAK
-                 && reversalGuardArmed)
+                && rockyBodyReversalBlockedStreak < SIMULATION_ROCKY_BODY_REVERSAL_BLOCK_STREAK)
             {
                 // Same reversal guard as the three direct branches above
                 // (see rockyBodyLastCommitDir's comment) -- the scouted
@@ -3839,7 +3775,7 @@ static void advanceRockySettle(void)
 
             if (!scoutedBody)
             {
-                if (rockyBodyReversalGuardBlockedThisTick) shrinkRockyBodyStepForReversalGuard(); else rockyBodySettleStep *= 0.5f;
+                rockyBodySettleStep *= 0.5f;
             }
         }
     }

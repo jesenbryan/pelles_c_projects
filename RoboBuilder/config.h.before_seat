@@ -543,23 +543,6 @@
 // so it reads as "still basically flush" rather than "floating."
 #define SIMULATION_CONTACT_VISUAL_TOLERANCE 0.001f
 
-// canvas.c's seatRockyDanglingPoint: once Rocky's settle has converged,
-// the second contact point (e.g. the foot while the knee is the pivot)
-// can still hover a sub-pixel gap above the ground -- enough to miss
-// SIMULATION_CONTACT_VISUAL_TOLERANCE above. That final pass
-// binary-searches the rotation around the pivot to close the gap.
-// SIMULATION_ROCKY_SEAT_MAX_GAP: largest gap (robot world units) it will
-//   try to close -- anything bigger is treated as genuinely dangling.
-// SIMULATION_ROCKY_SEAT_MAX_PIVOT_LIFT: how far a candidate rotation may
-//   lift the robot to undo float rounding at the pivot before it counts
-//   as blocked (kept tiny, well under the visual tolerance, so the pivot
-//   itself stays flush).
-// SIMULATION_ROCKY_SEAT_SEARCH_ITERATIONS: bisection depth; 16 halvings
-//   of a <=1 deg bracket is far below a pixel at any reachable zoom.
-#define SIMULATION_ROCKY_SEAT_MAX_GAP 0.02f
-#define SIMULATION_ROCKY_SEAT_MAX_PIVOT_LIFT 0.0001f
-#define SIMULATION_ROCKY_SEAT_SEARCH_ITERATIONS 16
-
 // applyGravityStep (canvas.c) used to just undo a WHOLE gravity step the
 // instant it detected a collision -- simple, but it means the robot always
 // stops up to one full step's worth of world units short of actually
@@ -959,24 +942,6 @@
 // STREAK below's own "long enough to rule out a normal transient"
 // reasoning.
 #define SIMULATION_ROCKY_BODY_REVERSAL_BLOCK_STREAK 6
-
-// canvas.c's Probe 2 (Rocky body pivot): the pivot-side-flip halving and
-// the reversal guard above only engage while the center of mass is within
-// this horizontal distance (robot world units) of the current pivot --
-// i.e. near balance, where rocking back and forth is the real risk. With
-// the center of mass farther out than this over a single contact, the
-// toppling direction is unambiguous and must not be blocked. Real report:
-// Rocky "converged" standing on just its foot with the center of mass
-// ~0.9 units off to the side, because the guard kept blocking the topple.
-// For scale: Rocky's knee radius is 0.21.
-#define SIMULATION_ROCKY_REVERSAL_GUARD_MAX_COM_OFFSET 0.05f
-
-// Companion to the above: the guard also stays armed (whatever the offset)
-// when the second-closest contact is within this distance (robot world
-// units) of the ground AND the center of mass lies horizontally between
-// the two contacts -- a body resting on two supports can't rotate at all,
-// so any back-and-forth there is pure vibration. ~1 px at default zoom.
-#define SIMULATION_ROCKY_SUPPORT_CONTACT_TOL 0.005f
 
 // While E/Q is HELD (Windows auto-repeat, not a single tap), how often --
 // in real milliseconds -- WM_KEYDOWN is allowed to re-prime the settle

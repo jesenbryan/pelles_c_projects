@@ -960,24 +960,6 @@
 // reasoning.
 #define SIMULATION_ROCKY_BODY_REVERSAL_BLOCK_STREAK 6
 
-// canvas.c's Probe 2 (Rocky body pivot): the pivot-side-flip halving and
-// the reversal guard above only engage while the center of mass is within
-// this horizontal distance (robot world units) of the current pivot --
-// i.e. near balance, where rocking back and forth is the real risk. With
-// the center of mass farther out than this over a single contact, the
-// toppling direction is unambiguous and must not be blocked. Real report:
-// Rocky "converged" standing on just its foot with the center of mass
-// ~0.9 units off to the side, because the guard kept blocking the topple.
-// For scale: Rocky's knee radius is 0.21.
-#define SIMULATION_ROCKY_REVERSAL_GUARD_MAX_COM_OFFSET 0.05f
-
-// Companion to the above: the guard also stays armed (whatever the offset)
-// when the second-closest contact is within this distance (robot world
-// units) of the ground AND the center of mass lies horizontally between
-// the two contacts -- a body resting on two supports can't rotate at all,
-// so any back-and-forth there is pure vibration. ~1 px at default zoom.
-#define SIMULATION_ROCKY_SUPPORT_CONTACT_TOL 0.005f
-
 // While E/Q is HELD (Windows auto-repeat, not a single tap), how often --
 // in real milliseconds -- WM_KEYDOWN is allowed to re-prime the settle
 // probes back to full step size (reviveRockyBodyProbeStepSizes, canvas.c),
