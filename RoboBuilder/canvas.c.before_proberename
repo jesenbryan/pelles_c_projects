@@ -64,7 +64,7 @@ DesignLayer designLayer = LAYER_ENVIRONMENT;
 BOOL hideInactiveLayer = TRUE;
 
 // Whether canvasRenderFrame draws the real-time FPS counter, top-right,
-// just above the Probe 2 Settle button -- toggled from the View > Show FPS
+// just above the Probe 1 Settle button -- toggled from the View > Show FPS
 // menu item (main.c's buildMainMenu, WM_COMMAND's ID_TOGGLE_SHOW_FPS
 // handling below). See fpsDisplayValue's own comment for how the number
 // itself is measured. Starts TRUE (unlike hideInactiveLayer's own
@@ -393,32 +393,32 @@ static HWND hWalkBtn = NULL;
 // restart returns you to where that attempt began, not to a fixed origin.
 static HWND hResetBtn = NULL;
 
-// Probe 2 (the knee-bending settle probe in advanceRockySettle, gated by
-// rockyProbe2Enabled below) is the source of every settle-pose bug this
-// project has chased -- Probe 1's whole-body pivot-around-current-contact
+// Probe 1 (the knee-bending settle probe in advanceRockySettle, gated by
+// rockyProbe1Enabled below) is the source of every settle-pose bug this
+// project has chased -- Probe 2's whole-body pivot-around-current-contact
 // already implements correct toppling on its own. Rather than deleting
-// Probe 2 outright, it's gated behind this checkbox so it can be switched
-// off (to compare against pure Probe 1 toppling) without losing the code
+// Probe 1 outright, it's gated behind this checkbox so it can be switched
+// off (to compare against pure Probe 2 toppling) without losing the code
 // or the ability to switch it back on. Anchored to the client area's
 // TOP-RIGHT corner (unlike Slow Motion/Walk/Reset above, which sit at a
 // fixed top-left offset that never needs adjusting) -- WM_SIZE below
 // repositions it on every resize since its distance from the left edge
 // changes with window width. Starts checked (TRUE) so default behavior
 // is unchanged from before this toggle existed.
-// Layout constants for hProbe2ToggleBtn (WM_CREATE/WM_SIZE below) -- kept
+// Layout constants for hProbe1ToggleBtn (WM_CREATE/WM_SIZE below) -- kept
 // together here rather than scattered as magic numbers at each call site,
 // since both places need to agree on the exact same button size/margin.
-#define PROBE2_TOGGLE_WIDTH_PX  150
-#define PROBE2_TOGGLE_HEIGHT_PX 28
-#define PROBE2_TOGGLE_MARGIN_PX 10
+#define PROBE1_TOGGLE_WIDTH_PX  150
+#define PROBE1_TOGGLE_HEIGHT_PX 28
+#define PROBE1_TOGGLE_MARGIN_PX 10
 
-// Vertical space reserved above hProbe2ToggleBtn, at the same top-right
+// Vertical space reserved above hProbe1ToggleBtn, at the same top-right
 // corner, for the FPS counter (View > Show FPS, ID_TOGGLE_SHOW_FPS) drawn
 // by canvasRenderFrame -- see fpsDisplayValue's own comment. Reserved
 // UNCONDITIONALLY (the button is offset down by this amount regardless of
 // whether the overlay is currently switched on) rather than only when
 // showFpsOverlay is TRUE, so toggling it on/off never shifts the button
-// and everything else pinned below it -- it would be jarring for Probe 2
+// and everything else pinned below it -- it would be jarring for Probe 1
 // Settle to visibly jump position every time this is toggled.
 #define FPS_OVERLAY_RESERVED_HEIGHT_PX 24
 
@@ -427,13 +427,13 @@ static HWND hResetBtn = NULL;
 // updated every single frame.
 #define FPS_UPDATE_INTERVAL_MS 500
 
-static HWND hProbe2ToggleBtn = NULL;
+static HWND hProbe1ToggleBtn = NULL;
 
-// Backing state for hProbe2ToggleBtn -- see its comment just above and
-// the entry-condition check in advanceRockySettle. TRUE = Probe 2 runs
+// Backing state for hProbe1ToggleBtn -- see its comment just above and
+// the entry-condition check in advanceRockySettle. TRUE = Probe 1 runs
 // normally (pre-existing behavior); FALSE = advanceRockySettle skips
-// straight to Probe 1's body-pivot toppling, never bending the knee.
-static BOOL rockyProbe2Enabled = TRUE;
+// straight to Probe 2's body-pivot toppling, never bending the knee.
+static BOOL rockyProbe1Enabled = TRUE;
 
 // Whole-RobotScene snapshot (Semni + Rocky + Stilo + activeKind, plain
 // value struct -- see app.h -- so a raw copy is safe, no pointers inside
@@ -1332,7 +1332,7 @@ static BOOL robotCollidesWithEnvironment(void)
 // caller tell "the knee circle is what's touching" apart from "a shin arc
 // point is what's touching" without comparing world positions against an
 // epsilon. See rockyKneeBendWouldAbandonArcContact below for why this
-// distinction matters: Probe 2's knee bend rotates the WHOLE shin (arc
+// distinction matters: Probe 1's knee bend rotates the WHOLE shin (arc
 // included) rigidly around the knee joint, which can only ever preserve a
 // KNEE or FOOT contact (their own distance from the knee joint doesn't
 // change), never an ARC contact (an arc point's distance from the knee
@@ -1358,15 +1358,15 @@ typedef enum { ROCKY_LEG_CONTACT_KNEE, ROCKY_LEG_CONTACT_FOOT, ROCKY_LEG_CONTACT
 // single sample point along one of the two shin fillet arcs -- together
 // with its clearance to the environment, using the same nearestEnvDistance
 // minus combinedRadius convention every other clearance check in this file
-// already uses (see e.g. Probe 2's own baseFootClearance just below).
+// already uses (see e.g. Probe 1's own baseFootClearance just below).
 typedef struct { PointF world; float clearance; RockyLegContactKind kind; } RockyLegContact;
 
 // Finds the CLOSEST and SECOND-CLOSEST points on the whole leg outline --
 // knee circle, foot circle, AND both shin fillet arcs (computeRockyArcPoints'
 // shin1/shin2, the convex and concave curves connecting them) -- to the
 // environment right now. rockyTopplePivotWorld below wants the closest, to
-// pivot Probe 1's rotation around; rockyDanglingPointClearance wants the
-// second-closest, the "next in line" contact Probe 1's rotation is actually
+// pivot Probe 2's rotation around; rockyDanglingPointClearance wants the
+// second-closest, the "next in line" contact Probe 2's rotation is actually
 // trying to bring down.
 //
 // This used to only ever compare the knee and foot CIRCLES -- correct when
@@ -1377,7 +1377,7 @@ typedef struct { PointF world; float clearance; RockyLegContactKind kind; } Rock
 // TRUE contact. Neither knee nor foot is a clean winner in that case -- both
 // merely hover nearby, roughly tied -- so which one used to "win" the old
 // knee-vs-foot comparison could flip from tick to tick on tiny numeric
-// noise. Since Probe 1 pivots around whatever rockyTopplePivotWorld
+// noise. Since Probe 2 pivots around whatever rockyTopplePivotWorld
 // returns, a flip meant the rotation suddenly held a DIFFERENT point fixed
 // than the tick before, undoing whatever alignment progress had just been
 // made and restarting around the new point -- exactly what read as the leg
@@ -1524,7 +1524,7 @@ static void drawSimulationLiveContactDots(void)
             if (!app.robotScene.rocky.legHidden)
             {
                 // Which leg point is the CURRENT toppling pivot (same
-                // point rockyTopplePivotWorld/Probe 1 rotate around) --
+                // point rockyTopplePivotWorld/Probe 2 rotate around) --
                 // computed once here, by explicit request, so every dot
                 // below can tell "this is the point toppling is actually
                 // pivoting on" (drawn red, last, on top) apart from "this
@@ -1806,7 +1806,7 @@ static void drawSimulationLiveContactDots(void)
             // along each fillet.
             //
             // Pivot = the lowest of Semni's leg/body contact candidates (the
-            // same candidates Probe 1 pivots around -- semniContactCandidates).
+            // same candidates Probe 2 pivots around -- semniContactCandidates).
             // Deliberately NOT settleToppleContactPoints: that updates the
             // settle's leg/body hysteresis state, and drawing must never
             // change what the simulation does.
@@ -2202,7 +2202,7 @@ static BOOL rockySettleConverged = FALSE;
 // of to completion in one call. Both reset to their starting constants
 // by applyGravityStep alongside rockySettleConverged.
 static float rockyKneeSettleStep = 0.0f;
-// Semni only: Probe 2's step size for the HIP joint (rockyKneeSettleStep
+// Semni only: Probe 1's step size for the HIP joint (rockyKneeSettleStep
 // above doubles as Semni's KNEE step). The rocky* settle state variables are
 // shared by whichever robot is settling -- Rocky and Semni both run
 // advanceRockySettle now; only one robot is ever active at a time.
@@ -2216,8 +2216,8 @@ static float rockyBodySettleStep = 0.0f;
 // step keeps going while the other's runs dry and starts shrinking, and
 // they converge. A long streak of BOTH committing every single tick is
 // the signature of the two probes chasing a target the other one keeps
-// moving: Probe 2 bends the knee based on the body angle Probe 1 set last
-// tick, then Probe 1 pivots the body based on the knee angle Probe 2 just
+// moving: Probe 1 bends the knee based on the body angle Probe 2 set last
+// tick, then Probe 2 pivots the body based on the knee angle Probe 1 just
 // set, each one finding a genuine-by-its-own-narrow-measure improvement
 // forever without either commit branch ever shrinking its step (see those
 // branches' own "no need to refine yet" comments) -- because neither
@@ -2245,7 +2245,7 @@ static int rockyBothProbesCommittedStreak = 0;
 // tick with the other probe completely silent (nothing left to fight). A
 // real report showed exactly this: after the stalemate detector correctly
 // broke a knee/body lockstep and halved both steps down to their floor,
-// Probe 2 went quiet (legRestingOnImmovableJoint) and Probe 1 alone kept
+// Probe 1 went quiet (legRestingOnImmovableJoint) and Probe 2 alone kept
 // committing a genuine bestComDrop improvement, tick after tick, but only
 // ever a fixed ~0.03-degree step each time -- hundreds of ticks to sweep
 // what should have been a much faster descent, because the step had
@@ -2288,7 +2288,7 @@ static int rockyBodySettleGrowthStreak = 0;
 static int rockyPivotSide = 0;
 
 // The pivot DIRECTION (-1 or +1, matching the dir loop below; 0 = no
-// commit yet, or just reset by a fresh landing) that Probe 1 actually
+// commit yet, or just reset by a fresh landing) that Probe 2 actually
 // committed to on its MOST RECENT commit, whichever of bestDrop/
 // bestComDrop/bestClearanceGain/the scout fallback made that commit.
 // This is a different axis from rockyPivotSide just above -- that one
@@ -2304,7 +2304,7 @@ static int rockyPivotSide = 0;
 // tick only ONE direction ever qualified (never both at once), so
 // there was nothing to straddle within that tick; the two opposing
 // commits were spread across separate ticks instead. Checked right
-// before any of Probe 1's three direct branches (or the scout
+// before any of Probe 2's three direct branches (or the scout
 // fallback) would commit: if the direction about to be applied is the
 // exact reverse of the direction just committed last tick, that's the
 // same oscillation shape directionsStraddle/rockyPivotSide already
@@ -2320,7 +2320,7 @@ static int rockyBodyLastCommitDir = 0;
 // where they shrink instead of committing, reset to 0 by any real commit
 // in ANY direction (same four places) as well as everywhere
 // rockyBodyLastCommitDir itself is reset. A real report showed the guard
-// becoming a NEW deadlock of its own: once Probe 1 had already pivoted
+// becoming a NEW deadlock of its own: once Probe 2 had already pivoted
 // several degrees of genuine forward progress and then needed one clean
 // reversal to correct an overshoot, every attempt to do so kept getting
 // blocked and shrunk forever, with nothing ever letting it through -- see
@@ -2331,18 +2331,18 @@ static int rockyBodyLastCommitDir = 0;
 static int rockyBodyReversalBlockedStreak = 0;
 
 // Set TRUE for the duration of an E/Q-triggered settle pass (see the
-// WM_KEYDOWN kickoff below) to stop Probe 2 (knee-bending) from firing
+// WM_KEYDOWN kickoff below) to stop Probe 1 (knee-bending) from firing
 // while the USER is the one actively driving kneeAngle -- without this,
-// Probe 2's own "improve the resting fit" search runs every 16ms via the
+// Probe 1's own "improve the resting fit" search runs every 16ms via the
 // postRotateSettleActive timer and directly fights the player's own E/Q
 // presses (LEGPUSH lifts the body to clear the leg the user just bent,
-// then Probe 2 bends it back and drops the body again a tick later),
+// then Probe 1 bends it back and drops the body again a tick later),
 // which is what read as the body visibly jittering up and down while
-// holding E or Q. Probe 1 (body-rotate/topple) and the plain gravity
+// holding E or Q. Probe 2 (body-rotate/topple) and the plain gravity
 // drop are NOT suppressed -- neither one touches kneeAngle, so neither
 // one fights the user, and a genuinely unstable rotate still topples.
 // Left FALSE (the normal case) for VK_LEFT/RIGHT's own topple kickoff,
-// where nothing else is driving kneeAngle and Probe 2 is safe to run.
+// where nothing else is driving kneeAngle and Probe 1 is safe to run.
 static BOOL rockyKneeSettleSuppressed = FALSE;
 
 
@@ -2355,7 +2355,7 @@ static BOOL rockyKneeSettleSuppressed = FALSE;
 // change to it -- rockyLegContactPoints itself still only ever looks at
 // the leg, exactly as before, because legRestingOnImmovableJoint further
 // below genuinely wants that narrower answer (see its own comment: a
-// dangling foot should keep Probe 2 actively trying to bring it down
+// dangling foot should keep Probe 1 actively trying to bring it down
 // even while the body is separately resting on a corner, not freeze
 // kneeAngle just because the corner happens to already be flush).
 //
@@ -2497,7 +2497,7 @@ static void rockyToppleContactPoints(const Rocky* r, RockyLegContact* closest, R
 // Same idea as resolveUpwardIfPenetrating (further up), but as a plain
 // probe that returns how much correction it applied instead of always
 // committing/repainting -- called right after rotateRockyBodyAroundPivot
-// above, every time Probe 1 below tries a candidate rotation. `pivot` is
+// above, every time Probe 2 below tries a candidate rotation. `pivot` is
 // picked as whichever point is ALREADY closest to the ground (gap close
 // to, or exactly, 0 -- see rockyTopplePivotWorld), and the whole point of
 // pivoting around it is to hold it EXACTLY fixed through the rotation --
@@ -2512,7 +2512,7 @@ static void rockyToppleContactPoints(const Rocky* r, RockyLegContact* closest, R
 // check (robotCollidesWithEnvironment -> return 0.0f immediately) would
 // silently report EVERY candidate direction as "no improvement" no
 // matter how much genuine room exists elsewhere -- which is exactly what
-// a real report showed: Probe 1 never committing a single rotation,
+// a real report showed: Probe 2 never committing a single rotation,
 // scout included, across multiple different poses, once its pivot point
 // was sitting at gap ~ 0 (which is the common case -- that's what makes
 // it the pivot in the first place). Bounded to the same tiny budget
@@ -2544,13 +2544,13 @@ static float clearPivotRoundingResidual(void)
 
 // ---- Robot-generic settle accessors (Rocky + Semni) ----
 //
-// advanceRockySettle's Probe 2 (passive joint swing) and Probe 1 (whole-body
+// advanceRockySettle's Probe 1 (passive joint swing) and Probe 2 (whole-body
 // topple around a ground contact) were written against Rocky's struct
 // directly. These give it the same handful of things for whichever robot is
 // active, so Semni runs the exact same settle logic:
 //   body angle + rotation center, center of mass, hidden flags,
-//   Probe 2 joints (Rocky: knee; Semni: knee then hip) and the foot's
-//   clearance, and the contact candidates Probe 1 pivots around.
+//   Probe 1 joints (Rocky: knee; Semni: knee then hip) and the foot's
+//   clearance, and the contact candidates Probe 2 pivots around.
 // Semni's contact categories mirror Rocky's: LEG = hip/knee/foot circles +
 // thigh/shin arcs (hip circle plays the role of Rocky's body-fixed knee
 // circle), BODY = head/butt circles + seam arcs (Rocky's rectangle corners).
@@ -2615,7 +2615,7 @@ static BOOL settleAllJointStepsBelow(float minStep)
 }
 
 // Clearance (env world units) of the foot circle -- the end of the leg that
-// Probe 2's "swing the dangling foot closer" criterion measures.
+// Probe 1's "swing the dangling foot closer" criterion measures.
 static float settleFootClearance(void)
 {
     CircleSegment foot;
@@ -2751,7 +2751,7 @@ static PointF rotateActiveBodyAroundPivot(PointF pivot, float deltaAngle)
 // SIMULATION_ROCKY_BODY_REVERSAL_BLOCK_STREAK consecutive blocks and let
 // the reversal through -- but a plain halving on every block (plus the
 // pivot-side-flip halving) took a 1 deg step below the floor in 7 halvings,
-// so Probe 1 stopped running before the guard ever released, and the
+// so Probe 2 stopped running before the guard ever released, and the
 // settle "converged" with the body still visibly toppling (real report:
 // Rocky balanced on its foot with the center of mass far to one side).
 static void shrinkRockyBodyStepForReversalGuard(void)
@@ -2764,7 +2764,7 @@ static void shrinkRockyBodyStepForReversalGuard(void)
 // ---- Final "seat the dangling point" pass (run once, right before
 // advanceRockySettle latches rockySettleConverged) ----
 //
-// Probe 1 stops once its step size falls below
+// Probe 2 stops once its step size falls below
 // SIMULATION_LEG_SETTLE_MIN_STEP_DEG, and that alone doesn't guarantee
 // the second contact point (e.g. the foot, while the knee is the pivot)
 // actually reached the ground. A real report showed a Rocky resting on
@@ -2781,7 +2781,7 @@ static void shrinkRockyBodyStepForReversalGuard(void)
 // only commits if the rotation doesn't raise the center of mass (a
 // physically real rest pose never needs to climb to close a gap).
 //
-// Unlike Probe 1, a candidate here is NOT allowed to "fix" a collision by
+// Unlike Probe 2, a candidate here is NOT allowed to "fix" a collision by
 // lifting the whole robot (clearPivotRoundingResidual's full
 // SIMULATION_SLOPE_CORRECTION_MAX budget): any lift bigger than
 // SIMULATION_ROCKY_SEAT_MAX_PIVOT_LIFT counts as blocked. Otherwise a
@@ -2936,11 +2936,6 @@ static void seatRockyDanglingPoint(void)
 static double perfLastSettleSanityMs = 0.0;
 static double perfLastSettleSeatMs = 0.0;
 
-// Naming (by request): Probe 1 = TOPPLING (whole-body rotation around a
-// ground contact), Probe 2 = PASSIVE JOINT SWING (knee / hip). Execution
-// order inside each settle call is unchanged from before the rename:
-// Probe 2 (joint swing) runs first, then Probe 1 (toppling) -- the numbers
-// are names only, not the order they run in.
 static void advanceRockySettle(void)
 {
     perfLastSettleSanityMs = 0.0;
@@ -2969,8 +2964,8 @@ static void advanceRockySettle(void)
     BOOL legHidden = settleLegHidden();
     BOOL bodyHidden = settleBodyHidden();
 
-    // Whether the leg's CURRENT ground contact is somewhere Probe 2 should
-    // leave alone -- if so, Probe 2 below is skipped for this tick. Covers
+    // Whether the leg's CURRENT ground contact is somewhere Probe 1 should
+    // leave alone -- if so, Probe 1 below is skipped for this tick. Covers
     // all three parts of the leg (ARC, KNEE, and now FOOT too -- see its
     // own paragraph below for why FOOT was added), each for its own
     // distinct reason.
@@ -2982,8 +2977,8 @@ static void advanceRockySettle(void)
     // all, that exact point lifts away while the rest of the arc swings
     // past without ever re-touching the same spot. dropActiveRobotToRest
     // then correctly (by its own narrow measure) reports a real drop into
-    // the gap Probe 2 itself just pried open -- not genuine progress, just
-    // Probe 2 repeatedly prying a real, already-settled arc contact loose
+    // the gap Probe 1 itself just pried open -- not genuine progress, just
+    // Probe 1 repeatedly prying a real, already-settled arc contact loose
     // and falling into the gap it made, tick after tick, never converging.
     // A real report showed exactly this: a leg-only Rocky correctly
     // balancing on its convex shin arc (see rockyLegContactPoints' own
@@ -2996,22 +2991,22 @@ static void advanceRockySettle(void)
     // clearance to the ground) never changes no matter what kneeAngle is
     // -- there is no candidate bend that can ever move an already-resting
     // knee contact even a hair closer. This used to be assumed safe for
-    // Probe 2 (its clearance checks "judge that fairly", per an earlier
+    // Probe 1 (its clearance checks "judge that fairly", per an earlier
     // version of this comment) -- but those checks only ever look at the
     // DANGLING FOOT's clearance, never the knee's own, so with the knee
     // genuinely already resting, that foot-clearance chase has nothing to
     // do with the real contact at all. A real report showed exactly this
     // going wrong: bodyAngle and kneeAngle drifting in lockstep by a full
-    // degree each, tick after tick, seemingly forever -- Probe 2 kept
+    // degree each, tick after tick, seemingly forever -- Probe 1 kept
     // finding tiny "progress" swinging the dangling foot around the
-    // now-fixed knee, and Probe 1 kept finding tiny "progress" pivoting
+    // now-fixed knee, and Probe 2 kept finding tiny "progress" pivoting
     // the body to compensate, netting almost no real movement of the foot
     // but spinning the body around the planted knee indefinitely.
     //
     // FOOT: unlike the other two, bending the knee CAN genuinely move a
     // planted foot -- it stays the same fixed distance from the knee, so a
     // small bend just swings it along its own circle -- which is exactly
-    // why this used to be the one contact Probe 2 was still allowed to
+    // why this used to be the one contact Probe 1 was still allowed to
     // work against. The trouble: once the foot is already flush,
     // dropActiveRobotToRest is a WHOLE-BODY drop test, not just a check of
     // the foot's own clearance, and further knee bends can keep uncovering
@@ -3029,9 +3024,9 @@ static void advanceRockySettle(void)
     // bending further would start hurting the foot's own clearance).
     // Neither is the natural "just stay where it landed" pose a planted
     // foot should settle into, so FOOT now joins ARC and KNEE here: once
-    // the foot itself is genuinely resting (clearance already ~0), Probe 2
+    // the foot itself is genuinely resting (clearance already ~0), Probe 1
     // leaves it alone too, freezing kneeAngle at whatever angle the foot
-    // happened to land at. This does NOT block Probe 2's other,
+    // happened to land at. This does NOT block Probe 1's other,
     // still-legitimate job of swinging a still-DANGLING foot down to first
     // reach the ground (e.g. the rectangle resting on its own corner, foot
     // hanging in the air) -- rockyLegContactPoints only ever looks at the
@@ -3040,10 +3035,10 @@ static void advanceRockySettle(void)
     // of which part happens to be closest, and this check stays FALSE
     // until something on the leg genuinely settles.
     //
-    // Probe 1's body rotation (pivoting the whole assembly around whatever
+    // Probe 2's body rotation (pivoting the whole assembly around whatever
     // point is actually touching, fixed) is already the correct settling
     // mechanism for ALL THREE cases -- see its own comment further below
-    // -- so Probe 2 just steps aside until none of them is true anymore.
+    // -- so Probe 1 just steps aside until none of them is true anymore.
     // Compared against SIMULATION_LEG_SETTLE_MIN_DROP (not a bare < 0.0f)
     // for the same reason every other clearance check in this function is:
     // a hair of float noise right at 0 shouldn't flip this on and off tick
@@ -3051,22 +3046,22 @@ static void advanceRockySettle(void)
     //
     // Tried, and REVERTED, adding a symmetric "BODY CORNER" case here
     // (checking rockyToppleContactPoints' wider leg+body answer, freezing
-    // Probe 2 whenever a body corner was the immovable pivot): a real
+    // Probe 1 whenever a body corner was the immovable pivot): a real
     // report showed kneeAngle winding past -280 degrees with a corner
-    // long since settled as Probe 1's pivot, which looked at first like
+    // long since settled as Probe 2's pivot, which looked at first like
     // the exact same "crouching over an already-fixed point" pathology
     // FOOT's own paragraph describes. But unlike FOOT/KNEE/ARC -- where
-    // the frozen point and the point Probe 2 moves are THE SAME point --
+    // the frozen point and the point Probe 1 moves are THE SAME point --
     // a resting corner and a still-dangling foot are DIFFERENT points on
     // rigid parts connected by an adjustable knee, so bending the knee
     // can still genuinely swing the foot closer while the corner stays
-    // fixed; that's the whole "does NOT block Probe 2's still-legitimate
+    // fixed; that's the whole "does NOT block Probe 1's still-legitimate
     // job of swinging a still-dangling foot down" case the paragraph
     // above this one already calls out by name. Freezing on the corner
     // alone fired the instant the corner registered as resting -- which
     // is essentially IMMEDIATELY, since a topple pivot only wins the
     // selection in the first place by already being near-zero-clearance
-    // -- silencing Probe 2 before it ever got to swing the foot down at
+    // -- silencing Probe 1 before it ever got to swing the foot down at
     // all, not just once it had genuinely finished. A real report showed
     // this plainly too: the knee probe staying quiet for an entire
     // multi-degree body-toppling pass, the foot never gaining any ground
@@ -3077,7 +3072,7 @@ static void advanceRockySettle(void)
     // freeze on the corner merely existing.
     BOOL legRestingOnImmovableJoint = FALSE;
     // Captured alongside legRestingOnImmovableJoint purely for the
-    // diagnostic printf below (Probe 2's own else-branch, further down)
+    // diagnostic printf below (Probe 1's own else-branch, further down)
     // -- not used for any decision here.
     RockyLegContactKind pivotKindForDiagnostic = ROCKY_LEG_CONTACT_KNEE;
     float legRestingOnImmovableJointClearanceForDiagnostic = 0.0f;
@@ -3096,10 +3091,10 @@ static void advanceRockySettle(void)
     // this function (rockyBothProbesCommittedStreak's own comment above
     // explains why that check exists). Left FALSE by every path that
     // doesn't commit (skip, straddle, scout-only, nothing found at all).
-    BOOL probe2Committed = FALSE;
     BOOL probe1Committed = FALSE;
+    BOOL probe2Committed = FALSE;
 
-    // TRUE for this tick only when one of Probe 1's four reversal-guard
+    // TRUE for this tick only when one of Probe 2's four reversal-guard
     // branches actually fired (bestDrop/bestComDrop/bestClearanceGain's
     // direct checks, or the scout fallback's own copy) -- every one of
     // those branches only fires when a real, above-threshold improvement
@@ -3120,7 +3115,7 @@ static void advanceRockySettle(void)
     // comment's own block didn't catch that case either: it only scouts a
     // single full-size SIMULATION_LEG_SETTLE_SCOUT_STEP_DEG probe, and the
     // genuine improvement the guard was blocking here was only real at the
-    // tiny, already-six-times-halved step size Probe 1 was actually
+    // tiny, already-six-times-halved step size Probe 2 was actually
     // using -- a full-size probe overshoots straight past it into a worse
     // pose and reports no improvement at all. This flag catches that case
     // directly instead, by watching whether a real improvement was found
@@ -3133,10 +3128,10 @@ static void advanceRockySettle(void)
     // growth-streak check near the bottom of this function
     // (rockyKneeSettleGrowthStreak's own comment above explains why the
     // scout case is deliberately excluded there).
-    BOOL probe2DirectCommit = FALSE;
     BOOL probe1DirectCommit = FALSE;
+    BOOL probe2DirectCommit = FALSE;
 
-    // Probe 2: bend the knee. Skipped entirely while the leg is hidden
+    // Probe 1: bend the knee. Skipped entirely while the leg is hidden
     // (ID_ROCKY_TOGGLE_LEG_BUTTON, app.h's legHidden comment) -- with no
     // leg being rendered or collision-tested, bending an invisible knee
     // around an invisible foot can never affect anything real (the
@@ -3145,12 +3140,12 @@ static void advanceRockySettle(void)
     // hundreds of degrees for no visible effect, flooding the console
     // with [SETTLE] lines about a foot nobody can see or collide with.
     // Also skipped while legRestingOnImmovableJoint (see its own comment
-    // just above), and while rockyProbe2Enabled is FALSE -- the top-right
-    // "Probe 2 Settle" checkbox (WM_CREATE/WM_COMMAND's ID_PROBE2_TOGGLE)
+    // just above), and while rockyProbe1Enabled is FALSE -- the top-right
+    // "Probe 1 Settle" checkbox (WM_CREATE/WM_COMMAND's ID_PROBE1_TOGGLE)
     // lets this whole probe be switched off at runtime, leaving only
-    // Probe 1's whole-body pivot-around-current-contact toppling active,
+    // Probe 2's whole-body pivot-around-current-contact toppling active,
     // without deleting any of this code.
-    // Probe 2 runs once per settle joint: Rocky's knee, or Semni's knee
+    // Probe 1 runs once per settle joint: Rocky's knee, or Semni's knee
     // then hip (each with its own step size -- settleJointStepPtr). Both
     // use the same foot-clearance criterion (settleFootClearance).
     for (int settleJoint = 0; settleJoint < settleJointCount(); settleJoint++)
@@ -3158,11 +3153,11 @@ static void advanceRockySettle(void)
     // At most ONE joint commits per settle call -- otherwise Semni (knee +
     // hip) could drop the body twice per call where Rocky (knee only) drops
     // once, settling twice as fast. The other joint gets its turn next call.
-    if (probe2Committed)
+    if (probe1Committed)
         break;
     float* joint = settleJointPtr(settleJoint);
     float* jointStep = settleJointStepPtr(settleJoint);
-    if (!legHidden && !rockyKneeSettleSuppressed && !legRestingOnImmovableJoint && rockyProbe2Enabled && (*jointStep) >= SIMULATION_LEG_SETTLE_MIN_STEP_DEG)
+    if (!legHidden && !rockyKneeSettleSuppressed && !legRestingOnImmovableJoint && rockyProbe1Enabled && (*jointStep) >= SIMULATION_LEG_SETTLE_MIN_STEP_DEG)
     {
         float baseKneeAngle = (*joint);
         float bestDrop = 0.0f;
@@ -3178,7 +3173,7 @@ static void advanceRockySettle(void)
         float bestClearanceGain = 0.0f;
         float bestClearanceKneeAngle = baseKneeAngle;
 
-        // Per-direction values, same reason Probe 1 keeps its own
+        // Per-direction values, same reason Probe 2 keeps its own
         // dropAtDir[] below: needed after this loop to tell WHICH kind
         // of improvement each direction found (see the straddle check
         // right after this loop).
@@ -3242,7 +3237,7 @@ static void advanceRockySettle(void)
         // is undone by the resulting pose change, is exactly what a real
         // report showed as the knee (and the whole robot along with it)
         // visibly rocking back and forth instead of settling -- see
-        // Probe 1's own directionsStraddle just below for the mirror
+        // Probe 2's own directionsStraddle just below for the mirror
         // image of this same fix (generalized there to any pair of its
         // three criteria, not just drop-vs-gain). Shrinking here instead
         // of picking a side lets a finer step eventually resolve which
@@ -3279,8 +3274,8 @@ static void advanceRockySettle(void)
 
             (*joint) = bestKneeAngle;
             translateActiveRobot(0.0f, -appliedDrop);
-            probe2Committed = TRUE;
-            probe2DirectCommit = TRUE;
+            probe1Committed = TRUE;
+            probe1DirectCommit = TRUE;
             SIM_LOG("[SETTLE] %s=%.2f bent the knee %.4f deg, body fell %.5f further this tick (of %.5f available)\n",
                    settleJointName(settleJoint), (*joint), (*jointStep), appliedDrop, bestDrop);
             // Keep this probe's step size as-is -- it's still finding
@@ -3294,8 +3289,8 @@ static void advanceRockySettle(void)
             // call here: the body isn't moving, only the foot swings
             // around the still-fixed knee.
             (*joint) = bestClearanceKneeAngle;
-            probe2Committed = TRUE;
-            probe2DirectCommit = TRUE;
+            probe1Committed = TRUE;
+            probe1DirectCommit = TRUE;
             SIM_LOG("[SETTLE] %s=%.2f swung the dangling foot %.4f deg closer to the ground (clearance improved %.5f, body stayed put)\n",
                    settleJointName(settleJoint), (*joint), (*jointStep), bestClearanceGain);
         }
@@ -3450,7 +3445,7 @@ static void advanceRockySettle(void)
                 SIM_LOG("[SETTLE] %s=%.2f scouted real improvement %.1f deg out (drop=%.5f clearanceGain=%.5f), fell %.5f this tick -- nudging that way instead of shrinking\n",
                        settleJointName(settleJoint), (*joint), dir * SIMULATION_LEG_SETTLE_SCOUT_STEP_DEG, scoutDrop, scoutGain, nudgeAppliedDrop);
                 scoutedKnee = TRUE;
-                probe2Committed = TRUE;
+                probe1Committed = TRUE;
             }
 
             if (!scoutedKnee)
@@ -3462,9 +3457,9 @@ static void advanceRockySettle(void)
     }
     else if (!legHidden)
     {
-        // Diagnostic only, temporary -- a real report showed Probe 2
+        // Diagnostic only, temporary -- a real report showed Probe 1
         // staying completely silent (no [SETTLE] kneeAngle=... lines at
-        // all) for long stretches while Probe 1 alone kept pivoting the
+        // all) for long stretches while Probe 2 alone kept pivoting the
         // body, with the foot left visibly dangling well clear of the
         // ground the whole time and no [SETTLE] converged line either
         // (so it wasn't genuine convergence). rockyKneeSettleSuppressed
@@ -3474,15 +3469,15 @@ static void advanceRockySettle(void)
         // and reset to FALSE -- so it can't be the real cause; this
         // prints whichever of the four OTHER conditions is actually
         // false instead of guessing further.
-        SIM_LOG("[SETTLE] Probe 2 (%s) skipped this tick -- suppressed=%d legRestingOnImmovableJoint=%d(kind=%d clearance=%.5f) probe2Enabled=%d step=%.5f (min=%.5f)\n",
+        SIM_LOG("[SETTLE] Probe 1 (%s) skipped this tick -- suppressed=%d legRestingOnImmovableJoint=%d(kind=%d clearance=%.5f) probe1Enabled=%d step=%.5f (min=%.5f)\n",
                settleJointName(settleJoint), rockyKneeSettleSuppressed, legRestingOnImmovableJoint,
                legRestingOnImmovableJoint ? (int)pivotKindForDiagnostic : -1,
                legRestingOnImmovableJointClearanceForDiagnostic,
-               rockyProbe2Enabled, (*jointStep), SIMULATION_LEG_SETTLE_MIN_STEP_DEG);
+               rockyProbe1Enabled, (*jointStep), SIMULATION_LEG_SETTLE_MIN_STEP_DEG);
     }
-    } // end per-joint Probe 2 loop
+    } // end per-joint Probe 1 loop
 
-    // Probe 1: rotate the rectangle itself. This used to just change
+    // Probe 2: rotate the rectangle itself. This used to just change
     // (*bodyAngle) directly, which always rotates around (bodyX, bodyY) --
     // Rocky's own rectangle center -- no matter what's actually touching
     // the ground. That's why a real report showed the body permanently
@@ -3523,7 +3518,7 @@ static void advanceRockySettle(void)
         // contacts (e.g. knee AND foot both on the ground) with the center
         // of mass BETWEEN them is a stable rest pose even though the center
         // of mass is far from either one. There, no rotation is physically
-        // possible, and without the guard Probe 1 just alternates pivots
+        // possible, and without the guard Probe 2 just alternates pivots
         // (knee, foot, knee, ...) nudging +/- one step forever (real
         // report: bodyAngle bouncing 451.00 <-> 451.25). So the guard stays
         // armed whenever the second-closest contact is also touching and
@@ -3572,7 +3567,7 @@ static void advanceRockySettle(void)
         float bestResidual = 0.0f;
         int bestDropDir = 0; // -1/+1 once bestDrop has a real winner -- see rockyBodyLastCommitDir above
 
-        // Fallback for the exact mirror of Probe 2's "dangling foot" case
+        // Fallback for the exact mirror of Probe 1's "dangling foot" case
         // above, just from the other direction: as long as the point
         // rockyTopplePivotWorld picked is ALREADY on the ground, holding
         // it fixed (rotateRockyBodyAroundPivot) means dropActiveRobotToRest
@@ -3580,7 +3575,7 @@ static void advanceRockySettle(void)
         // same pivot at ~0 clearance no matter which way the body turns,
         // right up until the OTHER point (the dangling one) also reaches
         // the ground. Without tracking that point's own clearance
-        // directly, Probe 1 is structurally blind to the entire toppling
+        // directly, Probe 2 is structurally blind to the entire toppling
         // motion in between -- a fixed-size angle step can then jump
         // straight past the one instant both points cross zero together,
         // planting the dangling point while lifting the pivot back off,
@@ -3588,7 +3583,7 @@ static void advanceRockySettle(void)
         // swinging past the two-contact pose instead of landing on it).
         // See rockyDanglingPointClearance's own comment for the mechanics.
         // Skipped entirely when the leg is hidden -- same reasoning as
-        // Probe 2's own !legHidden guard above: with no leg being
+        // Probe 1's own !legHidden guard above: with no leg being
         // rendered or collision-tested, its knee/foot circles are just
         // stale numbers left over in the Rocky struct, not anything real
         // that's actually resting on (or dangling above) the ground. Using
@@ -3690,8 +3685,8 @@ static void advanceRockySettle(void)
             }
 
             // Same "did this get measurably closer, without embedding"
-            // check Probe 2's own dangling-foot fallback uses just above
-            // -- see the comment before this loop for why Probe 1 needs
+            // check Probe 1's own dangling-foot fallback uses just above
+            // -- see the comment before this loop for why Probe 2 needs
             // its own copy of it. Measured right here, after the pivot
             // rotation + residual correction but before undoing them
             // below, so it reflects exactly this candidate's world pose.
@@ -3788,7 +3783,7 @@ static void advanceRockySettle(void)
                  && reversalGuardArmed)
         {
             // bestDrop would fire below, but in the OPPOSITE direction
-            // from whatever Probe 1 actually committed last tick -- see
+            // from whatever Probe 2 actually committed last tick -- see
             // rockyBodyLastCommitDir's own comment above for the real
             // report this guards against (bestDrop and bestComDrop
             // disagreeing on direction from one tick to the next,
@@ -3821,8 +3816,8 @@ static void advanceRockySettle(void)
             if (bestResidual > 0.0f)
                 translateActiveRobot(0.0f, bestResidual);
             translateActiveRobot(0.0f, -appliedDrop);
-            probe1Committed = TRUE;
-            probe1DirectCommit = TRUE;
+            probe2Committed = TRUE;
+            probe2DirectCommit = TRUE;
             // Only a genuine REVERSAL (a new committed direction that
             // actually differs from the last one) clears the blocked-
             // streak below -- an ordinary commit that just continues the
@@ -3863,8 +3858,8 @@ static void advanceRockySettle(void)
             translateActiveRobot(bestComShift.x, bestComShift.y);
             if (bestComResidual > 0.0f)
                 translateActiveRobot(0.0f, bestComResidual);
-            probe1Committed = TRUE;
-            probe1DirectCommit = TRUE;
+            probe2Committed = TRUE;
+            probe2DirectCommit = TRUE;
             // See bestDrop's own copy of this same check just above for
             // why only a genuine direction CHANGE clears the streak.
             if (bestComDropDir != rockyBodyLastCommitDir)
@@ -3891,18 +3886,18 @@ static void advanceRockySettle(void)
             // blocking that test) and the center of mass isn't measurably
             // lower either, but the dangling knee/foot is now genuinely
             // closer to the ground than it was -- commit the rotation
-            // alone, same idea as Probe 2's own dangling-foot branch just
+            // alone, same idea as Probe 1's own dangling-foot branch just
             // above. Still need to replay the shift + residual (a pivot
             // rotation always moves bodyX/bodyY to keep the pivot itself
-            // fixed, unlike Probe 2's pure kneeAngle change), just no
+            // fixed, unlike Probe 1's pure kneeAngle change), just no
             // extra straight-down translateActiveRobot on top -- there is
             // genuinely nothing further to fall yet at this angle.
             (*bodyAngle) = bestClearanceBodyAngle;
             translateActiveRobot(bestClearanceShift.x, bestClearanceShift.y);
             if (bestClearanceResidual > 0.0f)
                 translateActiveRobot(0.0f, bestClearanceResidual);
-            probe1Committed = TRUE;
-            probe1DirectCommit = TRUE;
+            probe2Committed = TRUE;
+            probe2DirectCommit = TRUE;
             // See bestDrop's own copy of this same check further above
             // for why only a genuine direction CHANGE clears the streak.
             if (bestClearanceGainDir != rockyBodyLastCommitDir)
@@ -4034,7 +4029,7 @@ static void advanceRockySettle(void)
                 // Same reversal guard as the three direct branches above
                 // (see rockyBodyLastCommitDir's comment) -- the scouted
                 // angle is real progress by its own measure, but it's
-                // back the way Probe 1 just came from last tick, so
+                // back the way Probe 2 just came from last tick, so
                 // committing it would be the exact same cross-tick
                 // bounce, just found via the scout path instead of a
                 // direct branch. scoutedBody stays FALSE, which falls
@@ -4069,7 +4064,7 @@ static void advanceRockySettle(void)
                 // here if the optimistic amount doesn't actually fit.
                 // Skipped when this nudge was only the scoutComDrop or
                 // scoutGain case, matching the direct branch above and
-                // Probe 2's own scout branch: the body genuinely isn't
+                // Probe 1's own scout branch: the body genuinely isn't
                 // meant to drop any further here, only pivot.
                 float nudgeAppliedDrop = 0.0f;
                 if (scoutDrop > SIMULATION_LEG_SETTLE_MIN_DROP)
@@ -4095,7 +4090,7 @@ static void advanceRockySettle(void)
                 SIM_LOG("[SETTLE] bodyAngle=%.2f pivoted around its ground contact, scouted real improvement %.1f deg out (drop=%.5f comDrop=%.5f gain=%.5f), fell %.5f this tick -- nudging that way instead of shrinking\n",
                        (*bodyAngle), dir * SIMULATION_LEG_SETTLE_SCOUT_STEP_DEG, scoutDrop, scoutComDrop, scoutGain, nudgeAppliedDrop);
                 scoutedBody = TRUE;
-                probe1Committed = TRUE;
+                probe2Committed = TRUE;
                 // See bestDrop's own copy of this same check further above
                 // for why only a genuine direction CHANGE clears the streak.
                 if (dir != rockyBodyLastCommitDir)
@@ -4110,11 +4105,11 @@ static void advanceRockySettle(void)
         }
     }
 
-    // Stalemate check: Probe 2 and Probe 1 run sequentially in THIS same
+    // Stalemate check: Probe 1 and Probe 2 run sequentially in THIS same
     // call, each one committing based on whatever the OTHER one just left
-    // behind (Probe 2 above bent the knee using the body angle from
-    // Probe 1's PREVIOUS tick; Probe 1 just above pivoted the body using
-    // the kneeAngle Probe 2 only just set, this same tick). Neither
+    // behind (Probe 1 above bent the knee using the body angle from
+    // Probe 2's PREVIOUS tick; Probe 2 just above pivoted the body using
+    // the kneeAngle Probe 1 only just set, this same tick). Neither
     // probe's own directionsStraddle-style check can see that -- each one
     // only compares its OWN two candidate directions against each other,
     // never against what the other probe did. If both probes keep finding
@@ -4135,7 +4130,7 @@ static void advanceRockySettle(void)
     // the loop the same way a same-tick straddle does, and still lets a
     // genuinely slow (but real) multi-tick convergence run its course as
     // long as it isn't BOTH probes firing on literally every single tick.
-    if (probe2Committed && probe1Committed)
+    if (probe1Committed && probe2Committed)
     {
         rockyBothProbesCommittedStreak++;
         if (rockyBothProbesCommittedStreak >= SIMULATION_LEG_SETTLE_STALEMATE_STREAK)
@@ -4159,7 +4154,7 @@ static void advanceRockySettle(void)
     // probe stayed completely silent; anything else (no commit, a scout
     // commit, or the other probe also committing) resets it back to 0,
     // same "SHAPE of the problem" idea as the stalemate check.
-    if (probe2DirectCommit && !probe1Committed)
+    if (probe1DirectCommit && !probe2Committed)
     {
         rockyKneeSettleGrowthStreak++;
         if (rockyKneeSettleGrowthStreak >= SIMULATION_LEG_SETTLE_GROWTH_STREAK)
@@ -4175,7 +4170,7 @@ static void advanceRockySettle(void)
                 rockyKneeSettleStep = grownKneeStep;
             }
             // Semni's hip joint grows back the same way (no-op for Rocky,
-            // which only has the one Probe 2 joint).
+            // which only has the one Probe 1 joint).
             if (settleJointCount() > 1 && semniHipSettleStep < SIMULATION_LEG_SETTLE_STEP_DEG)
             {
                 semniHipSettleStep *= 2.0f;
@@ -4189,7 +4184,7 @@ static void advanceRockySettle(void)
         rockyKneeSettleGrowthStreak = 0;
     }
 
-    if (probe1DirectCommit && !probe2Committed)
+    if (probe2DirectCommit && !probe1Committed)
     {
         rockyBodySettleGrowthStreak++;
         if (rockyBodySettleGrowthStreak >= SIMULATION_LEG_SETTLE_GROWTH_STREAK)
@@ -4211,30 +4206,30 @@ static void advanceRockySettle(void)
         rockyBodySettleGrowthStreak = 0;
     }
 
-    // Probe 2 is skipped entirely while the leg is hidden (its own
+    // Probe 1 is skipped entirely while the leg is hidden (its own
     // !legHidden guard above), which means rockyKneeSettleStep just
     // sits at whatever it was last reset to and never shrinks -- for a
     // legHidden Rocky, waiting for it to drop below the MIN threshold
     // here was waiting for something that can never happen. That left
     // rockySettleConverged permanently unreachable for a legless Rocky,
-    // no matter how thoroughly Probe 1 alone had already converged: the
+    // no matter how thoroughly Probe 2 alone had already converged: the
     // settle timer (postRotateSettleActive/advancePostRotateSettle) never
     // saw "atRest" and so never shut itself back off, leaving it running
     // forever at whatever cadence WM_TIMER (throttled hard by any mouse
     // movement, see WM_MOUSEMOVE's own anti-starvation comment) happened
     // to manage -- which is exactly what a real report showed: a legless
     // Rocky's body visibly creeping a little further every time the mouse
-    // moved, long after it had actually finished settling. Treat Probe 2
+    // moved, long after it had actually finished settling. Treat Probe 1
     // as trivially "already at its floor" when there's no leg for it to
-    // ever run against, same as Probe 2's own skip condition, so
+    // ever run against, same as Probe 1's own skip condition, so
     // convergence only ever waits on whichever probe(s) can actually run.
     //
-    // The exact same unreachability hits during an E/Q press: Probe 2's
+    // The exact same unreachability hits during an E/Q press: Probe 1's
     // OWN top-level guard is "!legHidden && !rockyKneeSettleSuppressed
     // && rockyKneeSettleStep >= MIN" -- rockyKneeSettleSuppressed is set
     // TRUE for the whole duration of the keypress (so the user's own
     // manual knee-bend isn't fought by the settle probe), which means
-    // Probe 2 doesn't run then either, and rockyKneeSettleStep is just as
+    // Probe 1 doesn't run then either, and rockyKneeSettleStep is just as
     // stuck as the legHidden case. Without bypassing it here too,
     // rockySettleConverged can never go TRUE while E/Q is held, so
     // advancePostRotateSettle keeps calling applyGravityStep -- a REAL
@@ -4244,9 +4239,9 @@ static void advanceRockySettle(void)
     // falling, faster when the cursor moves."
     // legRestingOnImmovableJoint added here alongside legHidden/
     // rockyKneeSettleSuppressed -- same reasoning, a real gap this
-    // diagnostic pass found: whenever Probe 2's own top-level guard
+    // diagnostic pass found: whenever Probe 1's own top-level guard
     // (further up) is false because the leg's current contact is one
-    // Probe 2 must leave alone (ARC/KNEE/FOOT already resting), the
+    // Probe 1 must leave alone (ARC/KNEE/FOOT already resting), the
     // block that shrinks rockyKneeSettleStep is never even entered, so
     // it just sits at whatever it was last reset to (its full starting
     // value, typically) forever -- waiting for it to drop below
@@ -4254,7 +4249,7 @@ static void advanceRockySettle(void)
     // can structurally never happen while this stays true, exactly like
     // the legHidden and rockyKneeSettleSuppressed cases already handled
     // here. Without this, a landing where the leg settles onto ARC/KNEE/
-    // FOOT while Probe 1 ALSO happens to run its own step down to zero
+    // FOOT while Probe 2 ALSO happens to run its own step down to zero
     // (nothing left revives it, e.g. no further E/Q taps) left both
     // probes completely silent forever -- no further [SETTLE] lines, no
     // [SETTLE] converged line either -- instead of cleanly recognizing
@@ -4265,7 +4260,7 @@ static void advanceRockySettle(void)
     {
         // Diagnostic only, temporary -- before actually latching
         // converged, re-check at a full, un-shrunk scout angle (the same
-        // SIMULATION_LEG_SETTLE_SCOUT_STEP_DEG Probe 1's own scout
+        // SIMULATION_LEG_SETTLE_SCOUT_STEP_DEG Probe 2's own scout
         // fallback further up already uses for exactly this "is there
         // real improvement further out" question) whether genuine
         // progress is still available in either direction right now.
@@ -4591,7 +4586,7 @@ static BOOL applyGravityStep(HWND hWnd, float step)
             // (a fresh landed=FALSE -> TRUE transition between two
             // applyGravityStep calls, not any of the four UI-event-driven
             // resets elsewhere) is what's clearing rockyBodyLastCommitDir/
-            // rockyToppleLastPivotCategory mid-settle and letting Probe 1
+            // rockyToppleLastPivotCategory mid-settle and letting Probe 2
             // commit what looks like a reversal without the guard above
             // catching it. If this line shows up sandwiched inside an
             // otherwise-continuous settle run (no mode switch, no key/
@@ -5156,11 +5151,11 @@ static void advancePostRotateSettle(HWND hWnd)
     }
 }
 
-// Revives Probe 2/Probe 1's own step sizes (and the growth-streak/both-
+// Revives Probe 1/Probe 2's own step sizes (and the growth-streak/both-
 // probes-committed bookkeeping tied to them) back to their full starting
 // size, and re-arms rockySettleConverged/postRotateSettleActive/the timer
 // so the settle loop actually starts probing again -- WITHOUT touching
-// Probe 1's own direction/identity memory (rockyPivotSide,
+// Probe 2's own direction/identity memory (rockyPivotSide,
 // rockyBodyLastCommitDir, rockyToppleLastPivotCategory,
 // rockyBodyReversalBlockedStreak). See E/Q's own WM_KEYUP case for the
 // original reasoning on why this exact split (revive step size, preserve
@@ -5518,7 +5513,7 @@ static void advanceSemniJointHold(HWND hWnd)
         rotateSemniJoint(hWnd, (float)dir * SIMULATION_JOINT_ROTATE_RATE_DEG_PER_MS * (float)elapsed);
 
     // Same periodic settle re-arm as Rocky's E/Q hold (advanceRockyKneeHold),
-    // so Probe 2/2 keep reacting to the pose while a joint is being driven.
+    // so Probe 1/2 keep reacting to the pose while a joint is being driven.
     if (autoGravityActive && (now - rockyEQHoldLastReviveTick) >= SIMULATION_ROCKY_EQ_HOLD_REVIVE_INTERVAL_MS)
     {
         rockyEQHoldLastReviveTick = now;
@@ -5544,7 +5539,7 @@ static BOOL gravityToastOn = FALSE;       // which message to show: ON vs OFF
 static DWORD gravityToastStartTick = 0;   // 0 == no toast pending/visible
 
 // Real-time FPS counter (View > Show FPS, ID_TOGGLE_SHOW_FPS) -- the
-// number canvasRenderFrame draws, top-right, above the Probe 2 Settle
+// number canvasRenderFrame draws, top-right, above the Probe 1 Settle
 // button. fpsFrameCount is incremented once per call to canvasRenderFrame
 // (which itself runs exactly once per renderCombinedFrame call -- see its
 // own two call sites -- and every renderCombinedFrame ends in a real
@@ -6032,7 +6027,7 @@ void canvasRenderFrame(float dimAmount)
     // WM_TIMER's UI_HOTZONE_TIMER_ID handling below), so this indicator
     // has no reason to exist outside that mode either -- left ungated
     // before, it kept drawing (and lighting up on hover) in the exact
-    // same top-right corner Simulation's own Probe 2 toggle button now
+    // same top-right corner Simulation's own Probe 1 toggle button now
     // lives in, which is exactly the "ui hover in simulation mode" this
     // fixes.
     if (appMode == APP_MODE_DESIGN && designLayer == LAYER_ENVIRONMENT)
@@ -6376,10 +6371,10 @@ void canvasRenderFrame(float dimAmount)
     }
 
     // FPS counter (View > Show FPS, ID_TOGGLE_SHOW_FPS) -- top-right,
-    // directly above the Probe 2 Settle button (hProbe2ToggleBtn, WM_CREATE/
+    // directly above the Probe 1 Settle button (hProbe1ToggleBtn, WM_CREATE/
     // WM_SIZE below reserve FPS_OVERLAY_RESERVED_HEIGHT_PX of space above it
     // specifically for this). Left-aligned to that same button's own left
-    // edge (glWindowWidth - PROBE2_TOGGLE_MARGIN_PX - PROBE2_TOGGLE_WIDTH_PX)
+    // edge (glWindowWidth - PROBE1_TOGGLE_MARGIN_PX - PROBE1_TOGGLE_WIDTH_PX)
     // rather than right-aligned to the window edge -- this bitmap-font setup
     // has no cheap way to measure a string's rendered width up front to
     // right-align it, and lining up with the button underneath reads just
@@ -6405,7 +6400,7 @@ void canvasRenderFrame(float dimAmount)
         else                       { fr = 0.8f;  fg = 0.15f; fb = 0.1f;  } // red
 
         glColor4f(fr, fg, fb, 1.0f);
-        glRasterPos2i(glWindowWidth - PROBE2_TOGGLE_MARGIN_PX - PROBE2_TOGGLE_WIDTH_PX, glWindowHeight - 24);
+        glRasterPos2i(glWindowWidth - PROBE1_TOGGLE_MARGIN_PX - PROBE1_TOGGLE_WIDTH_PX, glWindowHeight - 24);
         glPushAttrib(GL_LIST_BIT);
         glListBase(fontBase - 32);
         glCallLists((GLsizei)strlen(fpsStr), GL_UNSIGNED_BYTE, fpsStr);
@@ -6958,12 +6953,12 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
                             GetModuleHandle(NULL), NULL);
         SendMessage(hSlowMotionBtn, BM_SETCHECK, BST_CHECKED, 0); // on by default, matching simTimeScale's initial value
 
-        // "Probe 2 Settle" toggle button (top-right) removed by request --
-        // same approach as the Walk button just below: hProbe2ToggleBtn is
+        // "Probe 1 Settle" toggle button (top-right) removed by request --
+        // same approach as the Walk button just below: hProbe1ToggleBtn is
         // left NULL (never created). Every other use of it in this file is
-        // already guarded by "if (hProbe2ToggleBtn)", and without the
-        // button ID_PROBE2_TOGGLE can never fire, so rockyProbe2Enabled
-        // simply stays at its default TRUE -- Probe 2 (knee settle) keeps
+        // already guarded by "if (hProbe1ToggleBtn)", and without the
+        // button ID_PROBE1_TOGGLE can never fire, so rockyProbe1Enabled
+        // simply stays at its default TRUE -- Probe 1 (knee settle) keeps
         // running exactly as before, it just can't be switched off anymore.
 
         // "Walk" toggle (Shift+W) button removed for now -- hWalkBtn is
@@ -7223,7 +7218,7 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             // further down, so it can gate hotZoneHighlighted (the corner
             // indicator's own highlighted look, drawn by canvasRenderFrame)
             // too. Without this, hovering that corner in Simulation mode
-            // (where Probe 2's toggle button now happens to live) still
+            // (where Probe 1's toggle button now happens to live) still
             // lit up a leftover Environment-mode indicator with nothing
             // behind it to reveal.
             BOOL envDesignActive = (appMode == APP_MODE_DESIGN && designLayer == LAYER_ENVIRONMENT);
@@ -7308,7 +7303,7 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         glViewport(0, 0, glWindowWidth, glWindowHeight);
         UpdateProjection();
 
-        // Keep hProbe2ToggleBtn pinned to the top-right corner as the
+        // Keep hProbe1ToggleBtn pinned to the top-right corner as the
         // window is resized -- unlike Reset/Slow Motion/Walk's fixed
         // top-left offset (never needs adjusting), a top-right anchor's
         // absolute X position depends on the current window width, so it
@@ -7316,11 +7311,11 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         // button hasn't been created yet (shouldn't happen -- WM_CREATE
         // always runs first -- but SetWindowPos on a NULL HWND would
         // otherwise be undefined, so guard it anyway).
-        if (hProbe2ToggleBtn)
+        if (hProbe1ToggleBtn)
         {
-            SetWindowPos(hProbe2ToggleBtn, NULL,
-                         glWindowWidth - PROBE2_TOGGLE_MARGIN_PX - PROBE2_TOGGLE_WIDTH_PX,
-                         PROBE2_TOGGLE_MARGIN_PX + FPS_OVERLAY_RESERVED_HEIGHT_PX,
+            SetWindowPos(hProbe1ToggleBtn, NULL,
+                         glWindowWidth - PROBE1_TOGGLE_MARGIN_PX - PROBE1_TOGGLE_WIDTH_PX,
+                         PROBE1_TOGGLE_MARGIN_PX + FPS_OVERLAY_RESERVED_HEIGHT_PX,
                          0, 0, SWP_NOSIZE | SWP_NOZORDER);
         }
 
@@ -7640,7 +7635,7 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             // everything below still run on an invisible leg. It used to:
             // rotate kneeAngle (harmlessly, since nothing draws or collides
             // with it -- see advanceRockySettle's own !r->legHidden comment
-            // on Probe 2), then unconditionally call dropActiveRobotToRest()
+            // on Probe 1), then unconditionally call dropActiveRobotToRest()
             // and kick off the postRotateSettleActive timer regardless --
             // dropActiveRobotToRest applies its FULL correction in one
             // synchronous jump (that's deliberate for a real knee rotation,
@@ -7906,7 +7901,7 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             // a REAL gravity step, translating the robot down first and
             // only correcting back if that step happened to land -- every
             // single tick for as long as it takes to reconverge, and with
-            // no leg (Probe 2 skipped, Probe 1 alone driving convergence,
+            // no leg (Probe 1 skipped, Probe 2 alone driving convergence,
             // no push-up left to undo now that WM_KEYDOWN's own corner-fix
             // is skipped too -- see its own comment just above) that takes
             // long enough to read as a real, visible fall rather than an
@@ -7944,7 +7939,7 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 rockyBodyLastCommitDir = 0;
                 rockyToppleLastPivotCategory = 0;
                 rockyBodyReversalBlockedStreak = 0;
-                rockyKneeSettleSuppressed = FALSE; // whole-body rotate: nothing else drives kneeAngle, Probe 2 is safe here
+                rockyKneeSettleSuppressed = FALSE; // whole-body rotate: nothing else drives kneeAngle, Probe 1 is safe here
 
                 postRotateSettleActive = TRUE;
                 SetTimer(hWnd, AUTO_GRAVITY_TIMER_ID, SIMULATION_AUTO_GRAVITY_INTERVAL_MS, NULL);
@@ -7953,20 +7948,20 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
         // A single E/Q tap (or a held one, via Windows auto-repeat
         // re-arming rockyKneeSettleSuppressed on every WM_KEYDOWN) leaves
-        // Probe 2 (knee-bending) suppressed for the whole settle session
+        // Probe 1 (knee-bending) suppressed for the whole settle session
         // that follows it -- see rockyKneeSettleSuppressed's own comment.
         // Nothing else ever clears it back to FALSE for Rocky: the
         // "normal" path (advancePostRotateSettle's atRest branch, right
         // above) can only fire once BOTH rockyKneeSettleStep and
         // rockyBodySettleStep have shrunk below
-        // SIMULATION_LEG_SETTLE_MIN_STEP_DEG, but Probe 2's own step-
+        // SIMULATION_LEG_SETTLE_MIN_STEP_DEG, but Probe 1's own step-
         // shrinking code lives entirely inside the block this suppression
         // skips -- so while suppressed, rockyKneeSettleStep never moves,
         // convergence can never happen, and un-suppression (which only
         // happens inside that same atRest branch) can't either. That's a
-        // permanent deadlock: after just one E/Q tap, Probe 2 stays dead
+        // permanent deadlock: after just one E/Q tap, Probe 1 stays dead
         // for the rest of the session, and if closing some residual gap
-        // genuinely needed knee bending (not just the body rotate Probe 1
+        // genuinely needed knee bending (not just the body rotate Probe 2
         // still runs) rather than a plain vertical drop, the robot is
         // left visibly floating with nothing left able to fix it. This is
         // what a real report described as "i only pressed e once and the
@@ -8004,14 +7999,14 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             if (!app.robotScene.rocky.legHidden && autoGravityActive)
             {
                 // Narrowed by explicit diagnosis: this used to reset ALL
-                // settle state on every E/Q release, including Probe 1's
+                // settle state on every E/Q release, including Probe 2's
                 // (body pivot) own DIRECTION/IDENTITY memory --
                 // rockyPivotSide, rockyBodyLastCommitDir,
                 // rockyToppleLastPivotCategory -- even though E/Q only
-                // ever drives the KNEE (Probe 2). A real report showed
+                // ever drives the KNEE (Probe 1). A real report showed
                 // bodyAngle visibly oscillating during a run of ordinary
                 // knee taps, traced via the printf below to exactly
-                // this: every E/Q release was wiping Probe 1's reversal
+                // this: every E/Q release was wiping Probe 2's reversal
                 // guard, so the very next tick's body-pivot commit
                 // sailed right through a guard that had just blocked
                 // the same reversal four ticks in a row.
@@ -8047,7 +8042,7 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             if (!semniJointHoldE && !semniJointHoldQ)
                 KillTimer(hWnd, SEMNI_JOINT_HOLD_TIMER_ID);
 
-            // Same as Rocky's E/Q keyup: let Probe 2/2 settle the new pose
+            // Same as Rocky's E/Q keyup: let Probe 1/2 settle the new pose
             // (only with Auto Gravity on, like Rocky).
             if (autoGravityActive)
             {
@@ -8191,7 +8186,7 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             // kickoff below (see advancePostRotateSettle's own comment for
             // the full reasoning). Without this at all, a plain drag-and-
             // drop with Auto Gravity OFF called applyGravityStep exactly
-            // zero times, which meant advanceRockySettle (Probe 2/Probe 1,
+            // zero times, which meant advanceRockySettle (Probe 1/Probe 2,
             // Rocky's knee-bend and body-pivot) never ran even once -- the
             // robot just stayed wherever the mouse let go of it, floating
             // parts and all, with nothing left able to fix it short of
@@ -8211,7 +8206,7 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             // high up in the air, made it fall all the way down on its own,
             // Auto Gravity OFF or not. That defeats the whole point of the
             // toggle. Only a pose that's ALREADY touching something needs
-            // Probe 2/Probe 1 at all -- that's the entire "home position,
+            // Probe 1/Probe 2 at all -- that's the entire "home position,
             // knee down but foot floating" scenario this was meant to fix
             // -- a robot released genuinely airborne is supposed to just
             // hang there until the user turns gravity on or presses G,
@@ -8232,7 +8227,7 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 // otherwise leave rockySettleConverged still TRUE and the
                 // driver would just no-op forever. rockyKneeSettleSuppressed
                 // is cleared too -- nothing else is driving kneeAngle right
-                // now, so Probe 2 is safe to run, same as VK_LEFT/RIGHT.
+                // now, so Probe 1 is safe to run, same as VK_LEFT/RIGHT.
                 // Harmless to start even when nothing actually needs to
                 // move beyond this -- advancePostRotateSettle notices
                 // there's nothing left to do and shuts its own timer back
@@ -8541,16 +8536,16 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	        // keeps working immediately, with no extra click needed.
 	        SetFocus(hWnd);
 	    }
-	    else if (LOWORD(wParam) == ID_PROBE2_TOGGLE)
+	    else if (LOWORD(wParam) == ID_PROBE1_TOGGLE)
 	    {
 	        // Same BS_AUTOCHECKBOX pattern as ID_SLOW_MOTION just above --
 	        // the button already flipped its own check state before this
-	        // notification fires, so read it back into rockyProbe2Enabled
+	        // notification fires, so read it back into rockyProbe1Enabled
 	        // rather than tracking a separate bool. advanceRockySettle reads
 	        // this flag directly on its next tick -- unchecking it here takes
-	        // effect immediately, no other state to reset (Probe 2 has no
+	        // effect immediately, no other state to reset (Probe 1 has no
 	        // ongoing timer/animation of its own the way Slow Motion/Walk do).
-	        rockyProbe2Enabled = (SendMessage(hProbe2ToggleBtn, BM_GETCHECK, 0, 0) == BST_CHECKED);
+	        rockyProbe1Enabled = (SendMessage(hProbe1ToggleBtn, BM_GETCHECK, 0, 0) == BST_CHECKED);
 
 	        // Same reasoning as ID_SLOW_MOTION's SetFocus above -- hand
 	        // keyboard focus back so G/Shift+G/E/Q/arrow keys etc. keep
@@ -8771,7 +8766,7 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	            // entry into Simulation mode fall all the way to the ground on
 	            // its own, even with Auto Gravity OFF, which defeats the whole
 	            // point of that toggle. Only touching-right-now poses need
-	            // Probe 2/Probe 1 at all (that's the entire "home position,
+	            // Probe 1/Probe 2 at all (that's the entire "home position,
 	            // knee down but foot floating" scenario this was meant to
 	            // fix) -- a robot starting out genuinely airborne is supposed
 	            // to just sit there until the user turns gravity on or
@@ -8941,23 +8936,23 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	            ShowWindow(hResetBtn, appMode == APP_MODE_SIMULATION ? SW_SHOW : SW_HIDE);
 	        }
 
-	        // Probe 2 toggle -- same show/hide-on-mode-switch treatment as
+	        // Probe 1 toggle -- same show/hide-on-mode-switch treatment as
 	        // Slow Motion above. Leaving Simulation also resets it back to
-	        // checked/enabled (rockyProbe2Enabled = TRUE) rather than leaving
+	        // checked/enabled (rockyProbe1Enabled = TRUE) rather than leaving
 	        // it silently disabled the next time Simulation is entered --
 	        // same "temporary aid, not a persisted setting" reasoning Slow
 	        // Motion's own reset uses.
-	        if (hProbe2ToggleBtn)
+	        if (hProbe1ToggleBtn)
 	        {
 	            if (appMode == APP_MODE_SIMULATION)
 	            {
-	                ShowWindow(hProbe2ToggleBtn, SW_SHOW);
+	                ShowWindow(hProbe1ToggleBtn, SW_SHOW);
 	            }
 	            else
 	            {
-	                ShowWindow(hProbe2ToggleBtn, SW_HIDE);
-	                SendMessage(hProbe2ToggleBtn, BM_SETCHECK, BST_CHECKED, 0);
-	                rockyProbe2Enabled = TRUE;
+	                ShowWindow(hProbe1ToggleBtn, SW_HIDE);
+	                SendMessage(hProbe1ToggleBtn, BM_SETCHECK, BST_CHECKED, 0);
+	                rockyProbe1Enabled = TRUE;
 	            }
 	        }
 

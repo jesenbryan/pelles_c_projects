@@ -106,7 +106,7 @@ static HMENU buildMainMenu(void)
     HMENU hViewMenu = CreatePopupMenu();
     AppendMenu(hViewMenu, MF_STRING | MF_CHECKED, ID_TOGGLE_HIDE_INACTIVE, L"Hide Inactive Layer");
     // Below Hide Inactive Layer, same menu -- toggles canvas.c's real-time
-    // FPS counter (top-right, above the Probe 2 Settle button; see
+    // FPS counter (top-right, above the Probe 1 Settle button; see
     // showFpsOverlay's own comment). MF_CHECKED here to match
     // showFpsOverlay's own TRUE-by-default (a real report of the
     // simulation "sometimes isn't as smooth" is exactly why this exists,

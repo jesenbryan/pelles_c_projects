@@ -25,7 +25,7 @@
 #define ID_HELP              14
 #define ID_TOGGLE_HIDE_INACTIVE 15
 #define ID_RESET_ROBOT       16
-#define ID_PROBE2_TOGGLE     17
+#define ID_PROBE1_TOGGLE     17
 #define ID_TOGGLE_SHOW_FPS   18
 #define ID_TOGGLE_SIM_LOG    19
 #define ID_TOGGLE_FPS_LOG    20
@@ -79,7 +79,7 @@ extern DesignLayer designLayer;
 extern BOOL hideInactiveLayer;
 
 // Whether canvasRenderFrame draws the real-time FPS counter, top-right,
-// above the Probe 2 Settle button -- see canvas.c's own definition for the
+// above the Probe 1 Settle button -- see canvas.c's own definition for the
 // full comment. Toggled from the View > Show FPS menu item
 // (ID_TOGGLE_SHOW_FPS above). TRUE by default.
 extern BOOL showFpsOverlay;

@@ -842,7 +842,7 @@
 
 // Same idea as SIMULATION_LEG_SETTLE_MIN_DROP just above, but for the
 // "dangling point got closer without the body falling" gain checks
-// (Probe 2's bestClearanceGain/scoutGain on the foot, Probe 1's
+// (Probe 1's bestClearanceGain/scoutGain on the foot, Probe 2's
 // bestClearanceGain/scoutGain on whichever of knee/foot isn't the
 // pivot) instead of the whole-body vertical drop. A real report showed
 // a leg settling to within ~0.001 of flush and then permanently
@@ -865,7 +865,7 @@
 // short of it.
 #define SIMULATION_LEG_SETTLE_MIN_CLEARANCE_GAIN 0.00002f
 
-// Same idea again, but for Probe 1's newest fallback: does a candidate
+// Same idea again, but for Probe 2's newest fallback: does a candidate
 // rotation lower the whole body's actual CENTER OF MASS (computeRockyMassCenterWorld),
 // not just bring some other single point closer to the ground. Needed
 // because bestDrop and bestClearanceGain can BOTH go structurally silent
@@ -894,7 +894,7 @@
 // candidate (the leg's own knee/foot/arc versus Rocky's own rectangle
 // corners, see rockyToppleContactPoints in canvas.c) has to be than
 // whichever category was actually used as the pivot LAST tick, before
-// Probe 1 is allowed to switch categories at all. Without this, a pose
+// Probe 2 is allowed to switch categories at all. Without this, a pose
 // where a leg point and a body corner both sit at nearly the same tiny
 // clearance (a real report showed BOTH flipping every single tick, not
 // occasionally) makes rockyToppleContactPoints' plain "whichever
@@ -922,7 +922,7 @@
 #define SIMULATION_ROCKY_TOPPLE_PIVOT_HYSTERESIS 0.001f
 
 // How many consecutive ticks rockyBodyLastCommitDir's own reversal guard
-// (canvas.c) is allowed to block Probe 1 from reversing direction before
+// (canvas.c) is allowed to block Probe 2 from reversing direction before
 // that streak is instead treated as a legitimate need to correct an
 // overshoot, and the reversal is let through for one tick. The guard
 // itself exists for a real, narrower report: bestDrop and bestComDrop
@@ -930,7 +930,7 @@
 // between the same two fixed values forever, with the step never actually
 // shrinking. But once that guard is in place, it has no way to tell that
 // pathology apart from a completely different, equally real situation:
-// Probe 1 pivoting several genuine degrees of forward progress, then
+// Probe 2 pivoting several genuine degrees of forward progress, then
 // legitimately needing to reverse ONE time to correct an overshoot and
 // settle at the true resting angle just past where the forward run
 // stopped. A real report showed exactly that turning into a brand new
@@ -948,7 +948,7 @@
 // reasoning.
 #define SIMULATION_ROCKY_BODY_REVERSAL_BLOCK_STREAK 6
 
-// canvas.c's Probe 1 (Rocky body pivot): the pivot-side-flip halving and
+// canvas.c's Probe 2 (Rocky body pivot): the pivot-side-flip halving and
 // the reversal guard above only engage while the center of mass is within
 // this horizontal distance (robot world units) of the current pivot --
 // i.e. near balance, where rocking back and forth is the real risk. With
@@ -988,12 +988,12 @@
 // each revive, rather than fighting its own refinement.
 #define SIMULATION_ROCKY_EQ_HOLD_REVIVE_INTERVAL_MS 200
 
-// How many consecutive ticks Probe 2 (knee) and Probe 1 (body) are allowed
+// How many consecutive ticks Probe 1 (knee) and Probe 2 (body) are allowed
 // to BOTH commit a real move on the very same tick before that streak is
 // treated as a stalemate and both step sizes are force-halved. The two
 // probes run back to back inside the same advanceRockySettle call, each
 // one committing based on whatever the OTHER just left behind one tick
-// (or, this same tick, for Probe 1 watching Probe 2) earlier -- and
+// (or, this same tick, for Probe 2 watching Probe 1) earlier -- and
 // neither probe's own same-tick straddle check can see that, since each
 // only compares its own two candidate directions against each other, not
 // against what the other probe is doing. Two separate real reports showed
