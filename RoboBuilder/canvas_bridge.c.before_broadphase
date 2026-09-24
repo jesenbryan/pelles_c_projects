@@ -590,17 +590,6 @@ void setSegmentOverlay(ArcSegment* segments, int count, int imgW, int imgH, BOOL
             segmentPointsWorld[total * 2]     = wx;
             segmentPointsWorld[total * 2 + 1] = wy;
             total++;
-
-            // Bounding box for Simulation's collision broad phase (see
-            // segmentBoundsWorld in ui_state.h).
-            float* b = &segmentBoundsWorld[usedSegments * 4];
-            if (i == 0) { b[0] = b[2] = wx; b[1] = b[3] = wy; }
-            else {
-                if (wx < b[0]) b[0] = wx;
-                if (wy < b[1]) b[1] = wy;
-                if (wx > b[2]) b[2] = wx;
-                if (wy > b[3]) b[3] = wy;
-            }
         }
 
         usedSegments++;

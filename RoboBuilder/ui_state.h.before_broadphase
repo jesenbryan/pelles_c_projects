@@ -147,11 +147,6 @@ extern int   branchMarkerCount;
 extern float segmentPointsWorld[MAX_SEGMENT_POINTS * 2];
 extern int   segmentStarts[MAX_ARC_SEGMENTS];
 extern int   segmentCounts[MAX_ARC_SEGMENTS];
-// Axis-aligned bounding box of each segment's points (minX, minY, maxX,
-// maxY), filled by setSegmentOverlay alongside the points themselves.
-// Lets Simulation's collision queries skip whole segments that are
-// nowhere near the robot instead of testing every sampled piece.
-extern float segmentBoundsWorld[MAX_ARC_SEGMENTS * 4];
 
 // NEW: the FULL circle each arc segment was cut from, in world space -
 // drawn as a faint "ghost circle" outline when canvas.showSegments is on.

@@ -94,7 +94,6 @@ BOOL simFpsLogEnabled = FALSE;
 float segmentPointsWorld[MAX_SEGMENT_POINTS * 2];   // NEW
 int   segmentStarts[MAX_ARC_SEGMENTS];              // NEW
 int   segmentCounts[MAX_ARC_SEGMENTS];              // NEW
-float segmentBoundsWorld[MAX_ARC_SEGMENTS * 4];       // per-segment bounding box (minX, minY, maxX, maxY), see ui_state.h
 
 float segmentCircleCenterWorld[MAX_ARC_SEGMENTS * 2]; // NEW: ghost circle centers
 float segmentCircleRadiusWorld[MAX_ARC_SEGMENTS];     // NEW: ghost circle radii (world X axis)
@@ -935,51 +934,6 @@ static float simEnvLineHalfWidthWorld(void)
 // forever while Shift+G keeps re-confirming a robot that already landed.
 static BOOL gSuppressGravityDebug = FALSE;
 
-// ---- Collision broad phase ----
-// Every environment query below used to run its exact distance math
-// against EVERY sampled piece of EVERY traced segment (each segment is
-// sampled into ~24 points, so a 9-segment stage is ~200+ pieces), and
-// the settle probes run those queries thousands of times per tick --
-// cost grew linearly with how much was drawn (a real report: one
-// settle call going from a few ms on a single line to ~37 ms on a
-// 9-segment stage, visibly stuttering). These bounding-box tests throw
-// away segments/pieces that are provably farther than the query's
-// radius BEFORE doing any exact math, so only the few pieces actually
-// near the robot are measured. Pure rejection: anything they skip could
-// never have passed the exact test anyway, so results are unchanged.
-//
-// ENV_BROADPHASE_SLACK keeps float rounding at the exact boundary from
-// ever rejecting something the exact test would have accepted.
-#define ENV_BROADPHASE_SLACK 1e-6f
-
-// TRUE if env segment s's bounding box (segmentBoundsWorld), grown by
-// pad, overlaps the query box [minX,maxX] x [minY,maxY].
-static BOOL envSegmentBoxNear(int s, float minX, float minY, float maxX, float maxY, float pad)
-{
-    const float* b = &segmentBoundsWorld[s * 4];
-    pad += ENV_BROADPHASE_SLACK;
-    return !(maxX + pad < b[0] || minX - pad > b[2] || maxY + pad < b[1] || minY - pad > b[3]);
-}
-
-// Same test for one piece (ax,ay)-(bx,by) of a segment.
-static BOOL envPieceBoxNear(float ax, float ay, float bx, float by,
-                            float minX, float minY, float maxX, float maxY, float pad)
-{
-    float pMinX = (ax < bx) ? ax : bx, pMaxX = (ax < bx) ? bx : ax;
-    float pMinY = (ay < by) ? ay : by, pMaxY = (ay < by) ? by : ay;
-    pad += ENV_BROADPHASE_SLACK;
-    return !(maxX + pad < pMinX || minX - pad > pMaxX || maxY + pad < pMinY || minY - pad > pMaxY);
-}
-
-// Squared distance from a point to a box (0 if inside) -- a lower bound
-// on the distance to anything inside that box.
-static float pointBoxDist2(float px, float py, float minX, float minY, float maxX, float maxY)
-{
-    float dx = (px < minX) ? (minX - px) : ((px > maxX) ? (px - maxX) : 0.0f);
-    float dy = (py < minY) ? (minY - py) : ((py > maxY) ? (py - maxY) : 0.0f);
-    return dx * dx + dy * dy;
-}
-
 static BOOL pointCollidesWithAnyEnvironmentStroke(float ecx, float ecy, float eRadius)
 {
     // combinedRadius = eRadius + the environment line's OWN rendered
@@ -1006,14 +960,14 @@ static BOOL pointCollidesWithAnyEnvironmentStroke(float ecx, float ecy, float eR
     // to land contact exactly on the two visible surfaces meeting, not on
     // either one's invisible centerline.
     float envHalfWidth = simEnvLineHalfWidthWorld();
-    float combinedRadius = eRadius + envHalfWidth;
 
     for (int s = 0; s < canvas.segmentResultCount; s++)
     {
         int start = segmentStarts[s];
         int count = segmentCounts[s];
         if (count < 2) continue;
-        if (!envSegmentBoxNear(s, ecx, ecy, ecx, ecy, combinedRadius)) continue; // broad phase
+
+        float combinedRadius = eRadius + envHalfWidth;
 
         for (int i = 0; i < count - 1; i++)
         {
@@ -1021,7 +975,6 @@ static BOOL pointCollidesWithAnyEnvironmentStroke(float ecx, float ecy, float eR
             float ay = segmentPointsWorld[(start + i) * 2 + 1];
             float bx = segmentPointsWorld[(start + (i + 1)) * 2];
             float by = segmentPointsWorld[(start + (i + 1)) * 2 + 1];
-            if (!envPieceBoxNear(ax, ay, bx, by, ecx, ecy, ecx, ecy, combinedRadius)) continue;
 
             float dist = distPointToSegment(ecx, ecy, ax, ay, bx, by);
             if (dist < combinedRadius)
@@ -1080,16 +1033,11 @@ static BOOL edgeCollidesWithAnyEnvironmentStroke(float ax, float ay, float bx, f
     float envHalfWidth = simEnvLineHalfWidthWorld();
     float combinedRadius = eRadius + envHalfWidth;
 
-    // Query box for the broad phase: the robot edge's own bounding box.
-    float qMinX = (ax < bx) ? ax : bx, qMaxX = (ax < bx) ? bx : ax;
-    float qMinY = (ay < by) ? ay : by, qMaxY = (ay < by) ? by : ay;
-
     for (int s = 0; s < canvas.segmentResultCount; s++)
     {
         int start = segmentStarts[s];
         int count = segmentCounts[s];
         if (count < 2) continue;
-        if (!envSegmentBoxNear(s, qMinX, qMinY, qMaxX, qMaxY, combinedRadius)) continue; // broad phase
 
         for (int i = 0; i < count - 1; i++)
         {
@@ -1097,7 +1045,6 @@ static BOOL edgeCollidesWithAnyEnvironmentStroke(float ax, float ay, float bx, f
             float ey0 = segmentPointsWorld[(start + i) * 2 + 1];
             float ex1 = segmentPointsWorld[(start + (i + 1)) * 2];
             float ey1 = segmentPointsWorld[(start + (i + 1)) * 2 + 1];
-            if (!envPieceBoxNear(ex0, ey0, ex1, ey1, qMinX, qMinY, qMaxX, qMaxY, combinedRadius)) continue;
 
             float t;
             float dist = distSegmentToSegment(ax, ay, bx, by, ex0, ey0, ex1, ey1, NULL, NULL, &t);
@@ -1147,21 +1094,12 @@ static float nearestEnvDistance(float ecx, float ecy)
         int count = segmentCounts[s];
         if (count < 2) continue;
 
-        // Broad phase: skip a segment/piece whose bounding box is already
-        // farther away than the best distance found so far.
-        const float* sb = &segmentBoundsWorld[s * 4];
-        if (best >= 0.0f && pointBoxDist2(ecx, ecy, sb[0], sb[1], sb[2], sb[3]) > best * best) continue;
-
         for (int i = 0; i < count - 1; i++)
         {
             float ax = segmentPointsWorld[(start + i) * 2];
             float ay = segmentPointsWorld[(start + i) * 2 + 1];
             float bx = segmentPointsWorld[(start + (i + 1)) * 2];
             float by = segmentPointsWorld[(start + (i + 1)) * 2 + 1];
-            if (best >= 0.0f
-                && pointBoxDist2(ecx, ecy, (ax < bx) ? ax : bx, (ay < by) ? ay : by,
-                                 (ax < bx) ? bx : ax, (ay < by) ? by : ay) > best * best)
-                continue;
 
             float dist = distPointToSegment(ecx, ecy, ax, ay, bx, by);
             if (best < 0.0f || dist < best)
@@ -1278,7 +1216,6 @@ static int findCircleContactDirections(float ecx, float ecy, float eRadius,
         int start = segmentStarts[s];
         int pieceCount = segmentCounts[s];
         if (pieceCount < 2) continue;
-        if (!envSegmentBoxNear(s, ecx, ecy, ecx, ecy, combinedRadius)) continue; // broad phase
 
         BOOL inRun = FALSE;
         float bestDist = 0.0f, bestX = 0.0f, bestY = 0.0f;
@@ -1290,13 +1227,8 @@ static int findCircleContactDirections(float ecx, float ecy, float eRadius,
             float bx = segmentPointsWorld[(start + (i + 1)) * 2];
             float by = segmentPointsWorld[(start + (i + 1)) * 2 + 1];
 
-            // A piece the broad phase rejects is simply a miss -- it
-            // still has to reach the else-branch below so an open run
-            // gets closed exactly as before.
-            float px = 0.0f, py = 0.0f;
-            float dist = combinedRadius;
-            if (envPieceBoxNear(ax, ay, bx, by, ecx, ecy, ecx, ecy, combinedRadius))
-                dist = closestPointOnSegment(ecx, ecy, ax, ay, bx, by, &px, &py, NULL);
+            float px, py;
+            float dist = closestPointOnSegment(ecx, ecy, ax, ay, bx, by, &px, &py, NULL);
 
             if (dist < combinedRadius)
             {
