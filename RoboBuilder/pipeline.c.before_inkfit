@@ -330,7 +330,6 @@ static int pruneSkeletonSpurs(uint8_t* skel, const uint8_t* origBin, int w, int 
 // neighbouring stroke's ink starts and would skew the scan.
 #define INK_SCAN_STEP_PX   0.05f
 #define INK_SHIFT_MAX_PX   1.0f     // thinning never moves the centerline more than this
-#define INK_LINE_FIT_TRIM_PX 4      // pixels skipped at each end of a straight segment (corner-bent), like LINE_REFINE_TRIM_PX
 
 static int inkAt(const uint8_t* ink, int w, int h, float fx, float fy)
 {
@@ -369,18 +368,16 @@ static int cmpFloat(const void* a, const void* b)
 static void measureInkCenterShift(const uint8_t* ink, int w, int h, ArcSegment* seg)
 {
     seg->inkShiftX = seg->inkShiftY = seg->inkShiftR = 0.0f;
-    seg->lineFitValid = 0;
     int n = seg->count;
     if (n < 2) return;
-
-    BOOL isArc = (seg->circle.r > 1e-3f);
 
     float maxR = (seg->avgRadiusPx > 0.0f) ? seg->avgRadiusPx : 1.0f;
     if (maxR > MAX_MEASURED_STROKE_RADIUS_PX) maxR = MAX_MEASURED_STROKE_RADIUS_PX;
     int skip = (int)ceilf(maxR) + 2;
-    if (!isArc && skip < INK_LINE_FIT_TRIM_PX) skip = INK_LINE_FIT_TRIM_PX;
     int a = skip, b = n - 1 - skip;
     if (b < a) { a = n / 2; b = a; }   // short segment: just use its middle pixel
+
+    BOOL isArc = (seg->circle.r > 1e-3f);
 
     // Straight segment: one normal for the whole segment, from the
     // principal direction of its pixels.
@@ -403,9 +400,7 @@ static void measureInkCenterShift(const uint8_t* ink, int w, int h, ArcSegment* 
 
     int cap = b - a + 1;
     float* offs = (float*)malloc(sizeof(float) * (size_t)cap);
-    float* midX = (float*)malloc(sizeof(float) * (size_t)cap);   // band middles, for the line fit
-    float* midY = (float*)malloc(sizeof(float) * (size_t)cap);
-    if (!offs || !midX || !midY) { free(offs); free(midX); free(midY); return; }
+    if (!offs) return;
     int m = 0;
     for (int i = a; i <= b; i++)
     {
@@ -423,36 +418,8 @@ static void measureInkCenterShift(const uint8_t* ink, int w, int h, ArcSegment* 
         }
         int ok;
         float o = inkBandMidOffset(ink, w, h, seg->pts[i].x, seg->pts[i].y, nx, ny, maxR, &ok);
-        if (ok)
-        {
-            midX[m] = seg->pts[i].x + nx * o;
-            midY[m] = seg->pts[i].y + ny * o;
-            offs[m++] = o;
-        }
+        if (ok) offs[m++] = o;
     }
-
-    // Straight segment: fit the line to the band middles (total least
-    // squares, same as canvas_bridge.c's fitLineToPixels does for pixels).
-    if (!isArc && m >= 3)
-    {
-        double mx = 0, my = 0;
-        for (int i = 0; i < m; i++) { mx += midX[i]; my += midY[i]; }
-        mx /= m; my /= m;
-        double sxx = 0, syy = 0, sxy = 0;
-        for (int i = 0; i < m; i++)
-        {
-            double ux = midX[i] - mx, uy = midY[i] - my;
-            sxx += ux * ux; syy += uy * uy; sxy += ux * uy;
-        }
-        double ang = 0.5 * atan2(2.0 * sxy, sxx - syy);
-        seg->lineFitValid = 1;
-        seg->lineFitCx = (float)mx;
-        seg->lineFitCy = (float)my;
-        seg->lineFitDx = (float)cos(ang);
-        seg->lineFitDy = (float)sin(ang);
-    }
-    free(midX);
-    free(midY);
     if (m > 0)
     {
         qsort(offs, (size_t)m, sizeof(float), cmpFloat);

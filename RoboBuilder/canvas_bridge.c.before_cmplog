@@ -216,46 +216,24 @@ static void stampDisc(Image* img, float cx, float cy, float r)
     }
 }
 
-// Every pixel whose CENTER is within r of the segment (a capsule), not a
-// row of discs stamped every half pixel along it. The disc version's width
-// depended on how the stamps happened to line up with the pixel rows, and
-// that drifted along the line (the step is len/ceil(len/0.5), not exactly
-// 0.5): a real report's short vertical riser came out 2 px wide near the
-// floor and 1 px wide further up, so the traced line tilted toward the
-// wide part. A capsule is the exact shape of a stroke and has the same
-// width everywhere.
 static void stampSegment(Image* img, float x0, float y0, float x1, float y1, float r)
 {
     float dx = x1 - x0;
     float dy = y1 - y0;
-    float len2 = dx * dx + dy * dy;
+    float len = sqrtf(dx * dx + dy * dy);
 
-    if (len2 < 1e-6f) {
+    if (len < 0.001f) {
         stampDisc(img, x0, y0, r);
         return;
     }
 
-    int minX = (int)floorf(((x0 < x1) ? x0 : x1) - r);
-    int maxX = (int)ceilf(((x0 > x1) ? x0 : x1) + r);
-    int minY = (int)floorf(((y0 < y1) ? y0 : y1) - r);
-    int maxY = (int)ceilf(((y0 > y1) ? y0 : y1) + r);
-    if (minX < 0) minX = 0;
-    if (minY < 0) minY = 0;
-    if (maxX > img->width - 1)  maxX = img->width - 1;
-    if (maxY > img->height - 1) maxY = img->height - 1;
-    float r2 = r * r;
+    float step = (r * 0.5f > 0.5f) ? r * 0.5f : 0.5f;
+    int steps = (int)ceilf(len / step);
+    if (steps < 1) steps = 1;
 
-    for (int y = minY; y <= maxY; y++) {
-        float py = y + 0.5f;
-        for (int x = minX; x <= maxX; x++) {
-            float px = x + 0.5f;
-            float t = ((px - x0) * dx + (py - y0) * dy) / len2;
-            if (t < 0.0f) t = 0.0f;
-            else if (t > 1.0f) t = 1.0f;
-            float ex = px - (x0 + dx * t), ey = py - (y0 + dy * t);
-            if (ex * ex + ey * ey <= r2)
-                setBinPixel(img, x, y, r);
-        }
+    for (int i = 0; i <= steps; i++) {
+        float t = (float)i / (float)steps;
+        stampDisc(img, x0 + dx * t, y0 + dy * t, r);
     }
 }
 
@@ -319,11 +297,8 @@ static void sampleArcPoints(ArcSegment* seg, SampleF* outPts, int* outCount, int
     Point p0 = seg->pts[0];
     Point p1 = seg->pts[seg->count - 1];
 
-    // Sweep between the ends as they'll actually be drawn (pixel + shift;
-    // a line-arc corner can move them a few pixels, see
-    // refineStraightSegmentEnds), so the arc doesn't double back.
-    double a0 = atan2(p0.y + s0y - c.cy, p0.x + s0x - c.cx);
-    double a1 = atan2(p1.y + s1y - c.cy, p1.x + s1x - c.cx);
+    double a0 = atan2(p0.y - c.cy, p0.x - c.cx);
+    double a1 = atan2(p1.y - c.cy, p1.x - c.cx);
 
     double diff = a1 - a0;
     while (diff > ARC_PI)  diff -= 2.0 * ARC_PI;
@@ -477,54 +452,14 @@ static void computeEndShifts(const ArcSegment* segs, int count,
     }
 }
 
-// Line-to-arc corners: the traced pixel where a line hands over to an arc
-// is wherever the segment split landed, which on a sharp corner is often
-// 2-3 px along the curve (a real report: 2.5 px at the join between a
-// Shift-line and a hand-drawn curve). The actual bend is where the traced
-// path turns hardest, so look a few pixels either side of the split for
-// the sharpest turn (angle between the directions 3 px back and 3 px
-// ahead) and put the corner there, projected onto the fitted line. A
-// smooth, near-tangent join has no such turn, so it keeps the split pixel.
-#define LINE_ARC_CORNER_SEARCH_PX 6
-#define LINE_ARC_CORNER_ARM_PX    3
-#define LINE_ARC_CORNER_MIN_DEG   20.0
-
-// joint points at the shared pixel inside the path buffer; lo/hi (<= 0,
-// >= 0) are how far the buffer extends behind/ahead of it.
-static int sharpestTurnNear(const Point* joint, int lo, int hi, int* outK)
-{
-    double bestTurn = 0.0;
-    int bestK = 0;
-    const int arm = LINE_ARC_CORNER_ARM_PX;
-    for (int k = -LINE_ARC_CORNER_SEARCH_PX; k <= LINE_ARC_CORNER_SEARCH_PX; k++)
-    {
-        if (k - arm < lo || k + arm > hi) continue;
-        double v1x = joint[k].x - joint[k - arm].x, v1y = joint[k].y - joint[k - arm].y;
-        double v2x = joint[k + arm].x - joint[k].x, v2y = joint[k + arm].y - joint[k].y;
-        double l1 = hypot(v1x, v1y), l2 = hypot(v2x, v2y);
-        if (l1 < 1e-9 || l2 < 1e-9) continue;
-        double cosA = (v1x * v2x + v1y * v2y) / (l1 * l2);
-        if (cosA > 1.0) cosA = 1.0;
-        if (cosA < -1.0) cosA = -1.0;
-        double turn = acos(cosA);
-        if (turn > bestTurn) { bestTurn = turn; bestK = k; }
-    }
-    if (bestTurn * 180.0 / ARC_PI < LINE_ARC_CORNER_MIN_DEG) return 0;
-    *outK = bestK;
-    return 1;
-}
-
 // Fills startX/Y, endX/Y (source-image pixel coordinates) for every STRAIGHT
 // segment; refined[s] = 1 when segment s got refined endpoints. Fitted lines
-// are moved by the segment's ink re-centering shift. Joints:
-//  - line + line: where the two fitted lines intersect;
-//  - line + arc: the sharpest turn of the traced path near the split,
-//    projected onto the fitted line (see sharpestTurnNear); the arc's own
-//    end shift (s0x/s1x) is rewritten so it starts/ends there too;
-//  - otherwise the joint pixel plus its shared shift (computeEndShifts).
+// are moved by the segment's ink re-centering shift; shared joints that
+// aren't a clean line-line intersection use the joint pixel plus its shared
+// shift (s1x/s1y of the first segment, see computeEndShifts).
 static void refineStraightSegmentEnds(ArcSegment* segs, int count,
                                       float* startX, float* startY, float* endX, float* endY, int* refined,
-                                      float* s0x, float* s0y, float* s1x, float* s1y)
+                                      const float* s1x, const float* s1y)
 {
     static FittedLine fl[MAX_ARC_SEGMENTS];
     for (int s = 0; s < count; s++)
@@ -532,23 +467,10 @@ static void refineStraightSegmentEnds(ArcSegment* segs, int count,
         refined[s] = 0;
         fl[s].valid = 0;
         if (segs[s].circle.r > 1e-3f || segs[s].count < 2) continue;
-        if (segs[s].lineFitValid)
-        {
-            // Line through the middle of the ink band (pipeline.c's
-            // measureInkCenterShift) -- already re-centered, and not
-            // tilted by a skeleton that hops between the two middle
-            // columns of an even-width stroke.
-            fl[s].valid = 1;
-            fl[s].cx = segs[s].lineFitCx; fl[s].cy = segs[s].lineFitCy;
-            fl[s].dx = segs[s].lineFitDx; fl[s].dy = segs[s].lineFitDy;
-        }
-        else
-        {
-            fl[s] = fitLineToPixels(segs[s].pts, segs[s].count);
-            if (!fl[s].valid) continue;
-            fl[s].cx += segs[s].inkShiftX;   // ink re-centering
-            fl[s].cy += segs[s].inkShiftY;
-        }
+        fl[s] = fitLineToPixels(segs[s].pts, segs[s].count);
+        if (!fl[s].valid) continue;
+        fl[s].cx += segs[s].inkShiftX;   // ink re-centering
+        fl[s].cy += segs[s].inkShiftY;
         refined[s] = 1;
         Point p0 = segs[s].pts[0], p1 = segs[s].pts[segs[s].count - 1];
         projectOntoLine(&fl[s], p0.x, p0.y, &startX[s], &startY[s]);
@@ -579,36 +501,12 @@ static void refineStraightSegmentEnds(ArcSegment* segs, int count,
         }
         else
         {
-            double ix = joint.x, iy = joint.y;
-
-            int lineIdx = -1;
-            if (refined[s] && segs[s + 1].circle.r > 1e-3f)      lineIdx = s;
-            else if (refined[s + 1] && segs[s].circle.r > 1e-3f) lineIdx = s + 1;
-            if (lineIdx >= 0)
-            {
-                // Line next to an arc: corner at the path's sharpest turn.
-                const Point* jp = segs[s + 1].pts;
-                int k;
-                if (sharpestTurnNear(jp, -(segs[s].count - 1), segs[s + 1].count - 1, &k))
-                {
-                    float px, py;
-                    projectOntoLine(&fl[lineIdx], jp[k].x, jp[k].y, &px, &py);
-                    if (hypot(px - jointPx.x, py - jointPx.y) <= LINE_REFINE_MAX_SHIFT_PX) { ix = px; iy = py; }
-                }
-            }
-
-            if (refined[s])     { endX[s] = (float)ix;       endY[s] = (float)iy; }
-            if (refined[s + 1]) { startX[s + 1] = (float)ix; startY[s + 1] = (float)iy; }
-            // An arc's end is drawn at pixel + shift (sampleArcPoints), so
-            // store the joint as that shift.
-            s1x[s] = s0x[s + 1] = (float)(ix - jointPx.x);
-            s1y[s] = s0y[s + 1] = (float)(iy - jointPx.y);
+            // Line next to an arc: keep the exact shared pixel on both sides.
+            if (refined[s])     { endX[s] = (float)joint.x;       endY[s] = (float)joint.y; }
+            if (refined[s + 1]) { startX[s + 1] = (float)joint.x; startY[s + 1] = (float)joint.y; }
         }
     }
 }
-
-float segmentInkShiftDebug[MAX_ARC_SEGMENTS * 3];
-float traceRasterPxPerWorld(void) { return g_tracePxPerWorld; }
 
 void setSegmentOverlay(ArcSegment* segments, int count, int imgW, int imgH, BOOL stretched)
 {
@@ -623,7 +521,7 @@ void setSegmentOverlay(ArcSegment* segments, int count, int imgW, int imgH, BOOL
     int refineCount = (count < MAX_ARC_SEGMENTS) ? count : MAX_ARC_SEGMENTS;
     computeEndShifts(segments, refineCount, shiftS0X, shiftS0Y, shiftS1X, shiftS1Y);
     refineStraightSegmentEnds(segments, refineCount, lineStartX, lineStartY, lineEndX, lineEndY, lineRefined,
-                              shiftS0X, shiftS0Y, shiftS1X, shiftS1Y);
+                              shiftS1X, shiftS1Y);
 
     for (int s = 0; s < count && s < MAX_ARC_SEGMENTS; s++)
     {
@@ -649,9 +547,6 @@ void setSegmentOverlay(ArcSegment* segments, int count, int imgW, int imgH, BOOL
 
         segmentStarts[usedSegments] = total;
         segmentCounts[usedSegments] = arcCount;
-        segmentInkShiftDebug[usedSegments * 3]     = segments[s].inkShiftX;
-        segmentInkShiftDebug[usedSegments * 3 + 1] = segments[s].inkShiftY;
-        segmentInkShiftDebug[usedSegments * 3 + 2] = segments[s].inkShiftR;
 
         // NEW: ghost circle in world space - the FULL circle this arc was cut
         // from, not just the sampled arc points. Same pixel->world helpers

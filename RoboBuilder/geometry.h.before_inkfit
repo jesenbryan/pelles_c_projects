@@ -75,17 +75,6 @@ typedef struct {
     float inkShiftX, inkShiftY;
     float inkShiftR;
 
-    // Straight segments only: a line fitted to the MIDDLE of the ink band
-    // at every skeleton pixel (rather than to the skeleton pixels), see
-    // pipeline.c's measureInkCenterShift. Thinning sometimes keeps one
-    // column of a 2 px stroke for part of its length and the other column
-    // for the rest; fitting the skeleton then tilts the line, fitting the
-    // band middles doesn't. Point (lineFitCx, lineFitCy), unit direction
-    // (lineFitDx, lineFitDy), in trace-raster pixel indices. lineFitValid
-    // is 0 when there weren't enough measurable pixels.
-    int   lineFitValid;
-    float lineFitCx, lineFitCy, lineFitDx, lineFitDy;
-
 } ArcSegment;
 
 double curvature(Point a, Point b, Point c);

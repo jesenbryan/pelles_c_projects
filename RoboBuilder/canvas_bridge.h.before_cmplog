@@ -8,13 +8,6 @@ void displayImageOnCanvas(Image* img);
 
 void setSegmentOverlay(ArcSegment* segments, int count, int imgW, int imgH, BOOL stretched);
 
-// Debug only (View > Print Debug Log in Environment mode): the trace
-// raster's scale, and each segment's ink re-centering shift as applied by
-// the last setSegmentOverlay -- 3 floats per segment (shiftX, shiftY,
-// radiusShift), in trace-raster pixels.
-float traceRasterPxPerWorld(void);
-extern float segmentInkShiftDebug[MAX_ARC_SEGMENTS * 3];
-
 // NEW: converts one pixel-space branch/junction point into world
 // coordinates and appends it to branchMarkersWorld for WM_PAINT to draw.
 // No-op once MAX_BRANCH_MARKERS has been reached.

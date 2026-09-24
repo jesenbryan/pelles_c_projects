@@ -216,46 +216,24 @@ static void stampDisc(Image* img, float cx, float cy, float r)
     }
 }
 
-// Every pixel whose CENTER is within r of the segment (a capsule), not a
-// row of discs stamped every half pixel along it. The disc version's width
-// depended on how the stamps happened to line up with the pixel rows, and
-// that drifted along the line (the step is len/ceil(len/0.5), not exactly
-// 0.5): a real report's short vertical riser came out 2 px wide near the
-// floor and 1 px wide further up, so the traced line tilted toward the
-// wide part. A capsule is the exact shape of a stroke and has the same
-// width everywhere.
 static void stampSegment(Image* img, float x0, float y0, float x1, float y1, float r)
 {
     float dx = x1 - x0;
     float dy = y1 - y0;
-    float len2 = dx * dx + dy * dy;
+    float len = sqrtf(dx * dx + dy * dy);
 
-    if (len2 < 1e-6f) {
+    if (len < 0.001f) {
         stampDisc(img, x0, y0, r);
         return;
     }
 
-    int minX = (int)floorf(((x0 < x1) ? x0 : x1) - r);
-    int maxX = (int)ceilf(((x0 > x1) ? x0 : x1) + r);
-    int minY = (int)floorf(((y0 < y1) ? y0 : y1) - r);
-    int maxY = (int)ceilf(((y0 > y1) ? y0 : y1) + r);
-    if (minX < 0) minX = 0;
-    if (minY < 0) minY = 0;
-    if (maxX > img->width - 1)  maxX = img->width - 1;
-    if (maxY > img->height - 1) maxY = img->height - 1;
-    float r2 = r * r;
+    float step = (r * 0.5f > 0.5f) ? r * 0.5f : 0.5f;
+    int steps = (int)ceilf(len / step);
+    if (steps < 1) steps = 1;
 
-    for (int y = minY; y <= maxY; y++) {
-        float py = y + 0.5f;
-        for (int x = minX; x <= maxX; x++) {
-            float px = x + 0.5f;
-            float t = ((px - x0) * dx + (py - y0) * dy) / len2;
-            if (t < 0.0f) t = 0.0f;
-            else if (t > 1.0f) t = 1.0f;
-            float ex = px - (x0 + dx * t), ey = py - (y0 + dy * t);
-            if (ex * ex + ey * ey <= r2)
-                setBinPixel(img, x, y, r);
-        }
+    for (int i = 0; i <= steps; i++) {
+        float t = (float)i / (float)steps;
+        stampDisc(img, x0 + dx * t, y0 + dy * t, r);
     }
 }
 
@@ -532,23 +510,10 @@ static void refineStraightSegmentEnds(ArcSegment* segs, int count,
         refined[s] = 0;
         fl[s].valid = 0;
         if (segs[s].circle.r > 1e-3f || segs[s].count < 2) continue;
-        if (segs[s].lineFitValid)
-        {
-            // Line through the middle of the ink band (pipeline.c's
-            // measureInkCenterShift) -- already re-centered, and not
-            // tilted by a skeleton that hops between the two middle
-            // columns of an even-width stroke.
-            fl[s].valid = 1;
-            fl[s].cx = segs[s].lineFitCx; fl[s].cy = segs[s].lineFitCy;
-            fl[s].dx = segs[s].lineFitDx; fl[s].dy = segs[s].lineFitDy;
-        }
-        else
-        {
-            fl[s] = fitLineToPixels(segs[s].pts, segs[s].count);
-            if (!fl[s].valid) continue;
-            fl[s].cx += segs[s].inkShiftX;   // ink re-centering
-            fl[s].cy += segs[s].inkShiftY;
-        }
+        fl[s] = fitLineToPixels(segs[s].pts, segs[s].count);
+        if (!fl[s].valid) continue;
+        fl[s].cx += segs[s].inkShiftX;   // ink re-centering
+        fl[s].cy += segs[s].inkShiftY;
         refined[s] = 1;
         Point p0 = segs[s].pts[0], p1 = segs[s].pts[segs[s].count - 1];
         projectOntoLine(&fl[s], p0.x, p0.y, &startX[s], &startY[s]);

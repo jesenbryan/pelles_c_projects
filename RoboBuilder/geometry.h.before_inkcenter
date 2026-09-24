@@ -64,28 +64,6 @@ typedef struct {
     // 0 as "use a default thickness."
     float avgRadiusPx;
 
-    // Where the middle of the original ink band lies relative to this
-    // segment's skeleton pixels, in SOURCE IMAGE pixels (see pipeline.c's
-    // measureInkCenterShift). Thinning a stroke with an even pixel width
-    // (e.g. 2 px) has to keep one of the two middle rows, so the skeleton
-    // sits half a pixel off the stroke's true centerline; these undo that.
-    // Straight segment: inkShiftX/Y is the offset to add to every point.
-    // Arc: inkShiftR is added to the fitted radius (positive = outward).
-    // All 0 when not measured.
-    float inkShiftX, inkShiftY;
-    float inkShiftR;
-
-    // Straight segments only: a line fitted to the MIDDLE of the ink band
-    // at every skeleton pixel (rather than to the skeleton pixels), see
-    // pipeline.c's measureInkCenterShift. Thinning sometimes keeps one
-    // column of a 2 px stroke for part of its length and the other column
-    // for the rest; fitting the skeleton then tilts the line, fitting the
-    // band middles doesn't. Point (lineFitCx, lineFitCy), unit direction
-    // (lineFitDx, lineFitDy), in trace-raster pixel indices. lineFitValid
-    // is 0 when there weren't enough measurable pixels.
-    int   lineFitValid;
-    float lineFitCx, lineFitCy, lineFitDx, lineFitDy;
-
 } ArcSegment;
 
 double curvature(Point a, Point b, Point c);

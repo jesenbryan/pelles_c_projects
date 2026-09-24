@@ -646,24 +646,6 @@ static void drawMarkerDisc(float cx, float cy, float r, float red, float green, 
 }
 
 // Distance from a world-space point to a world-space line segment.
-// Half-width, in world units, of a stroke `thicknessPx` screen pixels wide,
-// for the Design-mode stroke and Comparison Mode ribbons. This used to be
-// thicknessPx * zoom / glWindowWidth, which ignored that the visible world
-// is 2 * zoom * aspect units wide (UpdateProjection), so every line came
-// out thicknessPx / aspect pixels wide -- about 1.1 px for a "2 px" stroke
-// on a 16:9 window, and thinner still the wider the window. The tracer
-// stamps strokes at their full thickness, so that also made the drawing
-// and its reconstruction disagree: a ~1.1 px line lights one or two pixel
-// rows depending on where it falls between them, which is what made
-// Comparison Mode look thinner or thicker than the original. At the real
-// width (2 px) a horizontal/vertical line always covers exactly two rows.
-static float designStrokeHalfWidthWorld(float thicknessPx, float zoom)
-{
-    float aspect = (float)glWindowWidth / (float)glWindowHeight;
-    float worldWidth = 2.0f * zoom * ((aspect >= 1.0f) ? aspect : 1.0f);
-    return 0.5f * thicknessPx * worldWidth / (float)glWindowWidth;
-}
-
 static float distPointToSegment(float px, float py, float ax, float ay, float bx, float by)
 {
     float dx = bx - ax;
@@ -1983,14 +1965,11 @@ static void drawSimulationLiveContactDots(void)
                         if (pointCount > ARC_SAMPLE_COUNT) pointCount = ARC_SAMPLE_COUNT;
                     }
 
-                    BOOL sampleHit[ARC_SAMPLE_COUNT];
-
                     for (int i = 0; i < pointCount; i++)
                     {
                         float t = (float)i / (float)(pointCount - 1);
                         float rx = rectEdges[e].start.x + (rectEdges[e].end.x - rectEdges[e].start.x) * t;
                         float ry = rectEdges[e].start.y + (rectEdges[e].end.y - rectEdges[e].start.y) * t;
-                        sampleHit[i] = FALSE;
 
                         float ecx, ecy;
                         robotPointToEnvWorld(rx, ry, &ecx, &ecy);
@@ -2004,74 +1983,9 @@ static void drawSimulationLiveContactDots(void)
                         // size so every Rocky contact dot reads at a
                         // consistent scale.
                         if (pointVisuallyContactsEnvironmentStroke(ecx, ecy, 0.0f))
-                        {
-                            sampleHit[i] = TRUE;
                             drawMarkerDisc(rx, ry, liveContactDotRadiusPivot, 0.95f, 0.1f, 0.1f, 1.0f);
-                        }
                         else
                             drawMarkerDisc(rx, ry, liveMissDotRadius, liveMissR, liveMissG, liveMissB, liveMissA);
-                    }
-
-                    // Exact pass for contacts the samples above step over:
-                    // an edge resting on a CORNER of the environment (e.g.
-                    // the top of a step) touches it at a single point
-                    // somewhere between two samples, so neither sample is
-                    // close enough to turn red even though the edge really
-                    // is resting there. For each environment segment, find
-                    // the closest point on this edge exactly
-                    // (distSegmentToSegment) and, if it's within the same
-                    // visual tolerance the samples use, draw a red dot at
-                    // it -- unless a sampled red dot (or an exact dot from
-                    // a neighbouring segment, e.g. the other side of the
-                    // same corner) is already within one sample spacing.
-                    {
-                        float ax, ay, bx, by;
-                        robotPointToEnvWorld(rectEdges[e].start.x, rectEdges[e].start.y, &ax, &ay);
-                        robotPointToEnvWorld(rectEdges[e].end.x, rectEdges[e].end.y, &bx, &by);
-                        float pad = simEnvLineHalfWidthWorld() + simContactVisualToleranceWorld();
-                        float qMinX = (ax < bx) ? ax : bx, qMaxX = (ax < bx) ? bx : ax;
-                        float qMinY = (ay < by) ? ay : by, qMaxY = (ay < by) ? by : ay;
-                        float spacingT = 1.0f / (float)(pointCount - 1);
-
-                        float exactT[MAX_ARC_SEGMENTS];
-                        int exactCount = 0;
-
-                        for (int s = 0; s < canvas.segmentResultCount; s++)
-                        {
-                            int start = segmentStarts[s];
-                            int count = segmentCounts[s];
-                            if (count < 2) continue;
-                            if (!envSegmentBoxNear(s, qMinX, qMinY, qMaxX, qMaxY, pad)) continue;
-
-                            float bestDist = pad, bestT = -1.0f;
-                            for (int k = 0; k < count - 1; k++)
-                            {
-                                float ex0 = segmentPointsWorld[(start + k) * 2];
-                                float ey0 = segmentPointsWorld[(start + k) * 2 + 1];
-                                float ex1 = segmentPointsWorld[(start + k + 1) * 2];
-                                float ey1 = segmentPointsWorld[(start + k + 1) * 2 + 1];
-                                if (!envPieceBoxNear(ex0, ey0, ex1, ey1, qMinX, qMinY, qMaxX, qMaxY, pad)) continue;
-
-                                float t;
-                                float d = distSegmentToSegment(ax, ay, bx, by, ex0, ey0, ex1, ey1, NULL, NULL, &t);
-                                if (d < bestDist) { bestDist = d; bestT = t; }
-                            }
-                            if (bestT < 0.0f) continue; // this segment isn't touching the edge
-
-                            BOOL covered = FALSE;
-                            for (int i = 0; i < pointCount && !covered; i++)
-                                if (sampleHit[i] && fabsf((float)i * spacingT - bestT) <= spacingT)
-                                    covered = TRUE;
-                            for (int j = 0; j < exactCount && !covered; j++)
-                                if (fabsf(exactT[j] - bestT) <= spacingT)
-                                    covered = TRUE;
-                            if (covered) continue;
-
-                            exactT[exactCount++] = bestT;
-                            float rx = rectEdges[e].start.x + (rectEdges[e].end.x - rectEdges[e].start.x) * bestT;
-                            float ry = rectEdges[e].start.y + (rectEdges[e].end.y - rectEdges[e].start.y) * bestT;
-                            drawMarkerDisc(rx, ry, liveContactDotRadiusPivot, 0.95f, 0.1f, 0.1f, 1.0f);
-                        }
                     }
                 }
             }
@@ -6036,7 +5950,7 @@ void canvasRenderFrame(float dimAmount)
             if (appMode == APP_MODE_SIMULATION)
                 halfW = simEnvLineHalfWidthWorld();
             else
-                halfW = designStrokeHalfWidthWorld(strokeThickness[s], effectiveZoomForStroke);
+                halfW = (strokeThickness[s] * effectiveZoomForStroke) / (float)glWindowWidth;
 
             glBegin(GL_TRIANGLE_STRIP);
             for (int i = 0; i < count; i++)
@@ -6210,12 +6124,8 @@ void canvasRenderFrame(float dimAmount)
 	        if (appMode == APP_MODE_SIMULATION)
 	            baseHalfW = simEnvLineHalfWidthWorld();
 	        else
-	            baseHalfW = designStrokeHalfWidthWorld(segmentAvgRadiusPx[s], effectiveZoomForRender);
-	        // (The View Segments 2x boost above was sized for the old,
-	        // too-thin width -- see designStrokeHalfWidthWorld. Now that the
-	        // base width is correct it's already about as wide as the old
-	        // boosted ribbon, so no extra boost; hover still widens it.)
-	        float ghostHalfW = baseHalfW;
+	            baseHalfW = (segmentAvgRadiusPx[s] * effectiveZoomForRender) / (float)glWindowWidth;
+	        float ghostHalfW = isComparisonActive ? baseHalfW : baseHalfW * 2.0f;
 	        float halfW = isHovered ? ghostHalfW * 1.5f : ghostHalfW;
 
 	        glBegin(GL_TRIANGLE_STRIP);
@@ -7216,143 +7126,6 @@ static void updateDrawingPoint(HWND hWnd, int mx, int my, BOOL shiftHeld, BOOL c
         InvalidateRect(hWnd, NULL, FALSE);
     }
 }
-// ---- Debug log: original drawing vs reconstruction (Environment mode) ----
-// Printed by View > Print Debug Log after the trace dump. Everything is in
-// SCREEN pixels at the current view (x right, y down), so an offset reads
-// directly as "how many pixels off on screen". Ends with the raw strokes in
-// the exact Autosave\Environment.txt format, so the drawing can be
-// reproduced from the log alone.
-static float cmpDistToStroke(int st, float wx, float wy)
-{
-    int start = strokeStarts[st];
-    int end = (st == canvas.strokeCount - 1) ? canvas.pointCount : strokeStarts[st + 1];
-    int count = (end - start) / 2;
-    if (count < 1) return 1e30f;
-    if (count == 1) return hypotf(wx - points[start], wy - points[start + 1]);
-    float best = 1e30f;
-    for (int i = 0; i + 1 < count; i++)
-    {
-        float d = distPointToSegment(wx, wy, points[start + i * 2], points[start + i * 2 + 1],
-                                     points[start + (i + 1) * 2], points[start + (i + 1) * 2 + 1]);
-        if (d < best) best = d;
-    }
-    return best;
-}
-
-static void printEnvironmentComparison(void)
-{
-    float aspect = (float)glWindowWidth / (float)glWindowHeight;
-    float zoom = canvas.zoom;
-    float pxPerWorld = (float)glWindowWidth / (2.0f * zoom * ((aspect >= 1.0f) ? aspect : 1.0f));
-    float halfW = glWindowWidth * 0.5f, halfH = glWindowHeight * 0.5f;
-#define CMP_SX(wx) (((wx) - canvas.panX) * pxPerWorld + halfW)
-#define CMP_SY(wy) (halfH - ((wy) - canvas.panY) * pxPerWorld)
-
-    printf("\n---------- ORIGINAL vs RECONSTRUCTED ----------\n");
-    printf("[CMP] window=%dx%d zoom=%.5f pan=(%.5f,%.5f) screenPx/world=%.3f traceRasterPx/world=%.3f\n",
-           glWindowWidth, glWindowHeight, zoom, canvas.panX, canvas.panY, pxPerWorld, traceRasterPxPerWorld());
-    printf("[CMP] positions = screen px (x right, y down); distances = screen px\n");
-
-    // Original strokes
-    printf("[ORIG] %d stroke(s)\n", canvas.strokeCount);
-    for (int st = 0; st < canvas.strokeCount; st++)
-    {
-        int start = strokeStarts[st];
-        int end = (st == canvas.strokeCount - 1) ? canvas.pointCount : strokeStarts[st + 1];
-        int count = (end - start) / 2;
-        if (count < 1) continue;
-        printf("[ORIG] stroke=%d %s thickness=%.2f points=%d start=(%.2f,%.2f) end=(%.2f,%.2f)\n", st,
-               strokeLayer[st] == LAYER_ENVIRONMENT ? "env" : "robot-layer", strokeThickness[st], count,
-               CMP_SX(points[start]), CMP_SY(points[start + 1]),
-               CMP_SX(points[end - 2]), CMP_SY(points[end - 1]));
-    }
-
-    // Reconstructed segments, each matched to the original stroke it lies on
-    printf("[RECON] %d segment(s)\n", canvas.segmentResultCount);
-    for (int s = 0; s < canvas.segmentResultCount; s++)
-    {
-        int start = segmentStarts[s];
-        int count = segmentCounts[s];
-        if (count < 2) continue;
-        float ax = segmentPointsWorld[start * 2], ay = segmentPointsWorld[start * 2 + 1];
-        float bx = segmentPointsWorld[(start + count - 1) * 2], by = segmentPointsWorld[(start + count - 1) * 2 + 1];
-        BOOL isArc = segmentCircleRadiusWorld[s] > 0.0f;
-
-        int bestStroke = -1;
-        float bestMean = 1e30f, bestMax = 0.0f;
-        for (int st = 0; st < canvas.strokeCount; st++)
-        {
-            if (strokeLayer[st] != LAYER_ENVIRONMENT) continue;
-            float sum = 0.0f, mx = 0.0f;
-            for (int i = 0; i < count; i++)
-            {
-                float d = cmpDistToStroke(st, segmentPointsWorld[(start + i) * 2], segmentPointsWorld[(start + i) * 2 + 1]);
-                sum += d;
-                if (d > mx) mx = d;
-            }
-            float mean = sum / (float)count;
-            if (mean < bestMean) { bestMean = mean; bestMax = mx; bestStroke = st; }
-        }
-
-        printf("[RECON] seg=%d %s pts=%d start=(%.2f,%.2f) end=(%.2f,%.2f)", s, isArc ? "arc " : "line", count,
-               CMP_SX(ax), CMP_SY(ay), CMP_SX(bx), CMP_SY(by));
-        if (isArc)
-            printf(" radius=%.2f", segmentCircleRadiusWorld[s] * pxPerWorld);
-        printf(" width=%.2f inkShift(raster px)=(%.2f,%.2f,r%.2f)\n", segmentAvgRadiusPx[s],
-               segmentInkShiftDebug[s * 3], segmentInkShiftDebug[s * 3 + 1], segmentInkShiftDebug[s * 3 + 2]);
-        if (bestStroke >= 0)
-            printf("[RECON]      -> on stroke %d: mean off %.2f px, max off %.2f px\n",
-                   bestStroke, bestMean * pxPerWorld, bestMax * pxPerWorld);
-    }
-
-    // Every original stroke endpoint (corners and free ends) vs the nearest
-    // reconstructed segment endpoint
-    printf("[CORNER] original endpoint -> nearest reconstructed endpoint\n");
-    for (int st = 0; st < canvas.strokeCount; st++)
-    {
-        if (strokeLayer[st] != LAYER_ENVIRONMENT) continue;
-        int start = strokeStarts[st];
-        int end = (st == canvas.strokeCount - 1) ? canvas.pointCount : strokeStarts[st + 1];
-        if (end - start < 2) continue;
-        for (int e = 0; e < 2; e++)
-        {
-            float ox = (e == 0) ? points[start] : points[end - 2];
-            float oy = (e == 0) ? points[start + 1] : points[end - 1];
-            float best = 1e30f, bx = 0.0f, by = 0.0f;
-            int bestSeg = -1;
-            for (int s = 0; s < canvas.segmentResultCount; s++)
-            {
-                int ss = segmentStarts[s], c = segmentCounts[s];
-                if (c < 2) continue;
-                for (int k = 0; k < 2; k++)
-                {
-                    int idx = (k == 0) ? ss : ss + c - 1;
-                    float px = segmentPointsWorld[idx * 2], py = segmentPointsWorld[idx * 2 + 1];
-                    float d = hypotf(px - ox, py - oy);
-                    if (d < best) { best = d; bx = px; by = py; bestSeg = s; }
-                }
-            }
-            if (bestSeg < 0) continue;
-            printf("[CORNER] stroke=%d %s (%.2f,%.2f) -> seg=%d (%.2f,%.2f)  dx=%+.2f dy=%+.2f dist=%.2f px\n",
-                   st, e == 0 ? "start" : "end  ", CMP_SX(ox), CMP_SY(oy), bestSeg, CMP_SX(bx), CMP_SY(by),
-                   (bx - ox) * pxPerWorld, -(by - oy) * pxPerWorld, best * pxPerWorld);
-        }
-    }
-
-    // Raw drawing, exact Autosave\Environment.txt format
-    printf("[STROKES-BEGIN]\n");
-    printf("%d\n", canvas.strokeCount);
-    for (int st = 0; st < canvas.strokeCount; st++)
-        printf("%d %.6f %lu %d\n", strokeStarts[st], strokeThickness[st],
-               (unsigned long)strokeColor[st], (int)strokeLayer[st]);
-    printf("%d\n", canvas.pointCount);
-    for (int i = 0; i < canvas.pointCount; i += 2)
-        printf("%.6f %.6f\n", points[i], points[i + 1]);
-    printf("[STROKES-END]\n");
-#undef CMP_SX
-#undef CMP_SY
-}
-
 LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
     switch(msg)
@@ -9742,7 +9515,6 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	            gSuppressTraceDebugPrints = FALSE;
 	            RunTracePipeline();
 	            gSuppressTraceDebugPrints = savedSuppress;
-	            printEnvironmentComparison();
 	        }
 
 	        printf("========== END DEBUG LOG ==========\n\n");
