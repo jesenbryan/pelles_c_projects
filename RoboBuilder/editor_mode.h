@@ -37,6 +37,13 @@ void switchEditorMode(EditorMode newMode, EditorModeState* modeState);
 // Get human-readable name for a mode (used for logging).
 const wchar_t* getEditorModeName(EditorMode mode);
 
+// The mode the user sees right now: "Robot", "Environment" or "Simulation".
+const char* currentModeName(void);
+
+// Prints "[Mode] Switched to: <name>" when currentModeName() changed since
+// the last print. Called after every mode switch.
+void logModeIfChanged(void);
+
 // Shows the current mode's windows/controls (Semni's buttons + hover
 // label, or the ArcSpline canvas's floating UI panel) and hides the
 // other's. Called once right after both subsystems' windows/controls

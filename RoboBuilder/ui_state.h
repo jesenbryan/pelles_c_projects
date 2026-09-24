@@ -31,6 +31,7 @@
 #define ID_TOGGLE_FPS_LOG    20
 #define ID_UNDO              21
 #define ID_ABOUT             22
+#define ID_DEBUG_LOG_MENU    23   // View > Debug Log -- prints the current mode's debug info
 
 // Author credit -- shown in Help > About RoboBuilder.
 #define APP_AUTHOR_NAME L"Jesen Bryan"

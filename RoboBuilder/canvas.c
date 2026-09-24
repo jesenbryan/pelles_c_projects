@@ -16,6 +16,7 @@
 #include "input.h"        // For commitWeightEdit -- File > Save confirms the Weight box first
 #include "debug.h"        // For ClearConsoleLog -- Simulation's Reset button (ID_RESET_ROBOT below)
 #include <math.h>
+#include <windowsx.h>  // GET_X_LPARAM/GET_Y_LPARAM: SIGNED mouse coords (negative when a captured drag leaves the window)
 #include <string.h>
 #include <stdlib.h>        // For wcstod (Rocky's Body/Leg Weight edit boxes, read in ID_SAVE below)
 #include <wchar.h>
@@ -8234,6 +8235,13 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         }
         return 0;
     }
+    case WM_CAPTURECHANGED:
+        // Mouse capture taken away mid-pan (Alt+Tab, a dialog...): stop
+        // panning, otherwise the view keeps following the mouse with no
+        // button held.
+        if ((HWND)lParam != hWnd) panning = FALSE;
+        break;
+
     case WM_SETCURSOR:
     {
         // Hide the cursor while drawing a Shift straight line, so it
@@ -8284,7 +8292,7 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         if (appMode == APP_MODE_SIMULATION)
         {
             float wx, wy;
-            screenToGL(hWnd, LOWORD(lParam), HIWORD(lParam), &wx, &wy);
+            screenToGL(hWnd, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam), &wx, &wy);
             if (isPointInsideActiveRobotBody(wx, wy))
             {
                 app.draggingRobotSim = TRUE;
@@ -8306,8 +8314,8 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         strokeLayer[canvas.strokeCount] = designLayer;
         canvas.strokeCount++;
 
-        float x = (float)LOWORD(lParam);
-        float y = (float)HIWORD(lParam);
+        float x = (float)GET_X_LPARAM(lParam);
+        float y = (float)GET_Y_LPARAM(lParam);
         float aspect = (float)glWindowWidth / (float)glWindowHeight;
         float nx, ny;
         if (aspect >= 1.0f) {
@@ -8446,8 +8454,8 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	case WM_MBUTTONDOWN:
 	{
 	    panning = TRUE;
-	    panLastX = LOWORD(lParam);
-	    panLastY = HIWORD(lParam);
+	    panLastX = GET_X_LPARAM(lParam);
+	    panLastY = GET_Y_LPARAM(lParam);
 	    SetCapture(hWnd);
 
 	    // Set the hand cursor immediately on the down-click rather than
@@ -8490,7 +8498,7 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	    if (app.draggingRobotSim)
 	    {
 	        float wx, wy;
-	        screenToGL(hWnd, LOWORD(lParam), HIWORD(lParam), &wx, &wy);
+	        screenToGL(hWnd, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam), &wx, &wy);
 
 	        translateActiveRobot(wx - dragRobotLastWX, wy - dragRobotLastWY);
 
@@ -8509,7 +8517,7 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	    if (appMode == APP_MODE_SIMULATION)
 	    {
 	        float wx, wy;
-	        screenToGL(hWnd, LOWORD(lParam), HIWORD(lParam), &wx, &wy);
+	        screenToGL(hWnd, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam), &wx, &wy);
 	        app.hoveringRobotSim = isPointInsideActiveRobotBody(wx, wy);
 
 	        // Keep simHoveredJoint current too -- see its own comment and
@@ -8548,8 +8556,8 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	        // been set this drag.
 	        SetCursor(LoadCursor(NULL, IDC_HAND));
 
-	        int mx = LOWORD(lParam);
-	        int my = HIWORD(lParam);
+	        int mx = GET_X_LPARAM(lParam);
+	        int my = GET_Y_LPARAM(lParam);
 	        int dx = mx - panLastX;
 	        int dy = my - panLastY;
 
@@ -8611,8 +8619,8 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	        // NEW: hover detection (segment overlay + stroke endpoint
 	        // snapping) when not actively drawing or panning. World coords
 	        // computed once here so both checks below can share them.
-	        float hx = (float)LOWORD(lParam);
-	        float hy = (float)HIWORD(lParam);
+	        float hx = (float)GET_X_LPARAM(lParam);
+	        float hy = (float)GET_Y_LPARAM(lParam);
 	        float hAspect = (float)glWindowWidth / (float)glWindowHeight;
 	        float hwx, hwy;
 	        if (hAspect >= 1.0f) {
@@ -8671,7 +8679,7 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	    // -- both funnel through updateDrawingPoint so a fresh point/preview
 	    // can never disagree about how it was computed depending on which
 	    // message happened to trigger it.
-	    updateDrawingPoint(hWnd, LOWORD(lParam), HIWORD(lParam),
+	    updateDrawingPoint(hWnd, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam),
 	                       (wParam & MK_SHIFT) != 0, (wParam & MK_CONTROL) != 0);
 	    return 0;
 	}
@@ -8946,9 +8954,12 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	            // Segments/Comparison Mode/Save, which stay verbose), so
 	            // suppress its [DEBUG] Path Analysis/Arc Segmentation dumps
 	            // specifically -- see gSuppressTraceDebugPrints' own comment.
-	            gSuppressTraceDebugPrints = TRUE;
-	            RunTracePipeline();
-	            gSuppressTraceDebugPrints = FALSE;
+	            {
+	                BOOL savedSuppress = gSuppressTraceDebugPrints;
+	                gSuppressTraceDebugPrints = TRUE;
+	                RunTracePipeline();
+	                gSuppressTraceDebugPrints = savedSuppress;
+	            }
 
 	            // Kick off a settle pass -- but ONLY if the robot is already
 	            // touching/overlapping the freshly-traced environment right
@@ -9089,7 +9100,10 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	            UINT logItemState = MF_BYCOMMAND | (appMode == APP_MODE_SIMULATION ? MF_ENABLED : MF_GRAYED);
 	            EnableMenuItem(hViewMenuForLogs, ID_TOGGLE_SIM_LOG, logItemState);
 	            EnableMenuItem(hViewMenuForLogs, ID_TOGGLE_FPS_LOG, logItemState);
+	            EnableMenuItem(hViewMenuForLogs, ID_TOGGLE_SHOW_FPS, logItemState); // Show FPS: Simulation only too
 	        }
+
+	        logModeIfChanged(); // "[Mode] Switched to: Robot / Environment / Simulation"
 
 	        // Slow Motion button: only makes sense in Simulation, so it
 	        // shows/hides right alongside it. Slow Motion is ON by default
@@ -9386,6 +9400,57 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	        // this -- only relevant while that editor is actually showing.
 	        if (editorModeState.currentMode == EDITOR_MODE_SEMNI)
 	            SetFocus(app.hwndMain);
+	    }
+	    else if (LOWORD(wParam) == ID_DEBUG_LOG_MENU)
+	    {
+	        // View > Print Debug Log -- one on-demand dump for the mode the
+	        // user is in (replaces the robot panel's Debug Log button and the
+	        // trace dumps that used to print on every View Segments /
+	        // Comparison Mode click).
+	        const char* modeName = currentModeName();
+	        printf("\n========== DEBUG LOG: %s ==========\n", modeName);
+
+	        if (appMode == APP_MODE_SIMULATION || editorModeState.currentMode == EDITOR_MODE_SEMNI)
+	        {
+	            // Robot pose as app_init.c-style assignments (copy-pasteable
+	            // as a new starting pose) -- what the old button printed.
+	            switch (app.robotScene.activeKind)
+	            {
+	                case ROBOT_KIND_ROCKY: printRockyAsInit(app.robotScene.rocky); break;
+	                case ROBOT_KIND_STILO: printStiloAsInit(app.robotScene.stilo); break;
+	                case ROBOT_KIND_SEMNI:
+	                default:               printRobotAsInit(app.robotScene.robot); break;
+	            }
+	        }
+
+	        if (appMode == APP_MODE_SIMULATION)
+	        {
+	            // The environment exactly as collision sees it (traced on
+	            // entering Simulation).
+	            printf("[ENV] %d segment(s) traced:\n", canvas.segmentResultCount);
+	            for (int s = 0; s < canvas.segmentResultCount; s++)
+	            {
+	                int start = segmentStarts[s];
+	                int count = segmentCounts[s];
+	                if (count < 2) continue;
+	                printf("[ENV]   seg=%d start=(%.5f,%.5f) end=(%.5f,%.5f) %s thickness=%.5f\n", s,
+	                       segmentPointsWorld[start * 2], segmentPointsWorld[start * 2 + 1],
+	                       segmentPointsWorld[(start + count - 1) * 2], segmentPointsWorld[(start + count - 1) * 2 + 1],
+	                       segmentCircleRadiusWorld[s] > 0.0f ? "arc " : "line", segmentThicknessWorld[s]);
+	            }
+	        }
+	        else if (editorModeState.currentMode != EDITOR_MODE_SEMNI)
+	        {
+	            // Environment: re-trace with the full pipeline dump (path
+	            // analysis, endpoints, arc segmentation).
+	            BOOL savedSuppress = gSuppressTraceDebugPrints;
+	            gSuppressTraceDebugPrints = FALSE;
+	            RunTracePipeline();
+	            gSuppressTraceDebugPrints = savedSuppress;
+	        }
+
+	        printf("========== END DEBUG LOG ==========\n\n");
+	        if (hWnd) InvalidateRect(hWnd, NULL, FALSE);
 	    }
 	    else if (LOWORD(wParam) == ID_ABOUT)
 	    {

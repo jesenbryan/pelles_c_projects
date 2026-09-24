@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <wchar.h>
 #include <windows.h>
+#include <windowsx.h>  // GET_X_LPARAM/GET_Y_LPARAM: SIGNED mouse coords (negative when a captured drag leaves the window)
 #include <commctrl.h>
 #include <math.h>
 
@@ -751,6 +752,13 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
 {
     switch (msg)
     {
+        case WM_CAPTURECHANGED:
+            // Mouse capture taken away mid-pan (Alt+Tab, a dialog...): stop
+            // panning, otherwise the view keeps following the mouse with no
+            // button held.
+            if ((HWND)lParam != hwnd) semniPanning = FALSE;
+            break;
+
         case WM_SETCURSOR:
         {
             // Hand cursor over a grabbable robot handle (and while dragging
@@ -767,8 +775,8 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
         case WM_MBUTTONDOWN:
         {
             semniPanning = TRUE;
-            semniPanLastX = LOWORD(lParam);
-            semniPanLastY = HIWORD(lParam);
+            semniPanLastX = GET_X_LPARAM(lParam);
+            semniPanLastY = GET_Y_LPARAM(lParam);
             SetCapture(hwnd);
 
             // Same hand-cursor treatment as canvas.c's own ArcSpline
@@ -797,8 +805,8 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             if (GetFocus() != hwnd)
                 SetFocus(hwnd);
 
-            int mx = LOWORD(lParam);
-            int my = HIWORD(lParam);
+            int mx = GET_X_LPARAM(lParam);
+            int my = GET_Y_LPARAM(lParam);
 
             // Capture the mouse for the whole drag, same as WM_MBUTTONDOWN's
             // panning just above. Without this, releasing the button
@@ -1478,8 +1486,8 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
 
         case WM_MOUSEMOVE:
         {
-            int mx = LOWORD(lParam);
-            int my = HIWORD(lParam);
+            int mx = GET_X_LPARAM(lParam);
+            int my = GET_Y_LPARAM(lParam);
 
             if (semniPanning)
             {
@@ -3851,8 +3859,7 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             int relYSize     = relYActualWeight + btnH  + rowGap;  // Size: W x H mm (live readout, all robot kinds)
             int relYScale    = relYSize     + btnH       + rowGap; // Scale label + slider
             int relYSeg      = relYScale    + sliderH    + rowGap; // View Segments
-            int relYDebug    = relYSeg      + btnH       + rowGap; // Debug Log
-            int relYRockyHide = relYDebug   + btnH       + rowGap; // Remove Leg | Remove Body (Rocky only, testing)
+            int relYRockyHide = relYSeg     + btnH       + rowGap; // Remove Leg | Remove Body (Rocky only, testing) -- Debug Log row moved to View > Print Debug Log
             int panelH       = relYRockyHide + btnH      + pad;
 
             int panelX = rect.right - outerMargin - panelW;
@@ -3973,10 +3980,6 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
 
             SetWindowPos(app->ui.hViewSegmentsButton, NULL,
                  col1X, panelY + relYSeg, contentW, btnH,
-                 SWP_NOZORDER);
-
-            SetWindowPos(app->ui.hDebugLogButton, NULL,
-                 col1X, panelY + relYDebug, contentW, btnH,
                  SWP_NOZORDER);
 
             SetWindowPos(app->ui.hRockyToggleLegButton, NULL,
@@ -4361,22 +4364,10 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
             );
              SendMessage(app->ui.hViewSegmentsButton, WM_SETFONT, (WPARAM)g_semniUIFont, TRUE);
 
-             // Debug Log: dumps the current robot pose as app_init.c-style
-             // assignments to the console (printRobotAsInit, robot.c) on
-             // demand -- replaces the old "print every 1s while the mouse
-             // moves" background log in WM_MOUSEMOVE, which spammed the
-             // console constantly whether you wanted a dump or not.
-             app->ui.hDebugLogButton = CreateWindow(
-                L"BUTTON",
-                L"Debug Log",
-                WS_VISIBLE | WS_CHILD,
-                0, 0, 10, 10,
-                hwnd,
-                (HMENU)ID_DEBUG_LOG_BUTTON,
-                NULL,
-                NULL
-            );
-             SendMessage(app->ui.hDebugLogButton, WM_SETFONT, (WPARAM)g_semniUIFont, TRUE);
+             // The "Debug Log" button that used to sit here moved to
+             // View > Print Debug Log (canvas.c's ID_DEBUG_LOG_MENU), which
+             // prints the robot pose in Robot mode and the right thing in
+             // the other modes. hDebugLogButton stays NULL.
 
              // Rocky-only testing toggles (see app.h's
              // ID_ROCKY_TOGGLE_LEG_BUTTON/ID_ROCKY_TOGGLE_BODY_BUTTON and
@@ -4826,28 +4817,6 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     SetFocus(app->hwndMain);
                     break;
                 }
-
-                case ID_DEBUG_LOG_BUTTON:
-                    // dump the current robot pose as app_init.c-style
-                    // assignments, so it can be copied straight in as the
-                    // new starting pose once it's been shaped by hand
-                    switch (app->robotScene.activeKind)
-                    {
-                        case ROBOT_KIND_ROCKY:
-                            printRockyAsInit(app->robotScene.rocky);
-                            break;
-
-                        case ROBOT_KIND_STILO:
-                            printStiloAsInit(app->robotScene.stilo);
-                            break;
-
-                        case ROBOT_KIND_SEMNI:
-                        default:
-                            printRobotAsInit(app->robotScene.robot);
-                            break;
-                    }
-                    SetFocus(app->hwndMain);
-                    break;
             }
             break;
     }

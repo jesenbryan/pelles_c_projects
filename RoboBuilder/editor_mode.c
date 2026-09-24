@@ -27,7 +27,24 @@ void switchEditorMode(EditorMode newMode, EditorModeState* modeState)
 
     applyEditorModeVisibility(modeState);
 
-    printf("[EditorMode] Switched to: %ls\n", getEditorModeName(newMode));
+    logModeIfChanged();
+}
+
+const char* currentModeName(void)
+{
+    if (appMode == APP_MODE_SIMULATION) return "Simulation";
+    return (editorModeState.currentMode == EDITOR_MODE_SEMNI) ? "Robot" : "Environment";
+}
+
+void logModeIfChanged(void)
+{
+    static const char* lastLogged = "Environment"; // the app starts in Environment
+    const char* name = currentModeName();
+    if (name != lastLogged)
+    {
+        printf("[Mode] Switched to: %s\n", name);
+        lastLogged = name;
+    }
 }
 
 const wchar_t* getEditorModeName(EditorMode mode)
@@ -42,7 +59,7 @@ const wchar_t* getEditorModeName(EditorMode mode)
         // now called "Environment" instead of the internal "ArcSpline"
         // name. No more "(was: ...)" half -- just which mode it switched to.
         case EDITOR_MODE_SEMNI:
-            return L"Design Robot";
+            return L"Robot";
         case EDITOR_MODE_ARCSPLINE:
             return L"Environment";
         default:

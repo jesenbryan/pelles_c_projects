@@ -114,7 +114,7 @@ static HMENU buildMainMenu(void)
     // extra step to discover). canvas.c's own ID_TOGGLE_SHOW_FPS handler
     // locates this same menu via GetSubMenu(hMenuBar, 2), same fixed-index
     // lookup ID_TOGGLE_HIDE_INACTIVE already relies on.
-    AppendMenu(hViewMenu, MF_STRING | MF_CHECKED, ID_TOGGLE_SHOW_FPS, L"Show FPS");
+    AppendMenu(hViewMenu, MF_STRING | MF_CHECKED | MF_GRAYED, ID_TOGGLE_SHOW_FPS, L"Show FPS");   // Simulation only -- enabled by canvas.c on entering Simulation
     // Simulation-only console log toggles (canvas.c's simPhysicsLogEnabled/
     // simFpsLogEnabled, see ui_state.h). Start unchecked (off) and greyed
     // out, since the app starts in Design mode -- canvas.c's mode-switch
@@ -124,6 +124,11 @@ static HMENU buildMainMenu(void)
     AppendMenu(hViewMenu, MF_SEPARATOR, 0, NULL);
     AppendMenu(hViewMenu, MF_STRING | MF_UNCHECKED | MF_GRAYED, ID_TOGGLE_SIM_LOG, L"Simulation Log (contact, gravity, settle)");
     AppendMenu(hViewMenu, MF_STRING | MF_UNCHECKED | MF_GRAYED, ID_TOGGLE_FPS_LOG, L"FPS Log");
+    // Replaces the old robot-panel "Debug Log" button and the automatic
+    // trace dumps: prints debug info for whichever mode is active
+    // (Robot / Environment / Simulation) -- see canvas.c's ID_DEBUG_LOG_MENU.
+    AppendMenu(hViewMenu, MF_SEPARATOR, 0, NULL);
+    AppendMenu(hViewMenu, MF_STRING, ID_DEBUG_LOG_MENU, L"Print Debug Log");
     AppendMenu(hMenuBar, MF_POPUP, (UINT_PTR)hViewMenu, L"&View");
 
     HMENU hHelpMenu = CreatePopupMenu();
@@ -202,6 +207,7 @@ LRESULT CALLBACK WndProcShared(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
         if (wParam == VK_ESCAPE && editorModeState.currentMode == EDITOR_MODE_SEMNI)
         {
             switchEditorMode(EDITOR_MODE_ARCSPLINE, &editorModeState);
+            logModeIfChanged();
             InvalidateRect(hwnd, NULL, TRUE);
             return 0;
         }

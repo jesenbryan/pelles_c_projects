@@ -19,7 +19,7 @@
 // the user actually asks to view segments (see RunPendingUploadTrace).
 static Image* s_pendingBmpImage = NULL;
 
-BOOL gSuppressTraceDebugPrints = FALSE;   // see pipeline.h
+BOOL gSuppressTraceDebugPrints = TRUE;    // see pipeline.h -- trace dumps only print via View > Debug Log (canvas.c)
 
 static void freePendingBmpImage(void)
 {
@@ -467,7 +467,6 @@ static void runPipelineOnImage(Image* img, const char* sourceLabel, BOOL stretch
 
     if (!gSuppressTraceDebugPrints) debugPrintSegments(allSegments, totalSegCount);
     setSegmentOverlay(allSegments, totalSegCount, w, h, stretched);
-    if (!gSuppressTraceDebugPrints) debugPrintSegments(allSegments, totalSegCount);
 
     for (int i = 0; i < componentPathCount; i++) free(componentPaths[i]);
     free(remaining);
