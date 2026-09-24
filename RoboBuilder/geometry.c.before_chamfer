@@ -502,12 +502,6 @@ static int polylineCornerSplit(Point* pts, int n)
     return -1;
 }
 
-// Corner-chamfer removal in buildSegments: a straight segment of at most
-// this many traced pixels, between two straight segments that turn by at
-// least CHAMFER_MIN_CORNER_DEG, is a thinning bevel -- not a real line.
-#define CHAMFER_MAX_POINTS      7
-#define CHAMFER_MIN_CORNER_DEG  30.0
-
 static int recursiveArcFit(Point* pts, int n, ArcSegment* out, int maxSegments, int* segCount)
 {
     if (n < 2) return 1;
@@ -665,66 +659,6 @@ int buildSegments(Point* path, int n, ArcSegment* out)
         i++;
     }
     segCount = mergedCount;
-
-    // Remove corner chamfers: thinning sometimes turns a sharp corner into
-    // a tiny diagonal stub (2-6 px), which the fitter then keeps as its own
-    // short straight segment -- a visible bevel at a step corner, and one
-    // extra segment. A very short straight segment sitting between two
-    // longer straight segments that meet at a real corner (>= 30 deg) is
-    // split in half and handed to its neighbours instead; canvas_bridge's
-    // line refinement then places the corner exactly where the two fitted
-    // lines intersect. Short pieces between near-parallel lines (a genuine
-    // tiny step) and anything next to an arc are left alone.
-    {
-        int w = 0;
-        for (int i = 0; i < segCount; i++)
-        {
-            ArcSegment* cur = &out[i];
-            int isChamfer = 0;
-            if (w > 0 && i + 1 < segCount && cur->circle.r == 0.0f && cur->count <= CHAMFER_MAX_POINTS)
-            {
-                ArcSegment* prev = &out[w - 1];
-                ArcSegment* next = &out[i + 1];
-                if (prev->circle.r == 0.0f && next->circle.r == 0.0f
-                    && prev->count >= 2 * cur->count && next->count >= 2 * cur->count
-                    && prev->pts + (prev->count - 1) == cur->pts          // contiguous on one traced path
-                    && cur->pts + (cur->count - 1) == next->pts)
-                {
-                    double ax = prev->pts[prev->count - 1].x - prev->pts[0].x;
-                    double ay = prev->pts[prev->count - 1].y - prev->pts[0].y;
-                    double bx = next->pts[next->count - 1].x - next->pts[0].x;
-                    double by = next->pts[next->count - 1].y - next->pts[0].y;
-                    double la = sqrt(ax * ax + ay * ay), lb = sqrt(bx * bx + by * by);
-                    if (la > 1e-6 && lb > 1e-6)
-                    {
-                        double c = (ax * bx + ay * by) / (la * lb);
-                        if (c > 1.0) c = 1.0;
-                        if (c < -1.0) c = -1.0;
-                        double turn = acos(c) * (180.0 / CORNER_PI);
-                        if (turn >= CHAMFER_MIN_CORNER_DEG) isChamfer = 1;
-                    }
-                }
-            }
-
-            if (isChamfer)
-            {
-                // Give the first half of the stub to prev and the rest to next
-                // (the two keep sharing one pixel, as neighbours always do).
-                int half = (cur->count - 1) / 2;
-                ArcSegment* prev = &out[w - 1];
-                prev->count += half;
-                Point* newNextStart = cur->pts + half;
-                ArcSegment* next = &out[i + 1];
-                next->count += (int)(next->pts - newNextStart);
-                next->pts = newNextStart;
-                continue;                                   // drop the stub itself
-            }
-
-            if (w != i) out[w] = out[i];
-            w++;
-        }
-        segCount = w;
-    }
 
     for (int i = 0; i < segCount; i++)
     {
