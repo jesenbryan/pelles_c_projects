@@ -4,14 +4,6 @@
 #include "geometry.h"
 
 Image* canvasToImage(void);
-
-// The same drawing as canvasToImage, rendered `scale` times finer (ink
-// mask only, 1 = ink). Used by the tracer to measure where the middle of
-// each stroke is more precisely than the normal raster allows; the
-// segmentation itself still runs on canvasToImage's raster. Pixel (x, y)
-// of the normal raster covers [x*scale, (x+1)*scale) here. Caller frees.
-// NULL if the canvas is empty or memory runs out.
-uint8_t* canvasInkMask(int scale, int* outW, int* outH);
 void displayImageOnCanvas(Image* img);
 
 void setSegmentOverlay(ArcSegment* segments, int count, int imgW, int imgH, BOOL stretched);

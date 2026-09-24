@@ -339,15 +339,16 @@ static int inkAt(const uint8_t* ink, int w, int h, float fx, float fy)
     return ink[y * w + x] != 0;
 }
 
-// Signed midpoint of the ink band through the point (cx,cy) (continuous
-// pixel coordinates, e.g. a pixel's centre) along unit normal (nx,ny),
-// relative to that point. Returns 0 on failure (*ok=0).
-static float inkBandMidOffset(const uint8_t* ink, int w, int h, float cx, float cy,
-                              float nx, float ny, float limit, int* ok)
+// Signed midpoint of the ink band through pixel (px,py) along unit normal
+// (nx,ny), relative to the pixel's center. Returns 0 on failure (*ok=0).
+static float inkBandMidOffset(const uint8_t* ink, int w, int h, int px, int py,
+                              float nx, float ny, float maxR, int* ok)
 {
+    float cx = px + 0.5f, cy = py + 0.5f;
     *ok = 0;
     if (!inkAt(ink, w, h, cx, cy)) return 0.0f;
 
+    float limit = maxR + 2.0f;
     float tPlus = limit, tMinus = limit;
     for (float t = INK_SCAN_STEP_PX; t <= limit; t += INK_SCAN_STEP_PX)
         if (!inkAt(ink, w, h, cx + nx * t, cy + ny * t)) { tPlus = t - 0.5f * INK_SCAN_STEP_PX; break; }
@@ -365,16 +366,7 @@ static int cmpFloat(const void* a, const void* b)
     return (fa > fb) - (fa < fb);
 }
 
-// fine/fineScale: the same drawing rendered fineScale times finer
-// (canvasInkMask), or NULL. The band middle can only be pinned down to
-// about half a pixel of the raster it's measured on, which is a visible
-// pixel or two once the view is zoomed in; measuring on the finer mask
-// (while the segmentation itself stays on the normal raster) cuts that by
-// fineScale.
-#define TRACE_FINE_SCALE 3
-
-static void measureInkCenterShift(const uint8_t* ink, int w, int h, ArcSegment* seg,
-                                  const uint8_t* fine, int fineScale)
+static void measureInkCenterShift(const uint8_t* ink, int w, int h, ArcSegment* seg)
 {
     seg->inkShiftX = seg->inkShiftY = seg->inkShiftR = 0.0f;
     seg->lineFitValid = 0;
@@ -430,13 +422,7 @@ static void measureInkCenterShift(const uint8_t* ink, int w, int h, ArcSegment* 
             nx = rx / rl; ny = ry / rl;
         }
         int ok;
-        float o;
-        if (fine)
-            o = inkBandMidOffset(fine, w * fineScale, h * fineScale,
-                                 (seg->pts[i].x + 0.5f) * fineScale, (seg->pts[i].y + 0.5f) * fineScale,
-                                 nx, ny, (maxR + 2.0f) * fineScale, &ok) / (float)fineScale;
-        else
-            o = inkBandMidOffset(ink, w, h, seg->pts[i].x + 0.5f, seg->pts[i].y + 0.5f, nx, ny, maxR + 2.0f, &ok);
+        float o = inkBandMidOffset(ink, w, h, seg->pts[i].x, seg->pts[i].y, nx, ny, maxR, &ok);
         if (ok)
         {
             midX[m] = seg->pts[i].x + nx * o;
@@ -482,8 +468,7 @@ static void measureInkCenterShift(const uint8_t* ink, int w, int h, ArcSegment* 
     free(offs);
 }
 
-static void runPipelineOnImage(Image* img, const char* sourceLabel, BOOL stretched,
-                               const uint8_t* fineInk, int fineScale)
+static void runPipelineOnImage(Image* img, const char* sourceLabel, BOOL stretched)
 {
     int w = img->width;
     int h = img->height;
@@ -629,7 +614,7 @@ static void runPipelineOnImage(Image* img, const char* sourceLabel, BOOL stretch
             for (int i = 0; i < segCount; i++)
             {
                 segs[i].avgRadiusPx = pathAvgRadiusPx;
-                measureInkCenterShift(origBin, w, h, &segs[i], fineInk, fineScale);
+                measureInkCenterShift(origBin, w, h, &segs[i]);
             }
 
             for (int i = 0; i < segCount && totalSegCount < MAX_ARC_SEGMENTS; i++)
@@ -669,14 +654,7 @@ void RunTracePipeline(void)
     }
 
     freePendingBmpImage();   // a manual trace supersedes any not-yet-viewed upload
-
-    // Finer copy of the drawing for measuring stroke middles (see
-    // measureInkCenterShift). Optional: without it the normal raster is used.
-    int fineW = 0, fineH = 0;
-    uint8_t* fine = canvasInkMask(TRACE_FINE_SCALE, &fineW, &fineH);
-
-    runPipelineOnImage(img, "canvas drawing", FALSE, fine, TRACE_FINE_SCALE);  // not stretched
-    free(fine);
+    runPipelineOnImage(img, "canvas drawing", FALSE);  // not stretched
 }
 
 void RunUploadPipeline(void)
@@ -714,6 +692,6 @@ BOOL RunPendingUploadTrace(void)
 
     Image* img = s_pendingBmpImage;
     s_pendingBmpImage = NULL;   // runPipelineOnImage frees img when done
-    runPipelineOnImage(img, "uploaded BMP", TRUE, NULL, 1);  // stretched to fill the view
+    runPipelineOnImage(img, "uploaded BMP", TRUE);  // stretched to fill the view
     return TRUE;
 }

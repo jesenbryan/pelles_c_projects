@@ -193,12 +193,9 @@ static void setBinPixel(Image* img, int x, int y, float r)
     // all, so this is purely defensive).
     if (img->radius) img->radius[idx] = r;
 
-    if (img->data)   // NULL for canvasInkMask's mask-only image
-    {
-        img->data[idx * 3 + 0] = 0; // B
-        img->data[idx * 3 + 1] = 0; // G
-        img->data[idx * 3 + 2] = 0; // R
-    }
+    img->data[idx * 3 + 0] = 0; // B
+    img->data[idx * 3 + 1] = 0; // G
+    img->data[idx * 3 + 2] = 0; // R
 }
 
 static void stampDisc(Image* img, float cx, float cy, float r)
@@ -238,71 +235,27 @@ static void stampSegment(Image* img, float x0, float y0, float x1, float y1, flo
         return;
     }
 
+    int minX = (int)floorf(((x0 < x1) ? x0 : x1) - r);
+    int maxX = (int)ceilf(((x0 > x1) ? x0 : x1) + r);
     int minY = (int)floorf(((y0 < y1) ? y0 : y1) - r);
     int maxY = (int)ceilf(((y0 > y1) ? y0 : y1) + r);
+    if (minX < 0) minX = 0;
     if (minY < 0) minY = 0;
+    if (maxX > img->width - 1)  maxX = img->width - 1;
     if (maxY > img->height - 1) maxY = img->height - 1;
-    double len = sqrt((double)len2);
-    double ux = dx / len, uy = dy / len;       // along the segment
-    double nx = -uy, ny = ux;                   // across it
-    double rr = r;
+    float r2 = r * r;
 
-    // The capsule is convex, so each pixel row's centre line (y + 0.5)
-    // crosses it in ONE interval of x: the union of where it crosses the
-    // two end discs and the straight band between them. Only that interval
-    // is filled, so the cost is the stroke's own area, not its bounding
-    // box (which is huge for a long diagonal, and this also renders the
-    // finer canvasInkMask).
     for (int y = minY; y <= maxY; y++) {
-        double py = y + 0.5;
-        double lo = 1e30, hi = -1e30;
-
-        // End discs.
-        for (int e = 0; e < 2; e++) {
-            double cx = e ? x1 : x0, cy = e ? y1 : y0;
-            double h2 = rr * rr - (py - cy) * (py - cy);
-            if (h2 < 0.0) continue;
-            double hw = sqrt(h2);
-            if (cx - hw < lo) lo = cx - hw;
-            if (cx + hw > hi) hi = cx + hw;
+        float py = y + 0.5f;
+        for (int x = minX; x <= maxX; x++) {
+            float px = x + 0.5f;
+            float t = ((px - x0) * dx + (py - y0) * dy) / len2;
+            if (t < 0.0f) t = 0.0f;
+            else if (t > 1.0f) t = 1.0f;
+            float ex = px - (x0 + dx * t), ey = py - (y0 + dy * t);
+            if (ex * ex + ey * ey <= r2)
+                setBinPixel(img, x, y, r);
         }
-
-        // Band: |(p - p0).n| <= r and 0 <= (p - p0).u <= len, solved for px
-        // on this row (each is a linear inequality in px).
-        {
-            double bLo = -1e30, bHi = 1e30;
-            BOOL empty = FALSE;
-            // (px - x0) * k + c with k = nx or ux
-            double k1 = nx, c1 = (py - y0) * ny;        // -r <= k1*(px-x0) + c1 <= r
-            double k2 = ux, c2 = (py - y0) * uy;        //  0 <= k2*(px-x0) + c2 <= len
-            double lims[2][3] = { { k1, c1 - rr, c1 + rr }, { k2, c2 - len, c2 } };
-            for (int q = 0; q < 2 && !empty; q++) {
-                double k = lims[q][0];
-                // need  -(c+..) : lower <= k*X <= upper with X = px - x0,
-                // lower = -(c + r) ... written as: -c - r <= k X <= -c + r
-                double lower = -lims[q][2], upper = -lims[q][1];
-                if (fabs(k) < 1e-12) {
-                    if (lower > 0.0 || upper < 0.0) empty = TRUE;   // row entirely outside
-                } else {
-                    double a = lower / k, b = upper / k;
-                    if (a > b) { double t = a; a = b; b = t; }
-                    if (a + x0 > bLo) bLo = a + x0;
-                    if (b + x0 < bHi) bHi = b + x0;
-                }
-            }
-            if (!empty && bLo <= bHi) {
-                if (bLo < lo) lo = bLo;
-                if (bHi > hi) hi = bHi;
-            }
-        }
-
-        if (lo > hi) continue;
-        // Pixel centres x + 0.5 inside [lo, hi].
-        int xa = (int)ceil(lo - 0.5 - 1e-9), xb = (int)floor(hi - 0.5 + 1e-9);
-        if (xa < 0) xa = 0;
-        if (xb > img->width - 1) xb = img->width - 1;
-        for (int x = xa; x <= xb; x++)
-            setBinPixel(img, x, y, r);
     }
 }
 
@@ -821,50 +774,6 @@ void setSegmentOverlay(ArcSegment* segments, int count, int imgW, int imgH, BOOL
 
     canvas.segmentResultCount = usedSegments;
     if (hWndGL) InvalidateRect(hWndGL, NULL, FALSE);
-}
-
-uint8_t* canvasInkMask(int scale, int* outW, int* outH)
-{
-    if (canvas.pointCount < 1 || canvas.strokeCount < 1 || scale < 1) return NULL;
-
-    int baseW = glWindowWidth, baseH = glWindowHeight;
-    Image img = { 0 };
-    img.width  = baseW * scale;
-    img.height = baseH * scale;
-    img.bin = (uint8_t*)calloc((size_t)img.width * img.height, sizeof(uint8_t));
-    if (!img.bin) return NULL;
-
-    computeTraceBounds(baseW, baseH);   // same mapping as canvasToImage, just scaled below
-
-    for (int s = 0; s < canvas.strokeCount; s++)
-    {
-        int start = strokeStarts[s];
-        int end   = (s == canvas.strokeCount - 1) ? canvas.pointCount : strokeStarts[s + 1];
-        int count = (end - start) / 2;
-        if (count < 1) continue;
-
-        float r = strokeThickness[s] / 2.0f * (float)scale;
-
-        float px0, py0;
-        worldToPixel(points[start], points[start + 1], baseW, baseH, &px0, &py0);
-        px0 *= scale; py0 *= scale;
-
-        if (count == 1) { stampDisc(&img, px0, py0, r); continue; }
-
-        for (int i = 1; i < count; i++)
-        {
-            float px1, py1;
-            worldToPixel(points[start + i * 2], points[start + i * 2 + 1], baseW, baseH, &px1, &py1);
-            px1 *= scale; py1 *= scale;
-            stampSegment(&img, px0, py0, px1, py1, r);
-            px0 = px1;
-            py0 = py1;
-        }
-    }
-
-    *outW = img.width;
-    *outH = img.height;
-    return img.bin;
 }
 
 Image* canvasToImage(void)
