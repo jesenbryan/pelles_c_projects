@@ -21,6 +21,7 @@ static const HelpRow kHelpRows[] = {
 
     { L"Drawing (Design > Environment)", L"Left-click + Drag",   L"Draw a freehand stroke" },
     { NULL,                              L"Hold Shift",          L"Constrain the stroke to a straight line" },
+    { NULL,                              L"Ctrl + Z",            L"Undo the last stroke (also the Undo button)" },
 
     { L"Robot Editing (Design > Robot)", L"Left-click + Drag",   L"Move, resize, or reshape a handle" },
     { NULL,                              L"Scroll Wheel (handle)", L"Resize the hovered joint's circle" },

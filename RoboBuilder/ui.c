@@ -2,6 +2,7 @@
 #include "pipeline.h"      // NEW
 #include "canvas_bridge.h" // NEW: for canvasToImage()
 #include "bmp_ui.h"        // NEW: for saveBMP_UI() and BMP_RGB
+#include "debug.h"         // For ClearConsoleLog -- the Clear button also wipes the debug console
 #include <commctrl.h>
 
 HWND hWndUI = NULL;
@@ -9,12 +10,13 @@ float thickness = 2.0f;
 COLORREF brushColor = RGB(0, 0, 0);
 
 static HWND hClearBtn;
+static HWND hUndoBtn;       // removes the last stroke (also Ctrl+Z)
 static HWND hSlider;
 static HWND hColorBtn;
 static HWND hThicknessLabel;
 static HWND hViewSegBtn;   // NEW
 static HWND hComparisonBtn;  // NEW: toggle comparison mode
-static int controlCount = 6;
+static int controlCount = 7;
 
 
 static int GetRequiredUIHeight(void)
@@ -48,6 +50,8 @@ static void LayoutUI(HWND hWnd)
 
     MoveWindow(hClearBtn, centerX, y, btnW, btnH, TRUE);
     y += btnH + spacing;
+    MoveWindow(hUndoBtn, centerX, y, btnW, btnH, TRUE);
+    y += btnH + spacing;
     MoveWindow(hThicknessLabel, centerX, y, btnW, 20, TRUE);
     y += 20 + 2;
     MoveWindow(hSlider, centerX, y, btnW, btnH, TRUE);
@@ -69,6 +73,7 @@ LRESULT CALLBACK WndProcUI(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         InitCommonControlsEx(&icc);
 
         hClearBtn = CreateWindowEx(0, L"BUTTON", L"Clear", WS_CHILD | WS_VISIBLE, 20, 20, 300, 30, hWnd, (HMENU)ID_CLEAR, GetModuleHandle(NULL), NULL);
+        hUndoBtn = CreateWindowEx(0, L"BUTTON", L"Undo (Ctrl+Z)", WS_CHILD | WS_VISIBLE, 20, 20, 300, 30, hWnd, (HMENU)ID_UNDO, GetModuleHandle(NULL), NULL);
         hThicknessLabel = CreateWindowEx(0, L"STATIC", L"Thickness: 2 px", WS_CHILD | WS_VISIBLE, 20, 60, 300, 20, hWnd, NULL, GetModuleHandle(NULL), NULL);
         hSlider   = CreateWindowEx(0, TRACKBAR_CLASS, L"", WS_CHILD | WS_VISIBLE | TBS_AUTOTICKS | TBS_HORZ, 20, 80, 300, 40, hWnd, NULL, GetModuleHandle(NULL), NULL);
         hColorBtn = CreateWindowEx(0, L"BUTTON", L"Color", WS_CHILD | WS_VISIBLE, 20, 130, 300, 30, hWnd, (HMENU)ID_COLOR, GetModuleHandle(NULL), NULL);
@@ -121,11 +126,20 @@ LRESULT CALLBACK WndProcUI(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
     {
         if (LOWORD(wParam) == ID_CLEAR)
 		{
+		    // Clear also wipes the debug console, same as Simulation's
+		    // Reset button -- a fresh drawing starts with a fresh log.
+		    ClearConsoleLog();
 		    ResetCanvas();
 		    SendMessage(hViewSegBtn, BM_SETCHECK, BST_UNCHECKED, 0);
 		    SendMessage(hComparisonBtn, BM_SETCHECK, BST_UNCHECKED, 0);
 		    if (hWndGL) InvalidateRect(hWndGL, NULL, TRUE);
 		}
+        else if (LOWORD(wParam) == ID_UNDO)
+        {
+            UndoLastStroke();
+            // Hand keyboard focus back to the canvas so Ctrl+Z keeps working.
+            if (hWndGL) SetFocus(hWndGL);
+        }
         else if (LOWORD(wParam) == ID_COLOR)
         {
             CHOOSECOLOR cc = {0};

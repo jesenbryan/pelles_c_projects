@@ -679,10 +679,91 @@ static LRESULT CALLBACK weightEditSubclassProc(HWND hEdit, UINT msg, WPARAM wPar
     return DefSubclassProc(hEdit, msg, wParam, lParam);
 }
 
+// TRUE while the mouse is over (or dragging) any editable robot handle in
+// the Robot editor -- joint circles, fillet-arc handles, Rocky's body/edges,
+// mass-center dots, for all three robot kinds. Drives the hand cursor
+// (WM_SETCURSOR below) so it's obvious something can be grabbed.
+static BOOL robotHandleHoveredOrDragged(const AppState* app)
+{
+    return app->draggingSeamArc1 ||
+           app->draggingSeamArc2 ||
+           app->draggingInner ||
+           app->draggingKnee ||
+           app->draggingThigh1 ||
+           app->draggingThigh2 ||
+           app->draggingFoot ||
+           app->draggingShin1 ||
+           app->draggingShin2 ||
+           app->hoverRockyBody ||
+           app->draggingRockyBody ||
+           app->hoverRockyEdge ||
+           app->draggingRockyEdge ||
+           app->hoverRockyKnee ||
+           app->draggingRockyKnee ||
+           app->hoverRockyFoot ||
+           app->draggingRockyFoot ||
+           app->hoverRockyMassCenter ||
+           app->draggingRockyMassCenter ||
+           app->hoverSemniMassCenter ||
+           app->draggingSemniMassCenter ||
+           app->hoverStiloMassCenter ||
+           app->draggingStiloMassCenter ||
+           app->draggingRockyShin1 ||
+           app->draggingRockyShin2 ||
+           app->hoverRockyShin1 ||
+           app->hoverRockyShin2 ||
+           app->hoverHip ||
+           app->hoverKnee ||
+           app->hoverFoot ||
+           app->hoverButt ||
+           app->hoverHead ||
+           app->hoverSeamArc1 ||
+           app->hoverSeamArc2 ||
+           app->hoverThigh1 ||
+           app->hoverThigh2 ||
+           app->hoverShin1 ||
+           app->hoverShin2 ||
+           app->draggingStiloSeamArc1 ||
+           app->draggingStiloSeamArc2 ||
+           app->draggingStiloHip1 ||
+           app->draggingStiloFeet1 ||
+           app->draggingStiloThigh1Arc1 ||
+           app->draggingStiloThigh1Arc2 ||
+           app->hoverStiloHip1 ||
+           app->hoverStiloFeet1 ||
+           app->hoverStiloButt ||
+           app->hoverStiloHead ||
+           app->hoverStiloSeamArc1 ||
+           app->hoverStiloSeamArc2 ||
+           app->hoverStiloThigh1Arc1 ||
+           app->hoverStiloThigh1Arc2 ||
+           app->draggingStiloHip2 ||
+           app->draggingStiloFeet2 ||
+           app->draggingStiloThigh2Arc1 ||
+           app->draggingStiloThigh2Arc2 ||
+           app->hoverStiloHip2 ||
+           app->hoverStiloFeet2 ||
+           app->hoverStiloThigh2Arc1 ||
+           app->hoverStiloThigh2Arc2;
+}
+
 LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState* app)
 {
     switch (msg)
     {
+        case WM_SETCURSOR:
+        {
+            // Hand cursor over a grabbable robot handle (and while dragging
+            // one). Middle-button panning keeps its own hand cursor too.
+            if (LOWORD(lParam) == HTCLIENT && ((HWND)wParam == hwnd)
+                && (semniPanning || robotHandleHoveredOrDragged(app)))
+            {
+                SetCursor(LoadCursor(NULL, IDC_HAND));
+                return TRUE;
+            }
+            break;
+        }
+
         case WM_MBUTTONDOWN:
         {
             semniPanning = TRUE;

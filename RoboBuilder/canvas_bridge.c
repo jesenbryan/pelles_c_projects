@@ -296,6 +296,24 @@ static void sampleArcPoints(ArcSegment* seg, SampleF* outPts, int* outCount, int
     while (diff > ARC_PI)  diff -= 2.0 * ARC_PI;
     while (diff < -ARC_PI) diff += 2.0 * ARC_PI;
 
+    // The shortest way from a0 to a1 is only right for arcs under 180 deg.
+    // For a (near-)semicircle or a bigger arc it can pick the OTHER side of
+    // the circle, drawing the curve mirrored across its chord (seen on an
+    // S-curve's half-circles at some window sizes). The traced pixels know
+    // which side the stroke actually went: if the middle traced pixel isn't
+    // inside the short sweep, take the long way round instead.
+    if (seg->count >= 3)
+    {
+        Point pm = seg->pts[seg->count / 2];
+        double am = atan2(pm.y - c.cy, pm.x - c.cx);
+        double rel = am - a0;                      // angle of the midpoint, measured from a0 in diff's direction
+        if (diff < 0.0) rel = -rel;
+        while (rel < 0.0)            rel += 2.0 * ARC_PI;
+        while (rel >= 2.0 * ARC_PI)  rel -= 2.0 * ARC_PI;
+        if (rel > fabs(diff))                      // midpoint lies outside the short sweep
+            diff = (diff > 0.0) ? diff - 2.0 * ARC_PI : diff + 2.0 * ARC_PI;
+    }
+
     int steps = (maxOut < 24) ? maxOut : 24;
 
     for (int i = 0; i < steps; i++) {
@@ -337,16 +355,132 @@ static void sampleArcPoints(ArcSegment* seg, SampleF* outPts, int* outCount, int
     *outCount = steps;
 }
 
+// ---- Straight-segment refinement (exact corners) ----
+//
+// A straight segment used to be drawn from its first traced pixel to its
+// last one. At a corner those two pixels are wherever the corner split
+// happened to land -- on a 2 px stroke easily 1-2 px along the neighbouring
+// line -- so a short vertical riser between two floors came out visibly
+// tilted. Instead, each straight segment gets a least-squares line fitted to
+// its traced pixels (ignoring a few pixels at each end, which are the ones
+// bent by the corner), and two straight neighbours meet exactly where their
+// fitted lines intersect. Free ends are projected onto the fitted line;
+// ends shared with an arc stay on the shared pixel so nothing disconnects.
+
+#define LINE_REFINE_TRIM_PX       4     // traced pixels ignored at each end for the fit
+#define LINE_REFINE_MIN_ANGLE_DEG 10.0  // below this two lines are ~collinear: keep the shared pixel
+#define LINE_REFINE_MAX_SHIFT_PX  6.0   // never move a corner further than this from its traced pixel
+
+typedef struct { int valid; double cx, cy, dx, dy; } FittedLine;
+
+static FittedLine fitLineToPixels(const Point* pts, int n)
+{
+    FittedLine L = { 0 };
+    int trim = LINE_REFINE_TRIM_PX;
+    if (n - 2 * trim < 3) trim = (n - 3) / 2;
+    if (trim < 0) trim = 0;
+    int a = trim, b = n - 1 - trim;
+    if (b - a + 1 < 2) return L;
+
+    double mx = 0, my = 0;
+    for (int i = a; i <= b; i++) { mx += pts[i].x; my += pts[i].y; }
+    int m = b - a + 1;
+    mx /= m; my /= m;
+    double sxx = 0, syy = 0, sxy = 0;
+    for (int i = a; i <= b; i++)
+    {
+        double ux = pts[i].x - mx, uy = pts[i].y - my;
+        sxx += ux * ux; syy += uy * uy; sxy += ux * uy;
+    }
+    // Principal direction of the pixel cloud (total least squares).
+    double ang = 0.5 * atan2(2.0 * sxy, sxx - syy);
+    L.valid = 1; L.cx = mx; L.cy = my; L.dx = cos(ang); L.dy = sin(ang);
+    return L;
+}
+
+static void projectOntoLine(const FittedLine* L, double px, double py, float* ox, float* oy)
+{
+    double t = (px - L->cx) * L->dx + (py - L->cy) * L->dy;
+    *ox = (float)(L->cx + L->dx * t);
+    *oy = (float)(L->cy + L->dy * t);
+}
+
+// Fills startX/Y, endX/Y (source-image pixel coordinates) for every STRAIGHT
+// segment; refined[s] = 1 when segment s got refined endpoints.
+static void refineStraightSegmentEnds(ArcSegment* segs, int count,
+                                      float* startX, float* startY, float* endX, float* endY, int* refined)
+{
+    static FittedLine fl[MAX_ARC_SEGMENTS];
+    for (int s = 0; s < count; s++)
+    {
+        refined[s] = 0;
+        fl[s].valid = 0;
+        if (segs[s].circle.r > 1e-3f || segs[s].count < 2) continue;
+        fl[s] = fitLineToPixels(segs[s].pts, segs[s].count);
+        if (!fl[s].valid) continue;
+        refined[s] = 1;
+        Point p0 = segs[s].pts[0], p1 = segs[s].pts[segs[s].count - 1];
+        projectOntoLine(&fl[s], p0.x, p0.y, &startX[s], &startY[s]);
+        projectOntoLine(&fl[s], p1.x, p1.y, &endX[s], &endY[s]);
+    }
+
+    for (int s = 0; s + 1 < count; s++)
+    {
+        // Only neighbours on the same traced path, sharing their joint pixel.
+        if (segs[s].pts + (segs[s].count - 1) != segs[s + 1].pts) continue;
+        Point joint = segs[s + 1].pts[0];
+
+        if (refined[s] && refined[s + 1])
+        {
+            double cr = fl[s].dx * fl[s + 1].dy - fl[s].dy * fl[s + 1].dx;   // sin of the angle between them
+            double ix = joint.x, iy = joint.y;
+            if (fabs(cr) > sin(LINE_REFINE_MIN_ANGLE_DEG * ARC_PI / 180.0))
+            {
+                double qx = fl[s + 1].cx - fl[s].cx, qy = fl[s + 1].cy - fl[s].cy;
+                double t = (qx * fl[s + 1].dy - qy * fl[s + 1].dx) / cr;
+                double cx = fl[s].cx + fl[s].dx * t, cy = fl[s].cy + fl[s].dy * t;
+                if (hypot(cx - joint.x, cy - joint.y) <= LINE_REFINE_MAX_SHIFT_PX) { ix = cx; iy = cy; }
+            }
+            endX[s] = startX[s + 1] = (float)ix;
+            endY[s] = startY[s + 1] = (float)iy;
+        }
+        else
+        {
+            // Line next to an arc: keep the exact shared pixel on both sides.
+            if (refined[s])     { endX[s] = (float)joint.x;       endY[s] = (float)joint.y; }
+            if (refined[s + 1]) { startX[s + 1] = (float)joint.x; startY[s + 1] = (float)joint.y; }
+        }
+    }
+}
+
 void setSegmentOverlay(ArcSegment* segments, int count, int imgW, int imgH, BOOL stretched)
 {
     int total = 0;
     int usedSegments = 0;
+
+    static float lineStartX[MAX_ARC_SEGMENTS], lineStartY[MAX_ARC_SEGMENTS];
+    static float lineEndX[MAX_ARC_SEGMENTS], lineEndY[MAX_ARC_SEGMENTS];
+    static int lineRefined[MAX_ARC_SEGMENTS];
+    int refineCount = (count < MAX_ARC_SEGMENTS) ? count : MAX_ARC_SEGMENTS;
+    refineStraightSegmentEnds(segments, refineCount, lineStartX, lineStartY, lineEndX, lineEndY, lineRefined);
 
     for (int s = 0; s < count && s < MAX_ARC_SEGMENTS; s++)
     {
         SampleF arcPts[24];
         int arcCount = 0;
         sampleArcPoints(&segments[s], arcPts, &arcCount, 24);
+
+        // Straight segment: redraw it between its refined endpoints (fitted
+        // line, exact corners -- see refineStraightSegmentEnds).
+        if (lineRefined[s] && arcCount >= 2)
+        {
+            for (int i = 0; i < arcCount; i++)
+            {
+                float t = (float)i / (float)(arcCount - 1);
+                arcPts[i].x = lineStartX[s] + (lineEndX[s] - lineStartX[s]) * t;
+                arcPts[i].y = lineStartY[s] + (lineEndY[s] - lineStartY[s]) * t;
+            }
+        }
 
         if (arcCount < 2) continue;
         if (total + arcCount > MAX_SEGMENT_POINTS) break;

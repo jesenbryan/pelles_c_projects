@@ -44,6 +44,16 @@ GLuint fontBase = 0;
 CanvasState canvas = { .zoom = 1.0f };
 AppMode appMode = APP_MODE_DESIGN;
 
+// Environment's own View Segments / Comparison Mode state, saved when
+// Simulation is entered and restored when leaving it -- Simulation always
+// shows the reconstructed drawing (Comparison Mode on) without the View
+// Segments overlay, but that shouldn't overwrite what the user had set up in
+// Design > Environment. envViewStateSaved guards against re-selecting
+// Simulation while already in it (which would save Simulation's own state).
+static BOOL envViewStateSaved = FALSE;
+static BOOL envSavedShowSegments = FALSE;
+static BOOL envSavedComparisonMode = FALSE;
+
 // Starts on Environment (not Robot) so the app opens straight into a
 // usable canvas -- Robot is now a real destination (see the ID_LAYER_ROBOT
 // handling in WM_COMMAND below), not the placeholder it used to be, and
@@ -175,6 +185,129 @@ static void HideUIPanelImmediately(void)
 // internal save-state.
 #define ENV_AUTOSAVE_FOLDER "Autosave"
 #define ENV_AUTOSAVE_PATH   "Autosave\\Environment.txt"
+#define ENV_AUTOSAVE_PNG_PATH "Autosave\\Environment.png"
+
+// ---- Minimal PNG writer (no zlib needed) ----
+// Writes a 1-bit black/white PNG using uncompressed ("stored") deflate
+// blocks -- valid PNG any viewer opens, just not compressed. At 1 bit per
+// pixel a full-window image is only ~100-150 KB.
+static unsigned long pngCrcTable[256];
+static int pngCrcTableReady = 0;
+
+static unsigned long pngCrc(const unsigned char* buf, size_t len, unsigned long crc)
+{
+    if (!pngCrcTableReady)
+    {
+        for (unsigned long n = 0; n < 256; n++)
+        {
+            unsigned long c = n;
+            for (int k = 0; k < 8; k++) c = (c & 1) ? 0xEDB88320UL ^ (c >> 1) : c >> 1;
+            pngCrcTable[n] = c;
+        }
+        pngCrcTableReady = 1;
+    }
+    for (size_t i = 0; i < len; i++) crc = pngCrcTable[(crc ^ buf[i]) & 0xFF] ^ (crc >> 8);
+    return crc;
+}
+
+static void pngPut32(unsigned char* p, unsigned long v)
+{
+    p[0] = (unsigned char)(v >> 24); p[1] = (unsigned char)(v >> 16);
+    p[2] = (unsigned char)(v >> 8);  p[3] = (unsigned char)v;
+}
+
+static void pngWriteChunk(FILE* f, const char* type, const unsigned char* data, unsigned long len)
+{
+    unsigned char hdr[8];
+    pngPut32(hdr, len);
+    memcpy(hdr + 4, type, 4);
+    fwrite(hdr, 1, 8, f);
+    if (len) fwrite(data, 1, len, f);
+    unsigned long crc = pngCrc((const unsigned char*)type, 4, 0xFFFFFFFFUL);
+    if (len) crc = pngCrc(data, len, crc);
+    unsigned char c4[4];
+    pngPut32(c4, crc ^ 0xFFFFFFFFUL);
+    fwrite(c4, 1, 4, f);
+}
+
+// ink[y*w+x] != 0 -> black pixel, else white.
+static BOOL writeBinaryPng(const char* path, const uint8_t* ink, int w, int h)
+{
+    size_t rowBytes = 1 + (size_t)(w + 7) / 8;            // filter byte + packed bits
+    size_t rawLen = rowBytes * (size_t)h;
+    unsigned char* raw = (unsigned char*)calloc(rawLen, 1);
+    if (!raw) return FALSE;
+    for (int y = 0; y < h; y++)
+    {
+        unsigned char* row = raw + (size_t)y * rowBytes;    // row[0] = filter 0 (none)
+        for (int x = 0; x < w; x++)
+            if (!ink[(size_t)y * w + x])                    // 1 bit = white in grayscale
+                row[1 + x / 8] |= (unsigned char)(0x80 >> (x % 8));
+    }
+
+    size_t blocks = (rawLen + 65534) / 65535;
+    if (blocks == 0) blocks = 1;
+    size_t zLen = 2 + rawLen + blocks * 5 + 4;
+    unsigned char* z = (unsigned char*)malloc(zLen);
+    if (!z) { free(raw); return FALSE; }
+    size_t o = 0;
+    z[o++] = 0x78; z[o++] = 0x01;                           // zlib header, no compression
+    size_t pos = 0;
+    unsigned long a = 1, b = 0;                             // Adler-32
+    do
+    {
+        size_t n = rawLen - pos;
+        if (n > 65535) n = 65535;
+        z[o++] = (pos + n >= rawLen) ? 1 : 0;              // BFINAL, BTYPE=00 (stored)
+        z[o++] = (unsigned char)(n & 0xFF); z[o++] = (unsigned char)(n >> 8);
+        z[o++] = (unsigned char)(~n & 0xFF); z[o++] = (unsigned char)((~n >> 8) & 0xFF);
+        memcpy(z + o, raw + pos, n);
+        for (size_t i = 0; i < n; i++) { a = (a + raw[pos + i]) % 65521UL; b = (b + a) % 65521UL; }
+        o += n; pos += n;
+    } while (pos < rawLen);
+    pngPut32(z + o, (b << 16) | a); o += 4;
+
+    BOOL ok = FALSE;
+    FILE* f = fopen(path, "wb");
+    if (f)
+    {
+        static const unsigned char sig[8] = { 137, 80, 78, 71, 13, 10, 26, 10 };
+        unsigned char ihdr[13];
+        pngPut32(ihdr, (unsigned long)w);
+        pngPut32(ihdr + 4, (unsigned long)h);
+        ihdr[8] = 1;   // bit depth
+        ihdr[9] = 0;   // grayscale
+        ihdr[10] = 0; ihdr[11] = 0; ihdr[12] = 0;
+        fwrite(sig, 1, 8, f);
+        pngWriteChunk(f, "IHDR", ihdr, 13);
+        pngWriteChunk(f, "IDAT", z, (unsigned long)o);
+        pngWriteChunk(f, "IEND", NULL, 0);
+        ok = (fclose(f) == 0);
+    }
+    free(z);
+    free(raw);
+    return ok;
+}
+
+// Autosave companion image: the drawing exactly as the tracing pipeline
+// sees it (canvasToImage's black-on-white raster, fitted to the drawing's
+// bounds at the current window size) -- handy for eyeballing what was
+// saved and for reproducing a tracing problem outside the app. Removed when
+// the drawing is empty.
+static void saveEnvironmentAutosavePng(void)
+{
+    Image* img = (canvas.pointCount >= 1 && canvas.strokeCount >= 1) ? canvasToImage() : NULL;
+    if (!img)
+    {
+        DeleteFileA(ENV_AUTOSAVE_PNG_PATH);
+        return;
+    }
+    writeBinaryPng(ENV_AUTOSAVE_PNG_PATH, img->bin, img->width, img->height);
+    free(img->data);
+    free(img->bin);
+    free(img->radius);
+    free(img);
+}
 
 // Writes the CURRENT drawing (every stroke/point in strokeStarts/
 // strokeThickness/strokeColor/strokeLayer/points) to ENV_AUTOSAVE_PATH.
@@ -185,6 +318,8 @@ static void HideUIPanelImmediately(void)
 static void saveEnvironmentAutosave(void)
 {
     CreateDirectoryA(ENV_AUTOSAVE_FOLDER, NULL);
+
+    saveEnvironmentAutosavePng(); // Autosave/Environment.png next to the .txt -- see its comment
 
     FILE* f = fopen(ENV_AUTOSAVE_PATH, "w");
     if (!f) return; // best-effort -- a failed autosave shouldn't interrupt drawing
@@ -276,6 +411,35 @@ void ResetCanvas(void)
 	// the app is remembered as "empty" on next launch instead of the
 	// autosave silently keeping whatever was drawn before the Clear.
 	saveEnvironmentAutosave();
+}
+
+// Undo: drops the last stroke (its points are always the tail of points[],
+// starting at strokeStarts[last]). Re-traces if View Segments / Comparison
+// Mode is showing the reconstruction, so that overlay never shows a stroke
+// that's gone, and autosaves like any other drawing change.
+void UndoLastStroke(void)
+{
+    if (drawing) return;                       // never pull a stroke out from under an active drag
+    if (canvas.strokeCount <= 0) return;
+
+    int last = canvas.strokeCount - 1;
+    canvas.pointCount = strokeStarts[last];
+    canvas.strokeCount = last;
+
+    hoveredSegment = -1;
+    snapEndpointAvailable = FALSE;
+    branchMarkerCount = 0;
+
+    if (canvas.showSegments || canvas.comparisonMode)
+    {
+        if (canvas.strokeCount > 0)
+            RunTracePipeline();
+        else
+            canvas.segmentResultCount = 0;     // nothing left to trace
+    }
+
+    saveEnvironmentAutosave();
+    if (hWndGL) InvalidateRect(hWndGL, NULL, FALSE);
 }
 
 GLuint canvasTexture = 0;
@@ -6780,6 +6944,10 @@ static void updateDrawingPoint(HWND hWnd, int mx, int my, BOOL shiftHeld, BOOL c
     // messages for that check to run inside. This function only tracks raw
     // cursor state and applies the lock once WM_TIMER has set
     // shiftHoldSnapped; it never decides to snap itself.
+    // Cursor hidden while placing a Shift straight line (see WM_SETCURSOR),
+    // back as soon as Shift is released mid-stroke.
+    SetCursor(shiftHeld ? NULL : LoadCursor(NULL, IDC_ARROW));
+
     if (shiftHeld)
     {
         int curStrokeStart = strokeStarts[canvas.strokeCount - 1];
@@ -7454,6 +7622,13 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         return 0;
     }
     case WM_KEYDOWN:
+        // Ctrl+Z = Undo last stroke (same as the Environment panel's Undo button).
+        if (wParam == 'Z' && (GetKeyState(VK_CONTROL) & 0x8000)
+            && appMode == APP_MODE_DESIGN && designLayer == LAYER_ENVIRONMENT)
+        {
+            UndoLastStroke();
+            return 0;
+        }
     {
         // Ctrl+Numpad0: reset the view (zoom to 100%, pan back to center --
         // i.e. canvas.panX/panY or sim_camera's pan back to exactly 0, not
@@ -7877,6 +8052,8 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
     }
     case WM_KEYUP:
     {
+        if (wParam == VK_SHIFT && drawing)
+            SetCursor(LoadCursor(NULL, IDC_ARROW)); // Shift released mid-stroke: cursor back
         // Kick off a topple the instant a manual whole-body rotate is
         // released, in case it left the robot resting somewhere no
         // longer actually stable (or lifted clean off the ground) --
@@ -8059,6 +8236,13 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
     }
     case WM_SETCURSOR:
     {
+        // Hide the cursor while drawing a Shift straight line, so it
+        // doesn't sit on top of the line being placed.
+        if (drawing && LOWORD(lParam) == HTCLIENT && (GetKeyState(VK_SHIFT) & 0x8000))
+        {
+            SetCursor(NULL);
+            return TRUE;
+        }
         // Middle-mouse pan (WM_MBUTTONDOWN/UP, further down) works
         // identically in both Design and Simulation mode -- `panning` is
         // set the instant the middle button goes down and cleared the
@@ -8164,6 +8348,7 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         if (drawing)
         {
             saveEnvironmentAutosave();
+            SetCursor(LoadCursor(NULL, IDC_ARROW)); // show it again after a Shift line
         }
         drawing = FALSE;
         shiftHoldActive  = FALSE;   // NEW: end any in-progress dwell-snap tracking
@@ -8631,6 +8816,14 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
 	        if (LOWORD(wParam) == ID_MODE_SIMULATION)
 	        {
+	            if (!envViewStateSaved)
+	            {
+	                envSavedShowSegments = canvas.showSegments;
+	                envSavedComparisonMode = canvas.comparisonMode;
+	                envViewStateSaved = TRUE;
+	            }
+	            canvas.showSegments = FALSE; // View Segments overlay is Environment-only
+
 	            appMode = APP_MODE_SIMULATION;
 
 	            // Snapshot whichever pose the robot is in RIGHT NOW, before
@@ -8865,6 +9058,16 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	            // which layer new strokes/edits go to.
 	            appMode = APP_MODE_DESIGN;
 	            designLayer = (LOWORD(wParam) == ID_LAYER_ROBOT) ? LAYER_ROBOT : LAYER_ENVIRONMENT;
+
+	            // Coming back from Simulation: restore exactly the View
+	            // Segments / Comparison Mode state Environment had before
+	            // (Simulation forced Comparison Mode on and the overlay off).
+	            if (envViewStateSaved)
+	            {
+	                canvas.showSegments = envSavedShowSegments;
+	                SetComparisonModeUI(envSavedComparisonMode); // also re-syncs the button's checkmark
+	                envViewStateSaved = FALSE;
+	            }
 	            CheckMenuItem(hDesignMenu, ID_LAYER_ROBOT, MF_BYCOMMAND | (designLayer == LAYER_ROBOT ? MF_CHECKED : MF_UNCHECKED));
 	            CheckMenuItem(hDesignMenu, ID_LAYER_ENVIRONMENT, MF_BYCOMMAND | (designLayer == LAYER_ENVIRONMENT ? MF_CHECKED : MF_UNCHECKED));
 
@@ -9183,6 +9386,16 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	        // this -- only relevant while that editor is actually showing.
 	        if (editorModeState.currentMode == EDITOR_MODE_SEMNI)
 	            SetFocus(app.hwndMain);
+	    }
+	    else if (LOWORD(wParam) == ID_ABOUT)
+	    {
+	        // Help > About RoboBuilder -- author credit.
+	        MessageBox(hWnd,
+	                   L"RoboBuilder\n\n"
+	                   L"Robot design, environment tracing and simulation tool.\n\n"
+	                   L"Created by " APP_AUTHOR_NAME L"\n"
+	                   L"Berlin University of Applied Sciences (BHT)",
+	                   L"About RoboBuilder", MB_OK | MB_ICONINFORMATION);
 	    }
 	    else if (LOWORD(wParam) == ID_HELP)
 	    {

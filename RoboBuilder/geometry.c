@@ -286,6 +286,30 @@ static double maxLineDeviation(Point* pts, int n)
     return maxErr;
 }
 
+// Index (1..n-2) of the point farthest from the straight chord pts[0] ->
+// pts[n-1] -- the Douglas-Peucker split point. For a polyline drawing this
+// lands right on a corner, so recursiveArcFit splitting here (instead of
+// at the midpoint) isolates each straight run between corners, rather than
+// leaving a corner inside some small piece that then gets "explained" by a
+// tiny circle (the rounded hooks at the steps of a straight-line stage).
+// Falls back to -1 when the chord is degenerate.
+static int maxLineDeviationIndex(Point* pts, int n)
+{
+    double x0 = pts[0].x, y0 = pts[0].y;
+    double x1 = pts[n - 1].x, y1 = pts[n - 1].y;
+    double dx = x1 - x0, dy = y1 - y0;
+    double len = sqrt(dx * dx + dy * dy);
+    if (len < 1e-6) return -1;
+
+    int best = -1;
+    double maxErr = -1.0;
+    for (int i = 1; i < n - 1; i++) {
+        double d = fabs(dy * (pts[i].x - x0) - dx * (pts[i].y - y0)) / len;
+        if (d > maxErr) { maxErr = d; best = i; }
+    }
+    return best;
+}
+
 // How far a circular arc of radius r spanning chord length `chordLen`
 // bulges away from its own straight chord (the sagitta). Used to catch
 // circle fits that technically pass maxCircleDeviation but describe a
@@ -423,6 +447,61 @@ static int findCorners(Point* pts, int n, int* cornerIdx, int maxCorners)
 }
 
 // Returns 0 once maxSegments has been hit, so the caller stops recursing.
+// Turn angle (degrees) between the straight chords pts[0]->pts[i] and
+// pts[i]->pts[n-1] -- how sharp the corner at i would be if the piece were
+// two straight lines.
+static double cornerTurnDeg(Point* pts, int n, int i)
+{
+    double ax = pts[i].x - pts[0].x,     ay = pts[i].y - pts[0].y;
+    double bx = pts[n - 1].x - pts[i].x, by = pts[n - 1].y - pts[i].y;
+    double la = sqrt(ax * ax + ay * ay), lb = sqrt(bx * bx + by * by);
+    if (la < 1e-6 || lb < 1e-6) return 0.0;
+    double c = (ax * bx + ay * by) / (la * lb);
+    if (c > 1.0) c = 1.0;
+    if (c < -1.0) c = -1.0;
+    return acos(c) * (180.0 / CORNER_PI);
+}
+
+// Minimum corner sharpness (degrees) for the two-straight-lines test in
+// recursiveArcFit to override an arc fit. Keeps very gentle bends (which a
+// smooth curve's halves can also look like) as arcs; a 45 deg or 90 deg
+// corner in a drawn stage is well above it.
+#define CORNER_MIN_TURN_FOR_TWO_LINES_DEG 20.0
+
+// TRUE if pts[0..n-1] is two straight lines (within ARC_FIT_TOLERANCE)
+// meeting at a corner of at least CORNER_MIN_TURN_FOR_TWO_LINES_DEG; the
+// corner index goes to *cornerOut.
+static int isTwoLines(Point* pts, int n, int* cornerOut)
+{
+    int i = maxLineDeviationIndex(pts, n);
+    if (i < 2 || i > n - 3) return 0;
+    if (maxLineDeviation(pts, i + 1) > ARC_FIT_TOLERANCE) return 0;
+    if (maxLineDeviation(pts + i, n - i) > ARC_FIT_TOLERANCE) return 0;
+    if (cornerTurnDeg(pts, n, i) < CORNER_MIN_TURN_FOR_TWO_LINES_DEG) return 0;
+    if (cornerOut) *cornerOut = i;
+    return 1;
+}
+
+// If pts is two or three straight lines joined at sharp corners (e.g. a
+// short step riser between two floors), returns the index of the first
+// corner to split at; otherwise -1. Checked BEFORE accepting a circle fit
+// in recursiveArcFit so polyline corners never turn into small arcs.
+static int polylineCornerSplit(Point* pts, int n)
+{
+    int c;
+    if (n < 5) return -1;
+    if (isTwoLines(pts, n, &c)) return c;
+
+    int i = maxLineDeviationIndex(pts, n);
+    if (i < 2 || i > n - 3) return -1;
+    if (cornerTurnDeg(pts, n, i) < CORNER_MIN_TURN_FOR_TWO_LINES_DEG) return -1;
+    int aLine = maxLineDeviation(pts, i + 1) <= ARC_FIT_TOLERANCE;
+    int bLine = maxLineDeviation(pts + i, n - i) <= ARC_FIT_TOLERANCE;
+    if (aLine && isTwoLines(pts + i, n - i, NULL)) return i;  // line + corner + (line, corner, line)
+    if (bLine && isTwoLines(pts, i + 1, NULL)) return i;      // (line, corner, line) + corner + line
+    return -1;
+}
+
 static int recursiveArcFit(Point* pts, int n, ArcSegment* out, int maxSegments, int* segCount)
 {
     if (n < 2) return 1;
@@ -454,7 +533,17 @@ static int recursiveArcFit(Point* pts, int n, ArcSegment* out, int maxSegments, 
     int curvatureNegligible = ok && radiusReasonable &&
                                (arcSagitta(chordLen, (double)c.r) <= ARC_FIT_TOLERANCE);
 
-    if (ok && radiusReasonable && err <= ARC_FIT_TOLERANCE && !curvatureNegligible) {
+    // A piece that is really two or three STRAIGHT LINES meeting at sharp
+    // corners (see polylineCornerSplit) is a corner region, not an arc --
+    // even if some small circle also happens to fit it within tolerance.
+    // Without this, the corners of a stage built only from straight lines
+    // came back as little rounded arcs/hooks. A genuinely curved stroke
+    // fails this (its pieces are still curved) unless the arc is so small
+    // that 2-3 lines already describe it within ARC_FIT_TOLERANCE anyway.
+    int cornerIdx = polylineCornerSplit(pts, n);
+    int isTwoLineCorner = (cornerIdx >= 0);
+
+    if (ok && radiusReasonable && err <= ARC_FIT_TOLERANCE && !curvatureNegligible && !isTwoLineCorner) {
         out[*segCount].pts          = pts;
         out[*segCount].count        = n;
         out[*segCount].circle       = c;
@@ -469,7 +558,11 @@ static int recursiveArcFit(Point* pts, int n, ArcSegment* out, int maxSegments, 
         return 1;
     }
 
-    int mid = n / 2;
+    // Split right AT the corner for a 2-3 line corner region (clean corner,
+    // no short chamfer piece straddling it); otherwise at the midpoint, as
+    // before -- the midpoint split keeps smooth curves (e.g. an S-curve)
+    // as few, long arcs.
+    int mid = isTwoLineCorner ? cornerIdx : n / 2;
     // Shared joint point between the two halves, same as draw_to_arcspline.c
     if (!recursiveArcFit(pts, mid + 1, out, maxSegments, segCount)) return 0;
     if (!recursiveArcFit(pts + mid, n - mid, out, maxSegments, segCount)) return 0;
@@ -532,8 +625,17 @@ int buildSegments(Point* path, int n, ArcSegment* out)
     {
         if (out[i].circle.r == 0.0f)
         {
+            // Only merge while the combined run is STILL a straight line
+            // within tolerance -- two line pieces meeting at an undetected
+            // corner used to be merged into one line cutting straight
+            // across that corner.
             int j = i;
-            while (j + 1 < segCount && out[j + 1].circle.r == 0.0f && !noMergeAfter[j]) j++;
+            while (j + 1 < segCount && out[j + 1].circle.r == 0.0f && !noMergeAfter[j])
+            {
+                int runCount = (int)(out[j + 1].pts - out[i].pts) + out[j + 1].count;
+                if (maxLineDeviation(out[i].pts, runCount) > ARC_FIT_TOLERANCE) break;
+                j++;
+            }
 
             if (j > i)
             {

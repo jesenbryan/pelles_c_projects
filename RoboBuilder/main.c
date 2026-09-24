@@ -130,6 +130,8 @@ static HMENU buildMainMenu(void)
     // Lists every keyboard/mouse control for posing/simulating the robot
     // (see canvas.c's WM_COMMAND ID_HELP handler).
     AppendMenu(hHelpMenu, MF_STRING, ID_HELP, L"Controls Help...");
+    AppendMenu(hHelpMenu, MF_SEPARATOR, 0, NULL);
+    AppendMenu(hHelpMenu, MF_STRING, ID_ABOUT, L"About RoboBuilder...");
     AppendMenu(hMenuBar, MF_POPUP, (UINT_PTR)hHelpMenu, L"&Help");
 
     // Matches designLayer's actual startup default (LAYER_ENVIRONMENT --

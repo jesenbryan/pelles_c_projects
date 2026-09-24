@@ -1,5 +1,13 @@
 ﻿#include "thinning.h"
 
+// Zhang-Suen thinning with the Lu & Wang (1986) modification: a pixel may
+// only be deleted when it has 3..6 foreground neighbours (B(P) in [3,6])
+// instead of Zhang-Suen's original 2..6. With the original range, a line
+// that is exactly 2 pixels thick along a "/" diagonal gets eroded from both
+// sides in the same sub-iteration and disappears completely (seen as a whole
+// diagonal of a drawn stage missing from the trace at some window sizes).
+// Lu & Wang's lower bound of 3 keeps such lines one pixel wide instead.
+// See pruneSkeletonSpurs (pipeline.c) for the spur clean-up that follows.
 void thinningZhangSuen(Image* img)
 {
     int w = img->width;
@@ -48,7 +56,7 @@ void thinningZhangSuen(Image* img)
                          ((p8 == 0 && p9 == 1) ? 1 : 0) +
                          ((p9 == 0 && p2 == 1) ? 1 : 0);
 
-                if (bp >= 2 && bp <= 6 && ap == 1)
+                if (bp >= 3 && bp <= 6 /* Lu & Wang: 3, not 2 */ && ap == 1)
                 {
                     if ((p2 * p4 * p6 == 0) && (p4 * p6 * p8 == 0))
                     {
@@ -96,7 +104,7 @@ void thinningZhangSuen(Image* img)
                          ((p8 == 0 && p9 == 1) ? 1 : 0) +
                          ((p9 == 0 && p2 == 1) ? 1 : 0);
 
-                if (bp >= 2 && bp <= 6 && ap == 1)
+                if (bp >= 3 && bp <= 6 /* Lu & Wang: 3, not 2 */ && ap == 1)
                 {
                     // Condition change for Step 2: (p2 * p4 * p8 == 0) and (p2 * p6 * p8 == 0)
                     if ((p2 * p4 * p8 == 0) && (p2 * p6 * p8 == 0))

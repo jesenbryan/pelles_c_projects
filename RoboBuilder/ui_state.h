@@ -29,6 +29,11 @@
 #define ID_TOGGLE_SHOW_FPS   18
 #define ID_TOGGLE_SIM_LOG    19
 #define ID_TOGGLE_FPS_LOG    20
+#define ID_UNDO              21
+#define ID_ABOUT             22
+
+// Author credit -- shown in Help > About RoboBuilder.
+#define APP_AUTHOR_NAME L"Jesen Bryan"
 
 // App-wide mode, switched from the "Mode" menu on the GL window.
 // Design = draw/trace/edit arc-spline paths (current behavior).
@@ -100,6 +105,10 @@ typedef struct {
 extern CanvasState canvas;
 
 void ResetCanvas(void);
+// Removes the most recently drawn Environment stroke (Undo button in the
+// Environment panel, and Ctrl+Z). No-op while a stroke is being drawn or
+// when there's nothing to undo. Defined in canvas.c.
+void UndoLastStroke(void);
 
 // Global state shared across modules
 extern HWND hWndGL;

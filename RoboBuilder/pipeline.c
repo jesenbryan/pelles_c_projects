@@ -207,6 +207,109 @@ static float measureLocalRadiusPxDirectional(const uint8_t* bin, int w, int h,
 // nearby background at all) stays cheap.
 #define MAX_MEASURED_STROKE_RADIUS_PX 40
 
+
+// ---- Spur pruning (after thinning, before tracing) ----
+//
+// Zhang-Suen thinning leaves short side branches ("spurs") where a thick
+// stroke has a corner or a blob: the skeleton sprouts a 1-8 px stub toward
+// the outer corner of the original ink. Each spur adds a third "endpoint",
+// and find_start_end_pixels only accepts a component with exactly two, so a
+// single spur used to make the WHOLE connected drawing disappear from the
+// trace (e.g. the far-right diagonal of a stage at some window sizes).
+//
+// A spur is recognised topologically: walk from an endpoint along the
+// skeleton; if a junction is reached within a length that's small compared
+// to the local stroke thickness, that branch is a thinning artifact and is
+// erased. Longer branches (real line ends) are left alone.
+
+// Number of 0->1 transitions around (x,y), clockwise from N -- the same
+// A(P) value Zhang-Suen uses. 1 = line end / line interior, >=3 = junction.
+static int crossingNumber(const uint8_t* b, int w, int h, int x, int y)
+{
+    static const int dx[8] = { 0, 1, 1, 1, 0, -1, -1, -1 };
+    static const int dy[8] = { -1, -1, 0, 1, 1, 1, 0, -1 };
+    int v[8];
+    for (int k = 0; k < 8; k++)
+    {
+        int nx = x + dx[k], ny = y + dy[k];
+        v[k] = (nx >= 0 && ny >= 0 && nx < w && ny < h) ? b[ny * w + nx] : 0;
+    }
+    int cn = 0;
+    for (int k = 0; k < 8; k++)
+        if (!v[k] && v[(k + 1) % 8]) cn++;
+    return cn;
+}
+
+static int neighborCount(const uint8_t* b, int w, int h, int x, int y)
+{
+    int n = 0;
+    for (int dy = -1; dy <= 1; dy++)
+        for (int dx = -1; dx <= 1; dx++)
+        {
+            if (!dx && !dy) continue;
+            int nx = x + dx, ny = y + dy;
+            if (nx >= 0 && ny >= 0 && nx < w && ny < h && b[ny * w + nx]) n++;
+        }
+    return n;
+}
+
+#define SPUR_MAX_WALK 64
+
+// Removes spurs from a thinned skeleton in place. origBin (the un-thinned
+// ink) supplies the local stroke half-thickness at each junction, so the
+// "short" threshold scales with how thick the drawing is. Returns the number
+// of pixels removed.
+static int pruneSkeletonSpurs(uint8_t* skel, const uint8_t* origBin, int w, int h)
+{
+    int removedTotal = 0;
+    int bx[SPUR_MAX_WALK + 1], by[SPUR_MAX_WALK + 1];
+
+    for (int pass = 0; pass < 4; pass++)
+    {
+        int removedThisPass = 0;
+        for (int y = 0; y < h; y++)
+        for (int x = 0; x < w; x++)
+        {
+            if (!skel[y * w + x]) continue;
+            if (crossingNumber(skel, w, h, x, y) != 1 || neighborCount(skel, w, h, x, y) > 2) continue; // not an end
+
+            // Walk from this end until a junction, the other end, or too far.
+            int len = 0, cx = x, cy = y, px = -1, py = -1, reachedJunction = 0;
+            while (len <= SPUR_MAX_WALK)
+            {
+                bx[len] = cx; by[len] = cy; len++;
+                int nx = -1, ny = -1, best = 99;
+                for (int dy = -1; dy <= 1; dy++)
+                    for (int dx = -1; dx <= 1; dx++)
+                    {
+                        if (!dx && !dy) continue;
+                        int qx = cx + dx, qy = cy + dy;
+                        if (qx < 0 || qy < 0 || qx >= w || qy >= h || !skel[qy * w + qx]) continue;
+                        int seen = 0;
+                        for (int k = 0; k < len; k++) if (bx[k] == qx && by[k] == qy) { seen = 1; break; }
+                        if (seen) continue;
+                        int rank = (dx == 0 || dy == 0) ? 0 : 1; // prefer 4-neighbours
+                        if (rank < best) { best = rank; nx = qx; ny = qy; }
+                    }
+                if (nx < 0) break;                          // dead end: isolated short piece, keep it
+                if (crossingNumber(skel, w, h, nx, ny) >= 3) { reachedJunction = 1; px = nx; py = ny; break; }
+                cx = nx; cy = ny;
+            }
+            if (!reachedJunction) continue;
+
+            float localR = measureLocalRadiusPx(origBin, w, h, px, py, MAX_MEASURED_STROKE_RADIUS_PX);
+            float maxSpurLen = 2.0f * localR + 2.0f;
+            if ((float)len > maxSpurLen) continue;          // long branch: a real line, keep
+
+            for (int k = 0; k < len; k++) skel[by[k] * w + bx[k]] = 0;
+            removedThisPass += len;
+        }
+        removedTotal += removedThisPass;
+        if (!removedThisPass) break;
+    }
+    return removedTotal;
+}
+
 static void runPipelineOnImage(Image* img, const char* sourceLabel, BOOL stretched)
 {
     int w = img->width;
@@ -222,6 +325,10 @@ static void runPipelineOnImage(Image* img, const char* sourceLabel, BOOL stretch
     memcpy(origBin, img->bin, (size_t)w * h);
 
     thinningZhangSuen(img);
+
+    // Remove thinning spurs so one stray stub can't make find_start_end_pixels
+    // see 3+ endpoints and drop the whole drawing (see pruneSkeletonSpurs).
+    pruneSkeletonSpurs(img->bin, origBin, w, h);
 
     uint8_t* remaining = (uint8_t*)malloc((size_t)w * h);
     memcpy(remaining, img->bin, (size_t)w * h);
