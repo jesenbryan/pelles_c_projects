@@ -110,6 +110,9 @@ void ResetCanvas(void);
 // Environment panel, and Ctrl+Z). No-op while a stroke is being drawn or
 // when there's nothing to undo. Defined in canvas.c.
 void UndoLastStroke(void);
+// Clear button: ResetCanvas, but keeps a copy of the drawing so the next
+// Undo on an empty canvas restores it (see canvas.c).
+void ClearCanvasWithUndo(void);
 
 // Global state shared across modules
 extern HWND hWndGL;

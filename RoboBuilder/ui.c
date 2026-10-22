@@ -327,7 +327,7 @@ LRESULT CALLBACK WndProcUI(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		    // Clear also wipes the debug console, same as Simulation's
 		    // Reset button -- a fresh drawing starts with a fresh log.
 		    ClearConsoleLog();
-		    ResetCanvas();
+		    ClearCanvasWithUndo();   // ResetCanvas + keeps a copy so Undo can bring it back
 		    SendMessage(hViewSegBtn, BM_SETCHECK, BST_UNCHECKED, 0);
 		    SendMessage(hComparisonBtn, BM_SETCHECK, BST_UNCHECKED, 0);
 		    if (hWndGL) InvalidateRect(hWndGL, NULL, TRUE);

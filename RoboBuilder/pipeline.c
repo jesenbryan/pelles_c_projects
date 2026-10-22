@@ -255,6 +255,9 @@ static int neighborCount(const uint8_t* b, int w, int h, int x, int y)
 
 #define SPUR_MAX_WALK 64
 
+// 1 = prune spurs after thinning (normal), 0 = skip it (temporary test).
+#define ENABLE_SPUR_PRUNING 1
+
 // Removes spurs from a thinned skeleton in place. origBin (the un-thinned
 // ink) supplies the local stroke half-thickness at each junction, so the
 // "short" threshold scales with how thick the drawing is. Returns the number
@@ -501,7 +504,13 @@ static void runPipelineOnImage(Image* img, const char* sourceLabel, BOOL stretch
 
     // Remove thinning spurs so one stray stub can't make find_start_end_pixels
     // see 3+ endpoints and drop the whole drawing (see pruneSkeletonSpurs).
+    // TEMPORARILY DISABLED for testing -- set ENABLE_SPUR_PRUNING back to 1
+    // (top of the spur-pruning section above) to restore it.
+#if ENABLE_SPUR_PRUNING
     pruneSkeletonSpurs(img->bin, origBin, w, h);
+#else
+    (void)pruneSkeletonSpurs;   // keep the function referenced (no unused-function warning)
+#endif
 
     uint8_t* remaining = (uint8_t*)malloc((size_t)w * h);
     memcpy(remaining, img->bin, (size_t)w * h);

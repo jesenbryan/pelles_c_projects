@@ -415,6 +415,73 @@ void ResetCanvas(void)
 	saveEnvironmentAutosave();
 }
 
+// ---- Undo for Clear ----
+// ClearCanvasWithUndo (the Environment panel's Clear button) keeps a copy of
+// everything ResetCanvas wipes from the drawing itself -- the strokes and the
+// view -- so an accidental Clear can be undone. UndoLastStroke restores it
+// once there are no strokes left to undo: straight after the Clear, or after
+// undoing whatever was drawn since. A newer Clear replaces the copy.
+// View Segments / Comparison Mode stay off (Clear unchecks them in the UI).
+static BOOL clearUndoValid = FALSE;
+static int clearUndoPointCount = 0, clearUndoStrokeCount = 0;
+static float clearUndoPoints[MAX_POINTS];
+static int clearUndoStrokeStarts[MAX_STROKES];
+static float clearUndoStrokeThickness[MAX_STROKES];
+static COLORREF clearUndoStrokeColor[MAX_STROKES];
+static DesignLayer clearUndoStrokeLayer[MAX_STROKES];
+static BOOL clearUndoHasBackgroundImage = FALSE;
+static float clearUndoPanX = 0.0f, clearUndoPanY = 0.0f, clearUndoZoom = 1.0f;
+
+void ClearCanvasWithUndo(void)
+{
+    // Clearing an already-empty canvas keeps the previous copy, so a
+    // double-click on Clear can't throw away the drawing it could restore.
+    if (canvas.strokeCount > 0 || canvas.hasBackgroundImage)
+    {
+        clearUndoPointCount = canvas.pointCount;
+        clearUndoStrokeCount = canvas.strokeCount;
+        memcpy(clearUndoPoints, points, sizeof(float) * (size_t)canvas.pointCount);
+        memcpy(clearUndoStrokeStarts, strokeStarts, sizeof(int) * (size_t)canvas.strokeCount);
+        memcpy(clearUndoStrokeThickness, strokeThickness, sizeof(float) * (size_t)canvas.strokeCount);
+        memcpy(clearUndoStrokeColor, strokeColor, sizeof(COLORREF) * (size_t)canvas.strokeCount);
+        memcpy(clearUndoStrokeLayer, strokeLayer, sizeof(DesignLayer) * (size_t)canvas.strokeCount);
+        clearUndoHasBackgroundImage = canvas.hasBackgroundImage;
+        clearUndoPanX = canvas.panX;
+        clearUndoPanY = canvas.panY;
+        clearUndoZoom = canvas.zoom;
+        clearUndoValid = TRUE;
+    }
+    ResetCanvas();
+}
+
+// Puts back what the last Clear removed. Returns FALSE if there's nothing
+// to restore.
+static BOOL restoreClearedCanvas(void)
+{
+    if (!clearUndoValid) return FALSE;
+
+    canvas.pointCount = clearUndoPointCount;
+    canvas.strokeCount = clearUndoStrokeCount;
+    memcpy(points, clearUndoPoints, sizeof(float) * (size_t)clearUndoPointCount);
+    memcpy(strokeStarts, clearUndoStrokeStarts, sizeof(int) * (size_t)clearUndoStrokeCount);
+    memcpy(strokeThickness, clearUndoStrokeThickness, sizeof(float) * (size_t)clearUndoStrokeCount);
+    memcpy(strokeColor, clearUndoStrokeColor, sizeof(COLORREF) * (size_t)clearUndoStrokeCount);
+    memcpy(strokeLayer, clearUndoStrokeLayer, sizeof(DesignLayer) * (size_t)clearUndoStrokeCount);
+    canvas.hasBackgroundImage = clearUndoHasBackgroundImage;
+    canvas.panX = clearUndoPanX;
+    canvas.panY = clearUndoPanY;
+    canvas.zoom = clearUndoZoom;
+    clearUndoValid = FALSE;      // one Clear, one restore
+
+    hoveredSegment = -1;
+    snapEndpointAvailable = FALSE;
+    branchMarkerCount = 0;
+    UpdateProjection();
+    saveEnvironmentAutosave();
+    if (hWndGL) InvalidateRect(hWndGL, NULL, FALSE);
+    return TRUE;
+}
+
 // Undo: drops the last stroke (its points are always the tail of points[],
 // starting at strokeStarts[last]). Re-traces if View Segments / Comparison
 // Mode is showing the reconstruction, so that overlay never shows a stroke
@@ -422,7 +489,11 @@ void ResetCanvas(void)
 void UndoLastStroke(void)
 {
     if (drawing) return;                       // never pull a stroke out from under an active drag
-    if (canvas.strokeCount <= 0) return;
+    if (canvas.strokeCount <= 0)
+    {
+        restoreClearedCanvas();                // nothing left to undo -- bring back what Clear removed
+        return;
+    }
 
     int last = canvas.strokeCount - 1;
     canvas.pointCount = strokeStarts[last];
