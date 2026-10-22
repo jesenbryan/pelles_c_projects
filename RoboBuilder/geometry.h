@@ -98,6 +98,18 @@ int segmentPath(Point* path, int n, int* segmentId, double threshold);
 
 int buildSegments(Point* path, int n, ArcSegment* out);
 
+// Arc-vs-line preference for buildSegments, set by the Environment panel's
+// "Arcs / Lines" slider: 0 = favour arcs as much as possible, 1 = straight
+// lines only (no arcs at all), 0.5 = the default balance. Takes effect on
+// the next trace.
+extern float gArcLineBias;
+
+// The tolerances (trace-raster pixels) the current bias works out to --
+// see geometry.c. At the default 0.5 both are 2.0. Exposed for the
+// Environment debug log.
+double traceLineTolerance(void);
+double traceArcTolerance(void);
+
 // ---- Robot joint / limb geometry (float, normalized GL-space coords) ----
 //
 // Merged in from what used to be a separate geometry(1).c/.h. This uses

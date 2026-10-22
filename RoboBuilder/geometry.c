@@ -231,8 +231,49 @@ int fitCircleToPoints(Point* pts, int n, Circle* out)
 // ARC_FIT_TOLERANCE pixels. This tends to produce fewer, more honest
 // arcs than a fixed curvature-diff threshold.
 
-#define ARC_FIT_TOLERANCE   2.0    // max allowed deviation, in pixels
 #define MIN_POINTS_FOR_ARC  5      // runs shorter than this are always lines
+
+// ---- Arc / line preference (Environment panel slider) ----
+// Every decision below used to compare against ONE fixed tolerance
+// (ARC_FIT_TOLERANCE, 2 px). It's now two, both driven by gArcLineBias
+// (0 = arcs, 0.5 = default, 1 = lines only):
+//
+//  - LINE tolerance: how far pixels may stray from a straight chord and
+//    still count as one straight line. Also the "this arc is so shallow
+//    it's really a line" sagitta limit, the two-lines-meeting-at-a-corner
+//    test and the straight-run merge. Grows toward the Lines end (more
+//    gets called straight), shrinks toward the Arcs end.
+//      bias 0 -> 1.33 px, 0.5 -> 2.0 px, 1 -> 3.0 px
+//  - ARC tolerance: how far pixels may stray from a fitted circle and
+//    still be accepted as one arc. Grows toward the Arcs end (one circle
+//    may cover a longer, wobblier stretch); shrinks to nothing toward the
+//    Lines end, where no arc is ever accepted and curves become chains of
+//    straight lines.
+//      bias 0 -> 6.0 px, 0.5 -> 2.0 px, 1 -> none
+//
+// At the default 0.5 both are exactly the old 2.0, so the default slider
+// position traces exactly as before.
+float gArcLineBias = 0.5f;
+
+double traceLineTolerance(void)
+{
+    double b = gArcLineBias;
+    if (b < 0.0) b = 0.0;
+    if (b > 1.0) b = 1.0;
+    return 2.0 * pow(1.5, 2.0 * (b - 0.5));
+}
+
+double traceArcTolerance(void)
+{
+    double b = gArcLineBias;
+    if (b < 0.0) b = 0.0;
+    if (b > 1.0) b = 1.0;
+    if (b <= 0.5) return 2.0 * pow(3.0, 2.0 * (0.5 - b));
+    return 2.0 * (1.0 - 2.0 * (b - 0.5));      // 0 at the Lines end: arcs off
+}
+
+#define ARC_FIT_TOLERANCE   traceArcTolerance()     // circle-fit acceptance
+#define LINE_FIT_TOLERANCE  traceLineTolerance()    // "is it straight" tests
 
 // r == 0 is the existing convention (see canvas_bridge.c's sampleArcPoints)
 // for "no meaningful circle here, treat as a straight segment".
@@ -475,8 +516,8 @@ static int isTwoLines(Point* pts, int n, int* cornerOut)
 {
     int i = maxLineDeviationIndex(pts, n);
     if (i < 2 || i > n - 3) return 0;
-    if (maxLineDeviation(pts, i + 1) > ARC_FIT_TOLERANCE) return 0;
-    if (maxLineDeviation(pts + i, n - i) > ARC_FIT_TOLERANCE) return 0;
+    if (maxLineDeviation(pts, i + 1) > LINE_FIT_TOLERANCE) return 0;
+    if (maxLineDeviation(pts + i, n - i) > LINE_FIT_TOLERANCE) return 0;
     if (cornerTurnDeg(pts, n, i) < CORNER_MIN_TURN_FOR_TWO_LINES_DEG) return 0;
     if (cornerOut) *cornerOut = i;
     return 1;
@@ -495,8 +536,8 @@ static int polylineCornerSplit(Point* pts, int n)
     int i = maxLineDeviationIndex(pts, n);
     if (i < 2 || i > n - 3) return -1;
     if (cornerTurnDeg(pts, n, i) < CORNER_MIN_TURN_FOR_TWO_LINES_DEG) return -1;
-    int aLine = maxLineDeviation(pts, i + 1) <= ARC_FIT_TOLERANCE;
-    int bLine = maxLineDeviation(pts + i, n - i) <= ARC_FIT_TOLERANCE;
+    int aLine = maxLineDeviation(pts, i + 1) <= LINE_FIT_TOLERANCE;
+    int bLine = maxLineDeviation(pts + i, n - i) <= LINE_FIT_TOLERANCE;
     if (aLine && isTwoLines(pts + i, n - i, NULL)) return i;  // line + corner + (line, corner, line)
     if (bLine && isTwoLines(pts, i + 1, NULL)) return i;      // (line, corner, line) + corner + line
     return -1;
@@ -521,7 +562,7 @@ static int recursiveArcFit(Point* pts, int n, ArcSegment* out, int maxSegments, 
     // Straight-line check FIRST (see maxLineDeviation) -- a run that's
     // already collinear within tolerance is reported as a line outright,
     // without ever risking a spurious circle fit.
-    if (maxLineDeviation(pts, n) <= ARC_FIT_TOLERANCE) {
+    if (maxLineDeviation(pts, n) <= LINE_FIT_TOLERANCE) {
         pushLineSegment(pts, n, out, segCount);
         return 1;
     }
@@ -537,7 +578,7 @@ static int recursiveArcFit(Point* pts, int n, ArcSegment* out, int maxSegments, 
     // bisect-then-remerge path below instead of being drawn as its own arc.
     double chordLen = hypot((double)pts[n - 1].x - pts[0].x, (double)pts[n - 1].y - pts[0].y);
     int curvatureNegligible = ok && radiusReasonable &&
-                               (arcSagitta(chordLen, (double)c.r) <= ARC_FIT_TOLERANCE);
+                               (arcSagitta(chordLen, (double)c.r) <= LINE_FIT_TOLERANCE);
 
     // A piece that is really two or three STRAIGHT LINES meeting at sharp
     // corners (see polylineCornerSplit) is a corner region, not an arc --
@@ -549,7 +590,8 @@ static int recursiveArcFit(Point* pts, int n, ArcSegment* out, int maxSegments, 
     int cornerIdx = polylineCornerSplit(pts, n);
     int isTwoLineCorner = (cornerIdx >= 0);
 
-    if (ok && radiusReasonable && err <= ARC_FIT_TOLERANCE && !curvatureNegligible && !isTwoLineCorner) {
+    double arcTol = ARC_FIT_TOLERANCE;       // 0 at the slider's Lines end: no arcs at all
+    if (arcTol > 0.0 && ok && radiusReasonable && err <= arcTol && !curvatureNegligible && !isTwoLineCorner) {
         out[*segCount].pts          = pts;
         out[*segCount].count        = n;
         out[*segCount].circle       = c;
@@ -639,7 +681,7 @@ int buildSegments(Point* path, int n, ArcSegment* out)
             while (j + 1 < segCount && out[j + 1].circle.r == 0.0f && !noMergeAfter[j])
             {
                 int runCount = (int)(out[j + 1].pts - out[i].pts) + out[j + 1].count;
-                if (maxLineDeviation(out[i].pts, runCount) > ARC_FIT_TOLERANCE) break;
+                if (maxLineDeviation(out[i].pts, runCount) > LINE_FIT_TOLERANCE) break;
                 j++;
             }
 

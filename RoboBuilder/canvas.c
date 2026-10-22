@@ -7251,6 +7251,8 @@ static void printEnvironmentComparison(void)
     printf("\n---------- ORIGINAL vs RECONSTRUCTED ----------\n");
     printf("[CMP] window=%dx%d zoom=%.5f pan=(%.5f,%.5f) screenPx/world=%.3f traceRasterPx/world=%.3f\n",
            glWindowWidth, glWindowHeight, zoom, canvas.panX, canvas.panY, pxPerWorld, traceRasterPxPerWorld());
+    printf("[CMP] fit slider=%.2f (0 arcs, 0.5 default, 1 lines only): line tolerance=%.2f px, arc tolerance=%.2f px (trace raster)\n",
+           gArcLineBias, traceLineTolerance(), traceArcTolerance());
     printf("[CMP] positions = screen px (x right, y down); distances = screen px\n");
 
     // Original strokes

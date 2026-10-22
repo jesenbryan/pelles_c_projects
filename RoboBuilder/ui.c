@@ -3,7 +3,9 @@
 #include "canvas_bridge.h" // NEW: for canvasToImage()
 #include "bmp_ui.h"        // NEW: for saveBMP_UI() and BMP_RGB
 #include "debug.h"         // For ClearConsoleLog -- the Clear button also wipes the debug console
+#include "geometry.h"      // For gArcLineBias -- the Arcs/Lines fit slider
 #include <commctrl.h>
+#include <stdlib.h>      // malloc/free for the anti-aliased fit icons
 
 HWND hWndUI = NULL;
 float thickness = 2.0f;
@@ -16,7 +18,152 @@ static HWND hColorBtn;
 static HWND hThicknessLabel;
 static HWND hViewSegBtn;   // NEW
 static HWND hComparisonBtn;  // NEW: toggle comparison mode
-static int controlCount = 7;
+static HWND hFitLabel;       // state readout above the fit slider ("balanced", "lines only", ...)
+static HWND hFitSlider;      // arc-vs-line preference for tracing (gArcLineBias)
+static HWND hFitArcIcon;     // owner-drawn arc symbol at the slider's left (arcs) end
+static HWND hFitLineIcon;    // owner-drawn straight-lines symbol at its right (lines) end
+static int controlCount = 8;   // sizing estimate (labels are shorter than buttons)
+
+// Fit slider: FIT_SLIDER_STEPS + 1 positions in 25% steps, left = arcs,
+// right = lines, middle = default. Position p maps to
+// gArcLineBias = p / FIT_SLIDER_STEPS.
+#define FIT_SLIDER_STEPS 4
+#define FIT_ICON_SIZE    20
+#define ID_FIT_ARC_ICON  901    // child ids only so WM_DRAWITEM can tell the two icons apart
+#define ID_FIT_LINE_ICON 902
+
+static void updateFitLabel(int pos)
+{
+    static const wchar_t* names[FIT_SLIDER_STEPS + 1] = {
+        L"max arcs", L"more arcs", L"balanced", L"more lines", L"lines only"
+    };
+    if (pos < 0) pos = 0;
+    if (pos > FIT_SLIDER_STEPS) pos = FIT_SLIDER_STEPS;
+    SetWindowText(hFitLabel, names[pos]);
+}
+
+// The two end symbols (the panel's default font has no suitable glyphs, so
+// they're drawn): a half circle for "arcs", a zigzag of straight strokes
+// for "lines".
+//
+// Plain GDI draws without anti-aliasing, which made the symbols look jagged.
+// So they're drawn FIT_ICON_SS times larger (black on white) into an
+// off-screen bitmap, then shrunk by averaging each SSxSS block into a
+// coverage value that blends the text colour over the button-face colour.
+// The result is a smooth, anti-aliased symbol at the original size.
+#define FIT_ICON_SS 8
+
+static void drawFitIconShape(HDC dc, UINT id, int w, int h, int S)
+{
+    if (id == ID_FIT_ARC_ICON)
+    {
+        // Upper half of a circle, open at the bottom (Arc runs counter-
+        // clockwise from the start point on the right to the end point on
+        // the left, i.e. over the top).
+        int R  = (w - 6) * S / 2;
+        int cx = w * S / 2, cy = h * S * 3 / 4;
+        Arc(dc, cx - R, cy - R, cx + R, cy + R, cx + R, cy, cx - R, cy);
+    }
+    else
+    {
+        // Three straight strokes meeting at sharp corners.
+        POINT p[4] = {
+            { 3 * S,             h * S * 3 / 4 },
+            { w * S / 3,         h * S / 4 },
+            { w * S * 2 / 3,     h * S * 3 / 4 },
+            { (w - 3) * S,       h * S / 4 }
+        };
+        Polyline(dc, p, 4);
+    }
+}
+
+static void drawFitIcon(const DRAWITEMSTRUCT* dis)
+{
+    HDC dc = dis->hDC;
+    RECT r = dis->rcItem;
+    int w = r.right - r.left, h = r.bottom - r.top;
+    FillRect(dc, &r, (HBRUSH)(COLOR_BTNFACE + 1));
+    if (w <= 0 || h <= 0) return;
+
+    const int S = FIT_ICON_SS;
+    int W = w * S, H = h * S;
+
+    // Large 32-bit top-down bitmap to draw into.
+    BITMAPINFO bi;
+    ZeroMemory(&bi, sizeof bi);
+    bi.bmiHeader.biSize        = sizeof(BITMAPINFOHEADER);
+    bi.bmiHeader.biWidth       = W;
+    bi.bmiHeader.biHeight      = -H;          // negative = top-down rows
+    bi.bmiHeader.biPlanes      = 1;
+    bi.bmiHeader.biBitCount    = 32;
+    bi.bmiHeader.biCompression = BI_RGB;
+
+    void* bits = NULL;
+    HDC mem = CreateCompatibleDC(dc);
+    HBITMAP big = CreateDIBSection(dc, &bi, DIB_RGB_COLORS, &bits, NULL, 0);
+    unsigned char* out = (unsigned char*)malloc((size_t)w * h * 4);
+    if (!mem || !big || !bits || !out)
+    {
+        if (out) free(out);
+        if (big) DeleteObject(big);
+        if (mem) DeleteDC(mem);
+        return;   // leave the plain background rather than draw nothing sensible
+    }
+    HBITMAP oldBmp = (HBITMAP)SelectObject(mem, big);
+
+    RECT all = { 0, 0, W, H };
+    FillRect(mem, &all, (HBRUSH)GetStockObject(WHITE_BRUSH));
+
+    // Same 2 px stroke as before (scaled up), with round ends and joins so
+    // the shrunk result has soft, even line ends.
+    LOGBRUSH lb = { BS_SOLID, RGB(0, 0, 0), 0 };
+    HPEN pen = ExtCreatePen(PS_GEOMETRIC | PS_SOLID | PS_ENDCAP_ROUND | PS_JOIN_ROUND,
+                            2 * S, &lb, 0, NULL);
+    HPEN oldPen = (HPEN)SelectObject(mem, pen);
+    HBRUSH oldBrush = (HBRUSH)SelectObject(mem, GetStockObject(NULL_BRUSH));
+    drawFitIconShape(mem, dis->CtlID, w, h, S);
+    SelectObject(mem, oldBrush);
+    SelectObject(mem, oldPen);
+    DeleteObject(pen);
+    GdiFlush();   // make sure GDI has finished writing into bits
+
+    // Shrink: ink coverage of each SSxSS block -> blend fg over bg.
+    COLORREF bg = GetSysColor(COLOR_BTNFACE), fg = GetSysColor(COLOR_BTNTEXT);
+    int bgB = GetBValue(bg), bgG = GetGValue(bg), bgR = GetRValue(bg);
+    int fgB = GetBValue(fg), fgG = GetGValue(fg), fgR = GetRValue(fg);
+    const unsigned char* src = (const unsigned char*)bits;   // BGRA rows
+    int area = S * S;
+    for (int y = 0; y < h; y++)
+    {
+        for (int x = 0; x < w; x++)
+        {
+            int ink = 0;
+            for (int sy = 0; sy < S; sy++)
+            {
+                const unsigned char* row = src + ((size_t)(y * S + sy) * W + (size_t)x * S) * 4;
+                for (int sx = 0; sx < S; sx++)
+                    ink += 255 - row[sx * 4];   // blue channel: 0 = ink, 255 = paper
+            }
+            int a = (ink + area / 2) / area;      // 0..255 coverage
+            unsigned char* d = out + ((size_t)y * w + x) * 4;
+            d[0] = (unsigned char)(bgB + (fgB - bgB) * a / 255);
+            d[1] = (unsigned char)(bgG + (fgG - bgG) * a / 255);
+            d[2] = (unsigned char)(bgR + (fgR - bgR) * a / 255);
+            d[3] = 0;
+        }
+    }
+
+    BITMAPINFO bo = bi;
+    bo.bmiHeader.biWidth  = w;
+    bo.bmiHeader.biHeight = -h;
+    SetDIBitsToDevice(dc, r.left, r.top, (DWORD)w, (DWORD)h, 0, 0, 0, (UINT)h,
+                      out, &bo, DIB_RGB_COLORS);
+
+    SelectObject(mem, oldBmp);
+    DeleteObject(big);
+    DeleteDC(mem);
+    free(out);
+}
 
 
 static int GetRequiredUIHeight(void)
@@ -61,6 +208,14 @@ static void LayoutUI(HWND hWnd)
 	MoveWindow(hViewSegBtn, centerX, y, btnW, btnH, TRUE);
 	y += btnH + spacing;
 	MoveWindow(hComparisonBtn, centerX, y, btnW, btnH, TRUE);
+	y += btnH + spacing;
+	MoveWindow(hFitLabel, centerX, y, btnW, 20, TRUE);
+	y += 20 + 2;
+	// [arc symbol] [slider] [lines symbol] on one row; the symbols sit level
+	// with the slider's channel (the tick marks hang below it).
+	MoveWindow(hFitArcIcon, centerX, y + 1, FIT_ICON_SIZE, FIT_ICON_SIZE, TRUE);
+	MoveWindow(hFitSlider, centerX + FIT_ICON_SIZE + 2, y, btnW - 2 * (FIT_ICON_SIZE + 2), btnH, TRUE);
+	MoveWindow(hFitLineIcon, centerX + btnW - FIT_ICON_SIZE, y + 1, FIT_ICON_SIZE, FIT_ICON_SIZE, TRUE);
 }
 
 LRESULT CALLBACK WndProcUI(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
@@ -96,6 +251,22 @@ LRESULT CALLBACK WndProcUI(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		                                 20, 290, 300, 30, hWnd, (HMENU)ID_COMPARISON,
 		                                 GetModuleHandle(NULL), NULL);
 
+        // Arcs / Lines fit preference (see gArcLineBias in geometry.h):
+        // left = reconstruct with arcs as much as possible, right = straight
+        // lines only, middle (default) = the normal balance.
+        hFitLabel  = CreateWindowEx(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_CENTER, 20, 330, 300, 20, hWnd, NULL, GetModuleHandle(NULL), NULL);
+        hFitSlider = CreateWindowEx(0, TRACKBAR_CLASS, L"", WS_CHILD | WS_VISIBLE | TBS_AUTOTICKS | TBS_HORZ, 20, 350, 300, 40, hWnd, NULL, GetModuleHandle(NULL), NULL);
+        hFitArcIcon  = CreateWindowEx(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_OWNERDRAW, 0, 350, FIT_ICON_SIZE, FIT_ICON_SIZE, hWnd, (HMENU)ID_FIT_ARC_ICON, GetModuleHandle(NULL), NULL);
+        hFitLineIcon = CreateWindowEx(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_OWNERDRAW, 0, 350, FIT_ICON_SIZE, FIT_ICON_SIZE, hWnd, (HMENU)ID_FIT_LINE_ICON, GetModuleHandle(NULL), NULL);
+        SendMessage(hFitSlider, TBM_SETRANGE, TRUE, MAKELPARAM(0, FIT_SLIDER_STEPS));
+        SendMessage(hFitSlider, TBM_SETTICFREQ, 1, 0);
+        SendMessage(hFitSlider, TBM_SETPAGESIZE, 0, 1);   // clicking the channel moves one 25% step
+        {
+            int pos = (int)(gArcLineBias * FIT_SLIDER_STEPS + 0.5f);
+            SendMessage(hFitSlider, TBM_SETPOS, TRUE, pos);
+            updateFitLabel(pos);
+        }
+
         SendMessage(hSlider, TBM_SETRANGE, TRUE, MAKELPARAM(1, 10));
         SendMessage(hSlider, TBM_SETPOS, TRUE, (LPARAM)thickness);
 
@@ -117,7 +288,34 @@ LRESULT CALLBACK WndProcUI(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             SetWindowText(hThicknessLabel, buf);
             if (hWndGL) InvalidateRect(hWndGL, NULL, FALSE);
         }
+        else if ((HWND)lParam == hFitSlider && hFitSlider != NULL)
+        {
+            int pos = (int)SendMessage(hFitSlider, TBM_GETPOS, 0, 0);
+            float bias = (float)pos / (float)FIT_SLIDER_STEPS;
+            if (bias != gArcLineBias)
+            {
+                gArcLineBias = bias;
+                updateFitLabel(pos);
+                // Re-trace right away if the reconstruction is on screen,
+                // so the effect shows while dragging. Otherwise it simply
+                // applies to the next trace (View Segments, Comparison
+                // Mode, entering Simulation).
+                if ((canvas.showSegments || canvas.comparisonMode) && canvas.strokeCount > 0)
+                    RunTracePipeline();
+                if (hWndGL) InvalidateRect(hWndGL, NULL, FALSE);
+            }
+        }
         return 0;
+    }
+    case WM_DRAWITEM:
+    {
+        const DRAWITEMSTRUCT* dis = (const DRAWITEMSTRUCT*)lParam;
+        if (dis && (dis->CtlID == ID_FIT_ARC_ICON || dis->CtlID == ID_FIT_LINE_ICON))
+        {
+            drawFitIcon(dis);
+            return TRUE;
+        }
+        break;
     }
     case WM_SIZE:
         LayoutUI(hWnd);
