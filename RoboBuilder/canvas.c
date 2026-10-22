@@ -2955,6 +2955,187 @@ static float settleFootClearance(void)
     return nearestEnvDistance(ecx, ecy) - (robotLengthToEnvWorld(foot.radius) + simEnvLineHalfWidthWorld());
 }
 
+// ---- Probe 2 gravity swing: leg centre of mass + leg/body self-collision ----
+//
+// Probe 2 used to know only two reasons to move a joint: the BODY can sink
+// further (bestDrop), or the FOOT gets closer to the ground
+// (bestClearanceGain). Neither models what a loose joint actually does:
+// the leg is heavy, so it swings until ITS OWN centre of mass is as low as
+// it can get. A real report showed the gap: Rocky lying on its body with
+// the knee circle on the ground and the shin curled up in the air -- the
+// body can't sink and the knee-contact skip silenced Probe 2 entirely, so
+// the leg just stayed up. settleLegCentroid is the measure the new
+// "gravity swing" criterion (bestLegComDrop in advanceRockySettle) lowers.
+//
+// Uses the leg's own centroid (the same one the mass-center marker blends
+// in, renderer.c's compute*MassCenterEndpointsWorld), NOT the weighted
+// whole-robot mass center: while only a joint moves the body stays put, so
+// lowering the leg centroid IS lowering the total mass center -- and it
+// keeps working even when the Leg Weight box is set to 0.
+static PointF settleLegCentroid(void)
+{
+    PointF bodyC, legC;
+    if (app.robotScene.activeKind == ROBOT_KIND_ROCKY)
+        computeRockyMassCenterEndpointsWorld(app.robotScene.rocky, &bodyC, &legC);
+    else
+        computeSemniMassCenterEndpointsWorld(app.robotScene.robot, &bodyC, &legC);
+    return legC;
+}
+
+// Leg sample points (robot world) checked against the robot's OWN body, so
+// a swinging leg comes to rest ON the body instead of passing through it
+// (robotCollidesWithEnvironment only ever tests the drawn environment).
+// Order is fixed, so index i in one call matches index i in another --
+// legEntersBody below relies on that.
+//
+// Only the far END of the leg is checked: the outline of the foot circle
+// (Rocky), or of the knee and foot circles (Semni -- the knee is the far
+// end of the thigh for a hip swing). The shin/thigh arcs are deliberately
+// NOT checked: Rocky and Semni are drawn with the leg's root overlapping
+// the torso around the hinge (e.g. Rocky's shin arc leaving the rectangle
+// through its top edge), and wherever an arc already crosses the body's
+// outline, ANY rotation slides that crossing point along the arc, so a
+// point just outside always slips inside -- a test run showed exactly that
+// blocking every swing after 1 degree. The leg's far end never overlaps
+// the body near the hinge, so testing it gives the intended result: the
+// leg falls until its foot (or knee) lands on the body.
+#define LEG_SELF_MAX_POINTS (2 * ARC_SAMPLE_COUNT)
+
+static void appendCircleOutline(PointF center, float radius, PointF* out, int* n)
+{
+    PointF pts[ARC_SAMPLE_COUNT];
+    computeCircleSamplePoints(center, radius, pts);
+    for (int i = 0; i < ARC_SAMPLE_COUNT && *n < LEG_SELF_MAX_POINTS; i++)
+        out[(*n)++] = pts[i];
+}
+
+static int collectLegSelfPoints(PointF* out)
+{
+    int n = 0;
+    if (app.robotScene.activeKind == ROBOT_KIND_ROCKY)
+    {
+        CircleSegment c[NUM_ROCKY_BODY_CIRCLES];
+        computeRockyBodyCircles(app.robotScene.rocky, c);
+        appendCircleOutline(c[1].center, c[1].radius, out, &n);   // foot
+    }
+    else
+    {
+        CircleSegment c[NUM_ROBOT_BODY_CIRCLES];
+        computeSemniBodyCircles(app.robotScene.robot, c);
+        appendCircleOutline(c[3].center, c[3].radius, out, &n);   // knee
+        appendCircleOutline(c[4].center, c[4].radius, out, &n);   // foot
+    }
+    return n;
+}
+
+// The robot's BODY (torso only, no leg) in robot world, computed once per
+// check and then tested against many points. Rocky: the rotated rectangle.
+// Semni: head circle, butt circle, and the region between the two seam
+// arcs (seam arc 1 head -> butt, then seam arc 2 reversed, closes it).
+typedef struct {
+    BOOL isRocky, empty;
+    PointF center; float angle, halfW, halfH;          // Rocky
+    PointF circC[2]; float circR[2];                   // Semni head, butt
+    PointF poly[2 * ARC_SAMPLE_COUNT]; int polyN;      // Semni seam region
+} RobotTorsoShape;
+
+static void computeRobotTorsoShape(RobotTorsoShape* t)
+{
+    ZeroMemory(t, sizeof *t);
+    if (app.robotScene.activeKind == ROBOT_KIND_ROCKY)
+    {
+        const Rocky* r = &app.robotScene.rocky;
+        t->isRocky = TRUE;
+        t->empty = r->bodyHidden;
+        t->center = getRockyCenter(*r);
+        t->angle = r->angle;
+        t->halfW = r->bodyHalfWidth;
+        t->halfH = r->bodyHalfHeight;
+        return;
+    }
+    const Semni* sm = &app.robotScene.robot;
+    CircleSegment c[NUM_ROBOT_BODY_CIRCLES];
+    computeSemniBodyCircles(*sm, c);
+    for (int i = 0; i < 2; i++) { t->circC[i] = c[i].center; t->circR[i] = c[i].radius; }
+    PointF arcPts[NUM_ROBOT_CIRCLE_SEGMENTS][ARC_SAMPLE_COUNT];
+    int arcCounts[NUM_ROBOT_CIRCLE_SEGMENTS];
+    computeSemniArcPoints(*sm, arcPts, arcCounts);
+    for (int i = 0; i < arcCounts[0]; i++) t->poly[t->polyN++] = arcPts[0][i];
+    for (int i = arcCounts[1] - 1; i >= 0; i--) t->poly[t->polyN++] = arcPts[1][i];
+}
+
+static BOOL pointInsideRobotTorso(const RobotTorsoShape* t, PointF p)
+{
+    if (t->empty)
+        return FALSE;
+    if (t->isRocky)
+    {
+        PointF local = rotatePoint(p, t->center, -t->angle);
+        return fabsf(local.x - t->center.x) < t->halfW
+            && fabsf(local.y - t->center.y) < t->halfH;
+    }
+    for (int i = 0; i < 2; i++)
+    {
+        float dx = p.x - t->circC[i].x, dy = p.y - t->circC[i].y;
+        if (dx * dx + dy * dy < t->circR[i] * t->circR[i])
+            return TRUE;
+    }
+    BOOL inside = FALSE;   // even-odd point-in-polygon
+    for (int i = 0, j = t->polyN - 1; i < t->polyN; j = i++)
+    {
+        const PointF* pi = &t->poly[i];
+        const PointF* pj = &t->poly[j];
+        if (((pi->y > p.y) != (pj->y > p.y))
+            && (p.x < (pj->x - pi->x) * (p.y - pi->y) / (pj->y - pi->y) + pi->x))
+            inside = !inside;
+    }
+    return inside;
+}
+
+// Snapshot of which leg sample points are inside the body in the pose
+// Probe 2 starts from this tick -- taken once, before any candidate angle.
+typedef struct {
+    int count;
+    unsigned char inside[LEG_SELF_MAX_POINTS];
+} LegSelfSnapshot;
+
+static void takeLegSelfSnapshot(LegSelfSnapshot* snap)
+{
+    PointF pts[LEG_SELF_MAX_POINTS];
+    RobotTorsoShape torso;
+    computeRobotTorsoShape(&torso);
+    snap->count = collectLegSelfPoints(pts);
+    for (int i = 0; i < snap->count; i++)
+        snap->inside[i] = (unsigned char)pointInsideRobotTorso(&torso, pts[i]);
+}
+
+// TRUE if the CURRENT (candidate) pose pushes any checked point (see
+// collectLegSelfPoints) that was OUTSIDE the body in the snapshot pose INTO
+// the body. A point that already overlapped the body in the snapshot (only
+// possible if the robot was posed that way) is left free to move, so a
+// leg posed partly inside the body isn't frozen. So the rule is simply "a
+// foot (or knee) that's clear of the body can't swing into it": the leg
+// comes to rest with its foot lying on the body.
+static BOOL legEntersBody(const LegSelfSnapshot* snap)
+{
+#if SIMULATION_LEG_BODY_COLLISION
+    RobotTorsoShape torso;
+    computeRobotTorsoShape(&torso);
+    if (torso.empty)
+        return FALSE;
+    PointF pts[LEG_SELF_MAX_POINTS];
+    int n = collectLegSelfPoints(pts);
+    if (n > snap->count) n = snap->count;
+    for (int i = 0; i < n; i++)
+        if (!snap->inside[i] && pointInsideRobotTorso(&torso, pts[i]))
+            return TRUE;
+    return FALSE;
+#else
+    (void)snap;
+    return FALSE;   // leg and body pass each other (see config.h)
+#endif
+}
+
 static void settleInsertCandidate(RockyLegContact cand, RockyLegContact* best, RockyLegContact* second)
 {
     if (cand.clearance < best->clearance) { *second = *best; *best = cand; }
@@ -3063,6 +3244,135 @@ static PointF rotateActiveBodyAroundPivot(PointF pivot, float deltaAngle)
     *settleBodyAnglePtr() += deltaAngle;
     translateActiveRobot(shift.x, shift.y);
     return shift;
+}
+
+// ---- Probe 2 gravity swing, BODY side ----
+//
+// A passive joint lets EITHER side swing: the leg around the body (the leg
+// swing in advanceRockySettle), or the body around the leg. A real report
+// showed the second case missing: Rocky with the knee AND the foot both on
+// the ground and the body propped up in the air above them. The leg can't
+// move (both ends are on the ground), and Probe 1 only ever tips the WHOLE
+// robot as one rigid piece, which here would push the foot or knee into the
+// ground -- so the body just stayed up instead of falling around the knee.
+//
+// A body swing turns everything about the joint's centre by delta and then
+// turns the joint itself back by -delta, so the part of the leg BEYOND the
+// joint ends up exactly where it was (the joint centre is the pivot, so it
+// doesn't move either) and only the body side has moved. The joint's angle
+// changes by -delta, which is what makes this a joint swing rather than a
+// topple.
+
+// Rotates whole-body angle and joint angle together, so a full save/restore
+// of the robot is the simplest exact undo.
+typedef struct { Rocky rocky; Semni robot; } SettlePoseBackup;
+static void saveSettlePose(SettlePoseBackup* b)          { b->rocky = app.robotScene.rocky; b->robot = app.robotScene.robot; }
+static void restoreSettlePose(const SettlePoseBackup* b) { app.robotScene.rocky = b->rocky; app.robotScene.robot = b->robot; }
+
+// World centre of settle joint j (see settleJointPtr: Rocky 0 = knee;
+// Semni 0 = knee, 1 = hip).
+static PointF settleJointPivotWorld(int j)
+{
+    if (app.robotScene.activeKind == ROBOT_KIND_ROCKY)
+    {
+        CircleSegment c[NUM_ROCKY_BODY_CIRCLES];
+        computeRockyBodyCircles(app.robotScene.rocky, c);
+        return c[0].center;
+    }
+    CircleSegment c[NUM_ROBOT_BODY_CIRCLES];
+    computeSemniBodyCircles(app.robotScene.robot, c);
+    return (j == 0) ? c[3].center : c[2].center;
+}
+
+// Centroid of the body side (Rocky's rectangle / Semni's torso) -- what a
+// body swing lowers. Same reasoning as settleLegCentroid: the leg beyond
+// the joint stays put, so lowering this IS lowering the total mass centre,
+// independent of the Body/Leg Weight boxes.
+static PointF settleBodyCentroid(void)
+{
+    PointF bodyC, legC;
+    if (app.robotScene.activeKind == ROBOT_KIND_ROCKY)
+        computeRockyMassCenterEndpointsWorld(app.robotScene.rocky, &bodyC, &legC);
+    else
+        computeSemniMassCenterEndpointsWorld(app.robotScene.robot, &bodyC, &legC);
+    return bodyC;
+}
+
+static void applyBodySwing(int j, float delta)
+{
+    PointF pivot = settleJointPivotWorld(j);
+    rotateActiveBodyAroundPivot(pivot, delta);
+    *settleJointPtr(j) -= delta;
+}
+
+// Tries a body swing of +/-step about joint j and reports, per direction,
+// how far the body side's centroid goes down (0 if that direction isn't a
+// legal pose: body into the environment, or body onto the leg's foot/knee
+// -- legEntersBody). The robot is left exactly as it was.
+static void measureBodySwing(int j, float step, const LegSelfSnapshot* snap, float outDropAtDir[2])
+{
+    outDropAtDir[0] = outDropAtDir[1] = 0.0f;
+    if (settleBodyHidden())
+        return;
+    SettlePoseBackup bk;
+    saveSettlePose(&bk);
+    float baseBodyY = settleBodyCentroid().y;
+    int di = 0;
+    for (int dir = -1; dir <= 1; dir += 2, di++)
+    {
+        applyBodySwing(j, dir * step);
+        if (!legEntersBody(snap) && !robotCollidesWithEnvironment())
+            outDropAtDir[di] = baseBodyY - settleBodyCentroid().y;
+        restoreSettlePose(&bk);
+    }
+}
+
+// Same check for the LEG side (the leg swing advanceRockySettle commits):
+// how far the leg centroid goes down turning joint j by +/-step with the
+// body held still, 0 for an illegal pose. Robot left as it was.
+static void measureLegSwing(int j, float step, const LegSelfSnapshot* snap, float outDropAtDir[2])
+{
+    outDropAtDir[0] = outDropAtDir[1] = 0.0f;
+    float* joint = settleJointPtr(j);
+    float base = *joint;
+    float baseLegY = settleLegCentroid().y;
+    int di = 0;
+    for (int dir = -1; dir <= 1; dir += 2, di++)
+    {
+        *joint = base + dir * step;
+        if (!legEntersBody(snap) && !robotCollidesWithEnvironment())
+            outDropAtDir[di] = baseLegY - settleLegCentroid().y;
+        *joint = base;
+    }
+}
+
+// Whether the passive joint swing (leg side or body side, any settle joint)
+// would move right now at a full-size step. Used while Auto Gravity is on to
+// wake an already-converged settle back up when the pose has become
+// unbalanced (see advanceAutoGravity), so the user doesn't have to tap E/Q
+// to get Probe 2 to look again.
+static BOOL passiveJointSwingWouldMove(void)
+{
+    if (!settleSupportedKind() || settleLegHidden())
+        return FALSE;
+    LegSelfSnapshot snap;
+    takeLegSelfSnapshot(&snap);
+    // Body swing only counts while the leg rests on something (see the body
+    // swing in advanceRockySettle) -- same test as legRestingOnImmovableJoint.
+    RockyLegContact legContact, legSecond;
+    settleLegContactPoints(&legContact, &legSecond);
+    BOOL legSupported = legContact.clearance < SIMULATION_LEG_SETTLE_MIN_DROP;
+    for (int j = 0; j < settleJointCount(); j++)
+    {
+        float legDrop[2], bodyDrop[2] = { 0.0f, 0.0f };
+        measureLegSwing(j, SIMULATION_LEG_SETTLE_STEP_DEG, &snap, legDrop);
+        if (legSupported)   // same rule as in advanceRockySettle's body swing
+            measureBodySwing(j, SIMULATION_LEG_SETTLE_STEP_DEG, &snap, bodyDrop);
+        for (int d = 0; d < 2; d++)
+            if (legDrop[d] > SIMULATION_LEG_SETTLE_MIN_COM_DROP || bodyDrop[d] > SIMULATION_LEG_SETTLE_MIN_COM_DROP)
+                return TRUE;
+    }
+    return FALSE;
 }
 
 // Halves rockyBodySettleStep for a reversal-guard block, but never below
@@ -3394,6 +3704,14 @@ static void advanceRockySettle(void)
     // to whatever lets a whole-body drop keep reporting real room while
     // a corner's own clearance doesn't actually move, not a blanket
     // freeze on the corner merely existing.
+    //
+    // UPDATE (gravity swing): this flag no longer skips Probe 2 outright.
+    // It now only switches off Probe 2's two OLD criteria (body sinks /
+    // foot reaches toward the ground) -- the ones every pathology above
+    // came from. The gravity swing (leg centre of mass goes down, leg stays
+    // clear of the environment and of the robot's own body) still runs, so
+    // e.g. Rocky lying on its knee circle with the shin curled up in the
+    // air now lets the shin fall instead of freezing it there.
     BOOL legRestingOnImmovableJoint = FALSE;
     // Captured alongside legRestingOnImmovableJoint purely for the
     // diagnostic printf below (Probe 2's own else-branch, further down)
@@ -3417,6 +3735,11 @@ static void advanceRockySettle(void)
     // doesn't commit (skip, straddle, scout-only, nothing found at all).
     BOOL probe2Committed = FALSE;
     BOOL probe1Committed = FALSE;
+
+    // TRUE when Probe 2's commit this tick was a gravity swing (leg or body
+    // side) -- every such move strictly lowers a centre of mass, so it can't
+    // be one half of an endless chase; the stalemate check below ignores it.
+    BOOL probe2GravityCommit = FALSE;
 
     // TRUE for this tick only when one of Probe 1's four reversal-guard
     // branches actually fired (bestDrop/bestComDrop/bestClearanceGain's
@@ -3481,11 +3804,26 @@ static void advanceRockySettle(void)
         break;
     float* joint = settleJointPtr(settleJoint);
     float* jointStep = settleJointStepPtr(settleJoint);
-    if (!legHidden && !rockyKneeSettleSuppressed && !legRestingOnImmovableJoint && rockyProbe2Enabled && (*jointStep) >= SIMULATION_LEG_SETTLE_MIN_STEP_DEG)
+    // legRestingOnImmovableJoint no longer switches the whole probe off
+    // (see allowLegReach just below): the gravity swing criterion is safe
+    // with the leg resting, and is exactly what a resting knee needs to let
+    // the rest of the leg fall.
+    if (!legHidden && !rockyKneeSettleSuppressed && rockyProbe2Enabled && (*jointStep) >= SIMULATION_LEG_SETTLE_MIN_STEP_DEG)
     {
         float baseKneeAngle = (*joint);
         float bestDrop = 0.0f;
         float bestKneeAngle = baseKneeAngle;
+
+        // The two OLD criteria (body sinks further / foot reaches toward
+        // the ground) are the ones that caused the ARC/KNEE/FOOT pathologies
+        // described at legRestingOnImmovableJoint above, so they stay off
+        // while the leg rests on one of those. The new gravity swing
+        // (bestLegComDrop) runs either way: it only ever lets the leg's own
+        // centre of mass go DOWN, and every candidate must stay clear of
+        // both the environment and the body, so it can't pry a resting
+        // contact loose (lifting the leg off the ground raises its centre
+        // of mass) or curl the leg into the ground (that collides).
+        BOOL allowLegReach = !legRestingOnImmovableJoint;
 
         // Baseline clearance of the FOOT alone, captured before either
         // candidate angle is tried below. This is the
@@ -3497,17 +3835,48 @@ static void advanceRockySettle(void)
         float bestClearanceGain = 0.0f;
         float bestClearanceKneeAngle = baseKneeAngle;
 
+        // Gravity swing: how far the leg's own centre of mass goes down
+        // (robot world, y up) -- see settleLegCentroid.
+        float baseLegComY = settleLegCentroid().y;
+        float bestLegComDrop = 0.0f;
+        float bestLegComKneeAngle = baseKneeAngle;
+
+        // Which leg points already overlap the body (the hinge area) in the
+        // starting pose -- see legEntersBody.
+        LegSelfSnapshot legSelfBase;
+        takeLegSelfSnapshot(&legSelfBase);
+
         // Per-direction values, same reason Probe 1 keeps its own
         // dropAtDir[] below: needed after this loop to tell WHICH kind
         // of improvement each direction found (see the straddle check
         // right after this loop).
         float dropAtDir[2] = { 0.0f, 0.0f };
         float gainAtDir[2] = { 0.0f, 0.0f };
+        float legComDropAtDir[2] = { 0.0f, 0.0f };
 
         int dirIndex = 0;
         for (int dir = -1; dir <= 1; dir += 2, dirIndex++)
         {
             (*joint) = baseKneeAngle + dir * (*jointStep);
+
+            // Leg would swing INTO the robot's own body -- not a pose this
+            // direction can reach, by any criterion.
+            if (legEntersBody(&legSelfBase))
+                continue;
+
+            if (!robotCollidesWithEnvironment())
+            {
+                float legComDrop = baseLegComY - settleLegCentroid().y;
+                legComDropAtDir[dirIndex] = legComDrop;
+                if (legComDrop > bestLegComDrop)
+                {
+                    bestLegComDrop = legComDrop;
+                    bestLegComKneeAngle = (*joint);
+                }
+            }
+
+            if (!allowLegReach)
+                continue;
 
             float drop = dropActiveRobotToRest();
             if (drop > 0.0f)
@@ -3539,10 +3908,23 @@ static void advanceRockySettle(void)
                 float clearance = settleFootClearance();
                 float gain = baseFootClearance - clearance;
 
-                if (clearance >= 0.0f)
+                // Only where reaching for the ground doesn't LIFT the leg
+                // AT ALL: a passive joint can't swing its foot upward toward
+                // a ground that's beside or above it -- that's the gravity
+                // swing's job to decide. Strictly >= 0, not Probe 1's
+                // ">= -SIMULATION_LEG_SETTLE_MIN_COM_DROP": right next to
+                // the leg's lowest point a small step lifts the centre of
+                // mass by less than that tolerance, so the tolerant version
+                // let this rule creep the leg ~1.5 deg back up off the
+                // bottom, the gravity swing pulled it down again after the
+                // Auto Gravity watch re-armed, and so on every 200 ms -- the
+                // visible joint wiggle of a leg hanging beside the body.
+                BOOL legNotLifted = legComDropAtDir[dirIndex] >= 0.0f;
+
+                if (clearance >= 0.0f && legNotLifted)
                     gainAtDir[dirIndex] = gain;
 
-                if (clearance >= 0.0f && gain > bestClearanceGain)
+                if (clearance >= 0.0f && legNotLifted && gain > bestClearanceGain)
                 {
                     bestClearanceGain = gain;
                     bestClearanceKneeAngle = (*joint);
@@ -3567,9 +3949,38 @@ static void advanceRockySettle(void)
         // of picking a side lets a finer step eventually resolve which
         // one the geometry actually favors, same as the existing
         // same-criterion straddle idea.
+        // Body side of the passive swing: the body turning around the
+        // joint with the leg held still (see applyBodySwing). Measured
+        // separately -- it's a different move from the leg swing above.
+        //
+        // Only while the leg is resting on something (legRestingOnImmovableJoint
+        // -- its knee, shin arc or foot is on the ground). A leg hanging in
+        // the air can't hold the body up, so the body has nothing to swing
+        // AROUND: physically only the leg swings then. Without this, a test
+        // with Rocky standing on its body and the leg dangling showed Probe 1
+        // tipping the whole robot +1 deg around the body's ground corner and
+        // the body swing turning the body -1 deg straight back around the
+        // knee, tick after tick -- each move fine by its own measure, but
+        // together they just walked the hanging leg around the knee (the
+        // visible joint wiggle).
+        float bodySwingDropAtDir[2] = { 0.0f, 0.0f };
+        if (legRestingOnImmovableJoint)
+            measureBodySwing(settleJoint, (*jointStep), &legSelfBase, bodySwingDropAtDir);
+        float bestBodySwingDrop = 0.0f;
+        int bestBodySwingDir = 0;
+        for (int d = 0; d < 2; d++)
+            if (bodySwingDropAtDir[d] > bestBodySwingDrop)
+            {
+                bestBodySwingDrop = bodySwingDropAtDir[d];
+                bestBodySwingDir = (d == 0) ? -1 : 1;
+            }
+
+        // Same idea for "body sinks one way, leg falls the other way".
         BOOL crossCriterionStraddle =
                (dropAtDir[0] > SIMULATION_LEG_SETTLE_MIN_DROP && gainAtDir[1] > SIMULATION_LEG_SETTLE_MIN_CLEARANCE_GAIN)
-            || (dropAtDir[1] > SIMULATION_LEG_SETTLE_MIN_DROP && gainAtDir[0] > SIMULATION_LEG_SETTLE_MIN_CLEARANCE_GAIN);
+            || (dropAtDir[1] > SIMULATION_LEG_SETTLE_MIN_DROP && gainAtDir[0] > SIMULATION_LEG_SETTLE_MIN_CLEARANCE_GAIN)
+            || (dropAtDir[0] > SIMULATION_LEG_SETTLE_MIN_DROP && legComDropAtDir[1] > SIMULATION_LEG_SETTLE_MIN_COM_DROP)
+            || (dropAtDir[1] > SIMULATION_LEG_SETTLE_MIN_DROP && legComDropAtDir[0] > SIMULATION_LEG_SETTLE_MIN_COM_DROP);
 
         // Compared against SIMULATION_LEG_SETTLE_MIN_DROP rather than a
         // bare > 0.0f -- see that constant's own comment on why: without
@@ -3579,8 +3990,8 @@ static void advanceRockySettle(void)
         // visible vibration instead of a clean stop.
         if (crossCriterionStraddle)
         {
-            SIM_LOG("[SETTLE] %s=%.2f both directions improve but by different criteria (drop=%.5f/%.5f gain=%.5f/%.5f) -- shrinking instead of picking one, to avoid rocking back and forth\n",
-                   settleJointName(settleJoint), (*joint), dropAtDir[0], dropAtDir[1], gainAtDir[0], gainAtDir[1]);
+            SIM_LOG("[SETTLE] %s=%.2f both directions improve but by different criteria (drop=%.5f/%.5f gain=%.5f/%.5f legComDrop=%.5f/%.5f) -- shrinking instead of picking one, to avoid rocking back and forth\n",
+                   settleJointName(settleJoint), (*joint), dropAtDir[0], dropAtDir[1], gainAtDir[0], gainAtDir[1], legComDropAtDir[0], legComDropAtDir[1]);
             (*jointStep) *= 0.5f;
         }
         else if (bestDrop > SIMULATION_LEG_SETTLE_MIN_DROP)
@@ -3604,6 +4015,35 @@ static void advanceRockySettle(void)
                    settleJointName(settleJoint), (*joint), (*jointStep), appliedDrop, bestDrop);
             // Keep this probe's step size as-is -- it's still finding
             // real gains at this scale, no need to refine yet.
+        }
+        else if (bestLegComDrop > SIMULATION_LEG_SETTLE_MIN_COM_DROP)
+        {
+            // Gravity swing: the body can't sink, but the leg's own weight
+            // pulls it around the joint -- turn it one step the way its
+            // centre of mass goes down. Body stays put. Repeats tick by
+            // tick until the leg hangs as low as it can, or lands on the
+            // ground or on the robot's own body (legEntersBody).
+            (*joint) = bestLegComKneeAngle;
+            probe2Committed = TRUE;
+            probe2DirectCommit = TRUE;
+            probe2GravityCommit = TRUE;
+            SIM_LOG("[SETTLE] %s=%.2f leg swung %.4f deg under its own weight (leg centre of mass %.5f lower, body stayed put)\n",
+                   settleJointName(settleJoint), (*joint), (*jointStep), bestLegComDrop);
+        }
+        else if (bestBodySwingDrop > SIMULATION_LEG_SETTLE_MIN_COM_DROP)
+        {
+            // Body side of the passive swing: the leg can't fall any
+            // further (e.g. knee AND foot both on the ground) but the body
+            // can -- turn the body one step around the joint, the way its
+            // centre of mass goes down, leaving the leg where it is.
+            // Repeats tick by tick until the body lands on the ground or
+            // on its own foot.
+            applyBodySwing(settleJoint, bestBodySwingDir * (*jointStep));
+            probe2Committed = TRUE;
+            probe2DirectCommit = TRUE;
+            probe2GravityCommit = TRUE;
+            SIM_LOG("[SETTLE] %s=%.2f body swung %.4f deg around the joint under its own weight (body centre of mass %.5f lower, leg stayed put)\n",
+                   settleJointName(settleJoint), (*joint), bestBodySwingDir * (*jointStep), bestBodySwingDrop);
         }
         else if (bestClearanceGain > SIMULATION_LEG_SETTLE_MIN_CLEARANCE_GAIN)
         {
@@ -3641,6 +4081,7 @@ static void advanceRockySettle(void)
             // that order bias; see the winner-selection loop just below.
             float scoutDropAtDir[2] = { 0.0f, 0.0f };
             float scoutGainAtDir[2] = { -1.0f, -1.0f };
+            float scoutLegComDropAtDir[2] = { 0.0f, 0.0f };
             BOOL scoutClearAtDir[2] = { FALSE, FALSE };
 
             int scoutDirIndex = 0;
@@ -3648,73 +4089,112 @@ static void advanceRockySettle(void)
             {
                 (*joint) = baseKneeAngle + dir * SIMULATION_LEG_SETTLE_SCOUT_STEP_DEG;
 
-                float scoutDrop = dropActiveRobotToRest();
-                if (scoutDrop > 0.0f)
-                    translateActiveRobot(0.0f, scoutDrop); // undo the probe's own move
+                // Swinging that far would put the leg into the body -- not
+                // a candidate (scoutClearAtDir stays FALSE, drop stays 0).
+                if (legEntersBody(&legSelfBase))
+                {
+                    (*joint) = baseKneeAngle;
+                    continue;
+                }
+
+                float scoutDrop = 0.0f;
+                if (allowLegReach)
+                {
+                    scoutDrop = dropActiveRobotToRest();
+                    if (scoutDrop > 0.0f)
+                        translateActiveRobot(0.0f, scoutDrop); // undo the probe's own move
+                }
 
                 BOOL scoutClear = !robotCollidesWithEnvironment();
                 float scoutGain = -1.0f;
+                float scoutLegComDrop = 0.0f;
 
                 if (scoutClear)
                 {
-                    float sClearance = settleFootClearance();
-                    scoutGain = baseFootClearance - sClearance;
+                    scoutLegComDrop = baseLegComY - settleLegCentroid().y;
+                    if (allowLegReach && scoutLegComDrop >= 0.0f)   // never lifts the leg -- see legNotLifted above
+                    {
+                        float sClearance = settleFootClearance();
+                        scoutGain = baseFootClearance - sClearance;
+                    }
                 }
 
                 scoutDropAtDir[scoutDirIndex] = scoutDrop;
                 scoutGainAtDir[scoutDirIndex] = scoutGain;
+                scoutLegComDropAtDir[scoutDirIndex] = scoutLegComDrop;
                 scoutClearAtDir[scoutDirIndex] = scoutClear;
 
                 (*joint) = baseKneeAngle; // undo this trial, same as the direct branch's own undo above
             }
 
-            // Same drop-before-gain priority the direct branch above uses
-            // (bestDrop checked before bestClearanceGain): a real drop
-            // candidate always wins over a mere clearance-gain candidate
-            // regardless of magnitude, and within the same criterion the
+            // Same priority the direct branch above uses: a real drop
+            // candidate beats a gravity-swing (leg centre of mass lower)
+            // candidate, which beats a mere clearance-gain candidate,
+            // regardless of magnitude; within the same criterion the
             // larger value wins. scoutDirIndex 0 is dir=-1 (clockwise), 1
             // is dir=+1 (counterclockwise) -- an exact tie between two
             // equally-good candidates still favors index 0 (clockwise)
             // below, same as the direct branch's own strict '>' compares,
             // but that residual tie-break is now the ONLY place clockwise
             // gets an edge, not an unconditional first-past-the-post win.
+            // Rank: 3 = drop, 2 = leg falls under its own weight, 1 = gain.
             int scoutWinner = -1;
+            int scoutWinnerRank = 0;
             BOOL scoutWinnerIsDrop = FALSE;
 
             for (int i = 0; i < 2; i++)
             {
-                BOOL isDropCandidate = scoutDropAtDir[i] > SIMULATION_LEG_SETTLE_MIN_DROP;
-                BOOL isGainCandidate = !isDropCandidate && scoutClearAtDir[i] && scoutGainAtDir[i] > SIMULATION_LEG_SETTLE_MIN_CLEARANCE_GAIN;
+                int rank = 0;
+                float value = 0.0f;
+                if (scoutDropAtDir[i] > SIMULATION_LEG_SETTLE_MIN_DROP)
+                { rank = 3; value = scoutDropAtDir[i]; }
+                else if (scoutClearAtDir[i] && scoutLegComDropAtDir[i] > SIMULATION_LEG_SETTLE_MIN_COM_DROP)
+                { rank = 2; value = scoutLegComDropAtDir[i]; }
+                else if (scoutClearAtDir[i] && scoutGainAtDir[i] > SIMULATION_LEG_SETTLE_MIN_CLEARANCE_GAIN)
+                { rank = 1; value = scoutGainAtDir[i]; }
 
-                if (!isDropCandidate && !isGainCandidate)
+                if (rank == 0)
                     continue;
 
-                if (scoutWinner == -1)
+                float winnerValue = 0.0f;
+                if (scoutWinner != -1)
+                    winnerValue = (scoutWinnerRank == 3) ? scoutDropAtDir[scoutWinner]
+                                : (scoutWinnerRank == 2) ? scoutLegComDropAtDir[scoutWinner]
+                                :                          scoutGainAtDir[scoutWinner];
+
+                if (scoutWinner == -1 || rank > scoutWinnerRank || (rank == scoutWinnerRank && value > winnerValue))
                 {
                     scoutWinner = i;
-                    scoutWinnerIsDrop = isDropCandidate;
+                    scoutWinnerRank = rank;
                 }
-                else if (isDropCandidate && !scoutWinnerIsDrop)
+            }
+            scoutWinnerIsDrop = (scoutWinnerRank == 3);
+
+            if (scoutWinner != -1)
+            {
+                int dir = (scoutWinner == 0) ? -1 : 1;
+                (*joint) = baseKneeAngle + dir * (*jointStep);
+
+                // The scout looked 20 deg out; the one-step nudge itself
+                // must still be a legal pose (clear of the body, and for
+                // the no-drop winners also clear of the environment,
+                // since nothing below moves the body out of the way).
+                if (legEntersBody(&legSelfBase) || (!scoutWinnerIsDrop && robotCollidesWithEnvironment()))
                 {
-                    scoutWinner = i;
-                    scoutWinnerIsDrop = TRUE;
-                }
-                else if (isDropCandidate == scoutWinnerIsDrop)
-                {
-                    if (isDropCandidate && scoutDropAtDir[i] > scoutDropAtDir[scoutWinner])
-                        scoutWinner = i;
-                    else if (!isDropCandidate && scoutGainAtDir[i] > scoutGainAtDir[scoutWinner])
-                        scoutWinner = i;
+                    (*joint) = baseKneeAngle;
+                    scoutWinner = -1;
                 }
             }
 
             if (scoutWinner != -1)
             {
                 int dir = (scoutWinner == 0) ? -1 : 1;
-                float scoutDrop = scoutDropAtDir[scoutWinner];
+                // Only the drop winner moves the body below; for the swing
+                // and gain winners the body stays put, as in their direct
+                // branches above.
+                float scoutDrop = scoutWinnerIsDrop ? scoutDropAtDir[scoutWinner] : 0.0f;
                 float scoutGain = scoutGainAtDir[scoutWinner];
-
-                (*joint) = baseKneeAngle + dir * (*jointStep);
+                float scoutLegComDrop = scoutLegComDropAtDir[scoutWinner];
 
                 // The scout already measured a real, collision-safe
                 // drop (scoutDrop) -- but it measured it OUT AT the
@@ -3766,8 +4246,8 @@ static void advanceRockySettle(void)
                     }
                 }
 
-                SIM_LOG("[SETTLE] %s=%.2f scouted real improvement %.1f deg out (drop=%.5f clearanceGain=%.5f), fell %.5f this tick -- nudging that way instead of shrinking\n",
-                       settleJointName(settleJoint), (*joint), dir * SIMULATION_LEG_SETTLE_SCOUT_STEP_DEG, scoutDrop, scoutGain, nudgeAppliedDrop);
+                SIM_LOG("[SETTLE] %s=%.2f scouted real improvement %.1f deg out (drop=%.5f legComDrop=%.5f clearanceGain=%.5f), fell %.5f this tick -- nudging that way instead of shrinking\n",
+                       settleJointName(settleJoint), (*joint), dir * SIMULATION_LEG_SETTLE_SCOUT_STEP_DEG, scoutDrop, scoutLegComDrop, scoutGain, nudgeAppliedDrop);
                 scoutedKnee = TRUE;
                 probe2Committed = TRUE;
             }
@@ -4454,7 +4934,13 @@ static void advanceRockySettle(void)
     // the loop the same way a same-tick straddle does, and still lets a
     // genuinely slow (but real) multi-tick convergence run its course as
     // long as it isn't BOTH probes firing on literally every single tick.
-    if (probe2Committed && probe1Committed)
+    // Not counted when Probe 2's move was a gravity swing: then both probes
+    // are lowering the centre of mass together (e.g. the body swinging down
+    // around the knee while the whole robot tips over its foot) -- genuine
+    // falling, not a chase. A test run showed this check halving both steps
+    // every 6 ticks in exactly that case until the settle "converged" with
+    // Rocky still leaning 21 degrees over a single foot.
+    if (probe2Committed && probe1Committed && !probe2GravityCommit)
     {
         rockyBothProbesCommittedStreak++;
         if (rockyBothProbesCommittedStreak >= SIMULATION_LEG_SETTLE_STALEMATE_STREAK)
@@ -4561,6 +5047,13 @@ static void advanceRockySettle(void)
     // which also unconditionally pumps the same driver) keeps going,
     // which is exactly "press e or q once and the whole robot starts
     // falling, faster when the cursor moves."
+    // UPDATE: legRestingOnImmovableJoint is no longer part of this check
+    // -- Probe 2 now keeps running while the leg rests (its gravity swing
+    // criterion is safe there, see allowLegReach), so its step does shrink
+    // to the floor normally and settleAllJointStepsBelow covers it. In its
+    // place, !rockyProbe2Enabled: with the "Probe 2 Settle" checkbox off,
+    // Probe 2 never runs, so its step can never shrink either -- the same
+    // structural gap the paragraph below describes. Original note:
     // legRestingOnImmovableJoint added here alongside legHidden/
     // rockyKneeSettleSuppressed -- same reasoning, a real gap this
     // diagnostic pass found: whenever Probe 2's own top-level guard
@@ -4578,7 +5071,7 @@ static void advanceRockySettle(void)
     // probes completely silent forever -- no further [SETTLE] lines, no
     // [SETTLE] converged line either -- instead of cleanly recognizing
     // this as the resting pose the way it was clearly meant to.
-    if ((legHidden || rockyKneeSettleSuppressed || legRestingOnImmovableJoint || settleAllJointStepsBelow(SIMULATION_LEG_SETTLE_MIN_STEP_DEG))
+    if ((legHidden || rockyKneeSettleSuppressed || !rockyProbe2Enabled || settleAllJointStepsBelow(SIMULATION_LEG_SETTLE_MIN_STEP_DEG))
         && rockyBodySettleStep < SIMULATION_LEG_SETTLE_MIN_STEP_DEG
         && !rockyBodyReversalGuardBlockedThisTick)
     {
@@ -4656,7 +5149,7 @@ static void advanceRockySettle(void)
                (*settleJointPtr(0)), (*bodyAngle));
     }
     else if (rockyBodyReversalGuardBlockedThisTick
-             && (legHidden || rockyKneeSettleSuppressed || legRestingOnImmovableJoint || settleAllJointStepsBelow(SIMULATION_LEG_SETTLE_MIN_STEP_DEG))
+             && (legHidden || rockyKneeSettleSuppressed || !rockyProbe2Enabled || settleAllJointStepsBelow(SIMULATION_LEG_SETTLE_MIN_STEP_DEG))
              && rockyBodySettleStep < SIMULATION_LEG_SETTLE_MIN_STEP_DEG)
     {
         // Every OTHER condition for convergence was true this tick (knee
@@ -5394,6 +5887,42 @@ static void advanceAutoGravity(HWND hWnd)
 
     if (landedThisTick)
         autoGravityVelocity = 0.0f; // landed -- next fall starts from rest
+
+    // Keep the passive joint swing (Probe 2) watching for as long as Auto
+    // Gravity is on. Once a settle converges, advanceRockySettle stops
+    // probing until something re-arms it -- a fresh landing, or an E/Q
+    // press (reviveRockyBodyProbeStepSizes). So a pose that became
+    // unbalanced without either of those (e.g. it had already converged
+    // before Auto Gravity was turned on) used to just sit there until the
+    // user tapped E or Q. Now: while Auto Gravity is on and the robot is
+    // resting with a converged settle, check every
+    // SIMULATION_PASSIVE_SWING_WATCH_MS whether the leg or the body could
+    // still swing down around a joint; if so, re-arm the settle exactly
+    // like a fresh landing does, and the probes take it from there.
+    // Rate-limited because each check is a handful of trial poses.
+    if (landedThisTick && rockySettleConverged && settleSupportedKind())
+    {
+        static DWORD lastSwingWatchTick = 0;
+        if (now - lastSwingWatchTick >= SIMULATION_PASSIVE_SWING_WATCH_MS)
+        {
+            lastSwingWatchTick = now;
+            if (passiveJointSwingWouldMove())
+            {
+                SIM_LOG("[SETTLE] Auto Gravity watch: the leg or body can still swing down around a joint -- re-arming the settle\n");
+                rockySettleConverged = FALSE;
+                rockyKneeSettleStep = SIMULATION_LEG_SETTLE_STEP_DEG;
+                semniHipSettleStep = SIMULATION_LEG_SETTLE_STEP_DEG;
+                rockyBodySettleStep = SIMULATION_BODY_SETTLE_STEP_DEG;
+                rockyBothProbesCommittedStreak = 0;
+                rockyKneeSettleGrowthStreak = 0;
+                rockyBodySettleGrowthStreak = 0;
+                rockyPivotSide = 0;
+                rockyBodyLastCommitDir = 0;
+                rockyToppleLastPivotCategory = 0;
+                rockyBodyReversalBlockedStreak = 0;
+            }
+        }
+    }
 
     // Rocky's knee-to-foot pendulum used to run here (an automatic damped
     // swing while the foot wasn't resting) -- removed by explicit request

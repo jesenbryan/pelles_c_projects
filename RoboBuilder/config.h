@@ -1142,6 +1142,23 @@
 // gradual pace as everywhere else in the settle system.
 #define SIMULATION_LEG_SETTLE_SCOUT_STEP_DEG 20.0f
 
+// While Auto Gravity is on and a settle has already converged, how often
+// (ms) canvas.c's advanceAutoGravity re-checks whether the passive joint
+// swing (Probe 2: leg around the body, or body around the leg) could still
+// move -- and re-arms the settle if so. Each check is a few trial poses, so
+// it's rate-limited rather than run on every gravity tick.
+#define SIMULATION_PASSIVE_SWING_WATCH_MS 200
+
+// Whether Probe 2's passive joint swing treats the robot's own leg and body
+// as solid against each other. 0 (default): they pass each other, like a
+// leg mounted on the SIDE of the body -- which is how Rocky and Semni are
+// drawn (the leg overlaps the body at the hinge). A swinging leg then falls
+// past the body to the ground, and a swinging body falls past its own foot.
+// 1: the foot (Semni: knee and foot) can't swing into the body and vice
+// versa, so a leg comes to rest lying on the body. Only the swing checks
+// this; nothing else in the simulation tests leg against body.
+#define SIMULATION_LEG_BODY_COLLISION 0
+
 // Simulation mode: plain Left/Right (no Shift) rotates the WHOLE robot
 // (Semni.angle) -- see canvas.c's WM_KEYDOWN. Same value (and Left =
 // positive / Right = negative sign convention) as Design > Robot mode's
