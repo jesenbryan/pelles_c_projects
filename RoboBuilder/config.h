@@ -1247,3 +1247,12 @@
 // cycle, in degrees -- purely cosmetic (sells the "leaning into the hop"
 // look), independent of hipAngle/kneeAngle.
 #define SIMULATION_GAIT_BODY_LEAN_DEG 6.0f
+
+// View Segments highlighter band (canvas.c, Design > Environment): a wide,
+// translucent band in each traced segment's color under the segment ribbon,
+// like a real highlighter over the drawing, so turning View Segments on is
+// visible at a glance. Band width = stroke width x WIDTH_SCALE, but always at
+// least MIN_EXTRA_PX wider than the stroke (so thin strokes get a band too).
+#define SEGMENT_HIGHLIGHTER_ALPHA          0.28f
+#define SEGMENT_HIGHLIGHTER_WIDTH_SCALE    1.5f
+#define SEGMENT_HIGHLIGHTER_MIN_EXTRA_PX   4.0f

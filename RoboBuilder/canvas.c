@@ -6663,6 +6663,58 @@ void canvasRenderFrame(float dimAmount)
 	    float ghostAlpha = isComparisonActive ? 1.0f : 0.35f;
 	    if (isRobotLayerActive) ghostAlpha *= 0.3f;  // extra-dim: Environment reference while on Robot layer
 
+	    // Highlighter pass (View Segments only, Design mode only): a wide,
+	    // translucent band in each segment's own color laid under the
+	    // ribbon below, like running a real highlighter over the drawing.
+	    // The ribbon alone is drawn at the stroke's own width, right on top
+	    // of the black ink, so switching View Segments on was hard to even
+	    // notice -- the band sticks out on both sides of the line, so it's
+	    // obvious at a glance that the view is on and where each traced
+	    // segment starts and ends (neighbouring segments get different
+	    // colors, and their overlap at a shared end reads darker, the same
+	    // way two highlighter strokes do). Square ends pushed out past the
+	    // segment's endpoints mimic a chisel-tip highlighter stroke.
+	    if (canvas.showSegments && !isComparisonActive && appMode != APP_MODE_SIMULATION)
+	    {
+	        float hlAlpha = SEGMENT_HIGHLIGHTER_ALPHA * (isRobotLayerActive ? 0.3f : 1.0f);
+	        for (int s = 0; s < canvas.segmentResultCount; s++)
+	        {
+	            int start = segmentStarts[s];
+	            int count = segmentCounts[s];
+	            if (count < 2) continue;
+
+	            float thickPx = segmentAvgRadiusPx[s];
+	            float bandPx = thickPx * SEGMENT_HIGHLIGHTER_WIDTH_SCALE;
+	            if (bandPx < thickPx + SEGMENT_HIGHLIGHTER_MIN_EXTRA_PX)
+	                bandPx = thickPx + SEGMENT_HIGHLIGHTER_MIN_EXTRA_PX;
+	            float hw = designStrokeHalfWidthWorld(bandPx, canvas.zoom);
+
+	            float hr, hg, hb;
+	            segmentGhostColor(s, &hr, &hg, &hb);
+	            glColor4f(hr, hg, hb, hlAlpha * opacity);
+
+	            const float* P = &segmentPointsWorld[start * 2];
+	            glBegin(GL_TRIANGLE_STRIP);
+	            for (int i = 0; i < count; i++)
+	            {
+	                float x = P[i * 2], y = P[i * 2 + 1];
+	                int i0 = (i == 0) ? 0 : i - 1;
+	                int i1 = (i == count - 1) ? count - 1 : i + 1;
+	                float dx = P[i1 * 2] - P[i0 * 2];
+	                float dy = P[i1 * 2 + 1] - P[i0 * 2 + 1];
+	                float len = sqrtf(dx * dx + dy * dy);
+	                if (len == 0.0f) len = 1.0f;
+	                float tx = dx / len, ty = dy / len;
+	                // square cap: first/last points pushed out along the line
+	                if (i == 0)         { x -= tx * hw * 0.5f; y -= ty * hw * 0.5f; }
+	                if (i == count - 1) { x += tx * hw * 0.5f; y += ty * hw * 0.5f; }
+	                glVertex2f(x - ty * hw, y + tx * hw);
+	                glVertex2f(x + ty * hw, y - tx * hw);
+	            }
+	            glEnd();
+	        }
+	    }
+
 	    for (int s = 0; s < canvas.segmentResultCount; s++)
 	    {
 	        int start = segmentStarts[s];
