@@ -7236,6 +7236,86 @@ void canvasRenderFrame(float dimAmount)
         }
     }
 
+    // Shift straight-line angle overlay (Design mode, while a Shift line is
+    // being placed -- see updateDrawingPoint): a small protractor at the
+    // line's start (dashed horizontal reference + an arc sweeping from it to
+    // the line) and a label at the line's end with the angle in degrees,
+    // measured from horizontal: 0 = pointing right, positive = up, negative
+    // = down, so the user can see exactly what slope they're drawing.
+    // The label turns green while the angle is locked (Ctrl+Shift 45-degree
+    // snap, or the hold-still dwell lock). Drawn in this HUD block's pixel
+    // ortho (origin bottom-left), so the stroke's world points are mapped
+    // to pixels with the inverse of updateDrawingPoint's own mapping.
+    if (drawing && shiftHoldActive && appMode != APP_MODE_SIMULATION && canvas.strokeCount > 0)
+    {
+        int s0 = strokeStarts[canvas.strokeCount - 1];
+        if (canvas.pointCount >= s0 + 4)
+        {
+            float aspectA = (float)glWindowWidth / (float)glWindowHeight;
+            float sclX = (aspectA >= 1.0f) ? aspectA * canvas.zoom : canvas.zoom;
+            float sclY = (aspectA >= 1.0f) ? canvas.zoom : canvas.zoom / aspectA;
+            float sx = ((points[s0] - canvas.panX) / sclX + 1.0f) * 0.5f * glWindowWidth;
+            float sy = ((points[s0 + 1] - canvas.panY) / sclY + 1.0f) * 0.5f * glWindowHeight;
+            float ex = ((points[canvas.pointCount - 2] - canvas.panX) / sclX + 1.0f) * 0.5f * glWindowWidth;
+            float ey = ((points[canvas.pointCount - 1] - canvas.panY) / sclY + 1.0f) * 0.5f * glWindowHeight;
+            float ldx = ex - sx, ldy = ey - sy;
+            float lineLenPx = sqrtf(ldx * ldx + ldy * ldy);
+
+            if (lineLenPx > 3.0f)
+            {
+                float angRad = atan2f(ldy, ldx);              // -pi..pi, y up
+                float angDeg = angRad * (180.0f / 3.14159265f);
+                BOOL angSnapped = shiftHoldSnapped || ((GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0);
+
+                // Protractor at the start point.
+                float arcR = (lineLenPx < SHIFT_ANGLE_ARC_RADIUS_PX) ? lineLenPx : SHIFT_ANGLE_ARC_RADIUS_PX;
+                glColor4f(1.0f, 0.55f, 0.0f, 0.85f);          // same orange as the endpoint-snap ring
+                glEnable(GL_LINE_STIPPLE);
+                glLineStipple(1, 0x0F0F);
+                glLineWidth(1.0f);
+                glBegin(GL_LINES);
+                    glVertex2f(sx, sy);
+                    glVertex2f(sx + arcR * 1.4f, sy);
+                glEnd();
+                glDisable(GL_LINE_STIPPLE);
+                glLineWidth(1.5f);
+                glBegin(GL_LINE_STRIP);
+                {
+                    int arcSteps = 32;
+                    for (int i = 0; i <= arcSteps; i++)
+                    {
+                        float t = angRad * (float)i / (float)arcSteps;
+                        glVertex2f(sx + arcR * cosf(t), sy + arcR * sinf(t));
+                    }
+                }
+                glEnd();
+                glLineWidth(1.0f);
+
+                // Label at the line's end (the cursor is hidden while a
+                // Shift line is placed, so this is where the eye is).
+                char angStr[48];
+                int tenths = (int)(fabsf(angDeg) * 10.0f + 0.5f);
+                if (tenths == 0) angDeg = 0.0f;               // no "-0.0"
+                sprintf(angStr, "%s%d.%d\xB0", (angDeg < 0.0f) ? "-" : "", tenths / 10, tenths % 10);
+                int lx = (int)ex + 14, ly = (int)ey + 14;
+                int textW = (int)strlen(angStr) * 8;
+                if (lx + textW > glWindowWidth - 4) lx = (int)ex - 14 - textW;   // keep it on screen
+                if (ly + 14 > glWindowHeight - 4) ly = (int)ey - 14 - 14;
+
+                // No background box -- plain text on the canvas. Dark grey
+                // normally; green while the angle is snapped (that color
+                // change alone signals the snap, no extra wording).
+                if (angSnapped) glColor4f(0.10f, 0.62f, 0.20f, 1.0f);
+                else            glColor4f(0.20f, 0.20f, 0.20f, 1.0f);
+                glRasterPos2i(lx, ly);
+                glPushAttrib(GL_LIST_BIT);
+                glListBase(fontBase - 32);
+                glCallLists((GLsizei)strlen(angStr), GL_UNSIGNED_BYTE, angStr);
+                glPopAttrib();
+            }
+        }
+    }
+
     // NEW: persistent top-left mode/layer indicator - otherwise the
     // only way to tell Design/Robot/Environment apart is to open the
     // Mode menu and see which item is checked.

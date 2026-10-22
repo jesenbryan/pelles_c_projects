@@ -1256,3 +1256,7 @@
 #define SEGMENT_HIGHLIGHTER_ALPHA          0.28f
 #define SEGMENT_HIGHLIGHTER_WIDTH_SCALE    1.5f
 #define SEGMENT_HIGHLIGHTER_MIN_EXTRA_PX   4.0f
+
+// Shift straight-line angle overlay (canvas.c, Design > Environment): radius
+// in screen pixels of the protractor arc drawn at the line's start point.
+#define SHIFT_ANGLE_ARC_RADIUS_PX 36.0f
