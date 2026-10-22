@@ -442,6 +442,22 @@ void createUIWindow(HINSTANCE hInst, HWND hWndParent)
 // (trace on demand if nothing's been traced yet, keep the checkbox in
 // sync) so callers outside this file get the exact same behavior a real
 // click on the button would produce.
+// Same idea as SetComparisonModeUI below, for View Segments: sets
+// canvas.showSegments and keeps the checkbox in sync. Re-traces when
+// switching on, same as clicking the checkbox.
+void SetViewSegmentsUI(BOOL on)
+{
+    if (on)
+        RunTracePipeline();
+
+    canvas.showSegments = on;
+
+    if (hViewSegBtn)
+        SendMessage(hViewSegBtn, BM_SETCHECK, on ? BST_CHECKED : BST_UNCHECKED, 0);
+
+    if (hWndGL) InvalidateRect(hWndGL, NULL, FALSE);
+}
+
 void SetComparisonModeUI(BOOL on)
 {
     if (on && canvas.segmentResultCount == 0)

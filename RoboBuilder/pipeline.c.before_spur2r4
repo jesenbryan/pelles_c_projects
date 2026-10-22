@@ -1,0 +1,728 @@
+#include "pipeline.h"
+#include "canvas_bridge.h"
+#include "bmp_ui.h"
+#include "binary.h"
+#include "thinning.h"
+#include "endpoints.h"
+#include "path_trace.h"
+#include "debug.h"
+#include "bmp.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <math.h>   // NEW: sqrtf/floorf -- measureLocalRadiusPxDirectional's tangent handling
+
+#include "ui_state.h"   // NEW: needed for BOOL
+#include "geometry.h"   // NEW
+
+// Holds a BMP that has been uploaded and displayed but not yet traced.
+// Upload only shows the image now; tracing/segmenting is deferred until
+// the user actually asks to view segments (see RunPendingUploadTrace).
+static Image* s_pendingBmpImage = NULL;
+
+BOOL gSuppressTraceDebugPrints = TRUE;    // see pipeline.h -- trace dumps only print via View > Debug Log (canvas.c)
+
+static void freePendingBmpImage(void)
+{
+    if (!s_pendingBmpImage) return;
+    free(s_pendingBmpImage->data);
+    free(s_pendingBmpImage->bin);
+    free(s_pendingBmpImage->radius); // NULL for an uploaded BMP -- free(NULL) is a no-op
+    free(s_pendingBmpImage);
+    s_pendingBmpImage = NULL;
+}
+
+BOOL CanvasHasTraceableContent(void)
+{
+    return (canvas.pointCount >= 1 && canvas.strokeCount >= 1) || (s_pendingBmpImage != NULL);
+}
+
+// find_start_end_pixels/tracePath/buildSegments were all written assuming a
+// SINGLE curve fills the whole bin buffer - with more than one freehand
+// stroke (or an uploaded BMP with several curves in it, see 2curves.bmp),
+// find_start_end_pixels just grabs the first two endpoint-looking pixels it
+// scans past, which are almost always both on the first stroke, and
+// tracePath then walks off the end of that stroke and stops - every other
+// stroke is silently dropped.
+//
+// Fix: split the thinned bin buffer into its 8-connected components first
+// (one per stroke/curve, since strokes only touch other strokes if the user
+// actually draws them crossing/overlapping), then run the existing
+// find/trace/build pipeline independently per component and merge the
+// resulting ArcSegments into one array for setSegmentOverlay.
+//
+// NOTE: closed-loop (circle) and branching (Y/T/X junction) support were
+// tried via skeleton_graph.c's traceComponentEdges/findRealJunctions/
+// findRealEndpoints, but the edge cases around thinning-noise artifacts
+// (false junctions, misplaced endpoints, half-traced curves) weren't
+// reliable enough yet, so that path is disabled for now - find_start_end_
+// pixels only recognizes a simple open curve with exactly two endpoints;
+// closed loops and branching strokes are silently skipped, same as before
+// that work started. skeleton_graph.c itself is left in place (compiled,
+// unused) so this can be revisited later without redoing it.
+#define MAX_TRACE_COMPONENTS 32
+
+// Flood-fills the 8-connected component containing (startX, startY) out of
+// `remaining` into `compBin` (must be pre-zeroed, same w*h size as
+// `remaining`), clearing those pixels out of `remaining` so the caller's
+// scan won't visit them again for a later component. Heap-based stack so it
+// doesn't blow the call stack on a long, curly stroke.
+static void extractComponent(uint8_t* remaining, uint8_t* compBin, int w, int h, int startX, int startY)
+{
+    int* stackX = (int*)malloc(sizeof(int) * (size_t)w * h);
+    int* stackY = (int*)malloc(sizeof(int) * (size_t)w * h);
+    int sp = 0;
+
+    stackX[sp] = startX;
+    stackY[sp] = startY;
+    sp++;
+    remaining[startY * w + startX] = 0;
+
+    while (sp > 0)
+    {
+        sp--;
+        int x = stackX[sp];
+        int y = stackY[sp];
+        compBin[y * w + x] = 1;
+
+        for (int dy = -1; dy <= 1; dy++) {
+            for (int dx = -1; dx <= 1; dx++) {
+                if (dx == 0 && dy == 0) continue;
+                int nx = x + dx, ny = y + dy;
+                if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
+                if (!remaining[ny * w + nx]) continue;
+
+                remaining[ny * w + nx] = 0;
+                stackX[sp] = nx;
+                stackY[sp] = ny;
+                sp++;
+            }
+        }
+    }
+
+    free(stackX);
+    free(stackY);
+}
+
+// Approximates the local stroke half-width (radius, in source-image pixels)
+// at skeleton point (x,y), by finding the smallest Chebyshev (square-ring)
+// distance at which the ring around (x,y) first touches a background pixel
+// or the image edge. thinningZhangSuen collapses a stroke down to its
+// 1px-wide medial axis before this is ever called, and along that medial
+// axis, distance-to-background approximates the ORIGINAL stroke's
+// half-thickness at that point (standard property of a skeleton/medial
+// axis) -- which is exactly why `bin` here has to be the PRESERVED
+// pre-thinning raster (origBin below), not the thinned one (every point in
+// the thinned image is background-adjacent almost immediately, since it's
+// only 1px wide). Chebyshev rather than a true Euclidean distance transform
+// -- cheaper, and the difference is negligible for the roughly-circular
+// brush strokes this measures.
+//
+// Only used as a FALLBACK now (see measureLocalRadiusPxDirectional below)
+// for the rare case a local tangent direction can't be worked out (a
+// segment with just one point). A square ring measures distance the same
+// in every direction, which is exactly its weakness for a stroke that
+// ISN'T running along one of that ring's own axes: cutting straight down
+// a DIAGONAL stroke this way crosses more of it than the stroke's true
+// (perpendicular) width, overshooting the real radius by up to sqrt(2) --
+// confirmed numerically (thickness_sim4.py) alongside the same-order
+// quantization bias this has even at 0/90 degrees (below).
+static float measureLocalRadiusPx(const uint8_t* bin, int w, int h, int x, int y, int maxR)
+{
+    for (int r = 1; r <= maxR; r++)
+    {
+        int yTop = y - r, yBot = y + r;
+        for (int dx = -r; dx <= r; dx++)
+        {
+            int xTest = x + dx;
+            if (xTest < 0 || xTest >= w) return (float)r;
+            if (yTop < 0 || !bin[yTop * w + xTest]) return (float)r;
+            if (yBot >= h || !bin[yBot * w + xTest]) return (float)r;
+        }
+
+        int xLeft = x - r, xRight = x + r;
+        for (int dy = -r + 1; dy <= r - 1; dy++)
+        {
+            int yTest = y + dy;
+            if (yTest < 0 || yTest >= h) return (float)r;
+            if (xLeft < 0 || !bin[yTest * w + xLeft]) return (float)r;
+            if (xRight >= w || !bin[yTest * w + xRight]) return (float)r;
+        }
+    }
+
+    return (float)maxR;
+}
+
+// Same job as measureLocalRadiusPx above (approximating the local stroke
+// half-width at skeleton point (x,y) from the preserved pre-thinning
+// raster), but measured along the direction ACTUALLY PERPENDICULAR to the
+// stroke's own local tangent (dirX, dirY -- a unit vector along the
+// skeleton path at this point, see its caller below) instead of always
+// along a fixed square ring. A cross-section cut anywhere off the true
+// perpendicular measures MORE than the stroke's real width (you're
+// slicing through it at a slant), which is exactly why the old ring-based
+// version could overshoot a diagonal stroke's radius by up to sqrt(2)x --
+// cutting exactly perpendicular, whatever the stroke's own angle happens
+// to be, avoids that regardless of angle. Verified numerically
+// (thickness_sim5.py): worst-case error across a full sweep of angles
+// (0-90 degrees) and sub-pixel alignments dropped from consistently
+// +-0.5px-or-worse down to +-0.5px in only the rarest cases and usually
+// exact.
+//
+// Walks outward one integer pixel step at a time on EACH side of (x,y)
+// along the perpendicular, counting how many steps stay inside the
+// stroke before hitting background/the image edge, then converts that
+// total run length back into a radius (run/2, +1 for the center pixel
+// itself -- see the derivation in thickness_sim5.py).
+static float measureLocalRadiusPxDirectional(const uint8_t* bin, int w, int h,
+                                              int x, int y,
+                                              float dirX, float dirY,
+                                              int maxR)
+{
+    float pdx = -dirY;
+    float pdy = dirX;
+
+    int posSteps = 0;
+    for (int t = 1; t <= maxR; t++)
+    {
+        int ix = (int)floorf((x + 0.5f) + pdx * (float)t);
+        int iy = (int)floorf((y + 0.5f) + pdy * (float)t);
+        if (ix < 0 || ix >= w || iy < 0 || iy >= h || !bin[iy * w + ix]) break;
+        posSteps++;
+    }
+
+    int negSteps = 0;
+    for (int t = 1; t <= maxR; t++)
+    {
+        int ix = (int)floorf((x + 0.5f) - pdx * (float)t);
+        int iy = (int)floorf((y + 0.5f) - pdy * (float)t);
+        if (ix < 0 || ix >= w || iy < 0 || iy >= h || !bin[iy * w + ix]) break;
+        negSteps++;
+    }
+
+    return (float)(posSteps + negSteps + 1) * 0.5f;
+}
+
+// Generous enough for any thickness the brush slider actually allows, small
+// enough that measureLocalRadiusPx's worst case (a huge solid blob with no
+// nearby background at all) stays cheap.
+#define MAX_MEASURED_STROKE_RADIUS_PX 40
+
+
+// ---- Spur pruning (after thinning, before tracing) ----
+//
+// Zhang-Suen thinning leaves short side branches ("spurs") where a thick
+// stroke has a corner or a blob: the skeleton sprouts a 1-8 px stub toward
+// the outer corner of the original ink. Each spur adds a third "endpoint",
+// and find_start_end_pixels only accepts a component with exactly two, so a
+// single spur used to make the WHOLE connected drawing disappear from the
+// trace (e.g. the far-right diagonal of a stage at some window sizes).
+//
+// A spur is recognised topologically: walk from an endpoint along the
+// skeleton; if a junction is reached within a length that's small compared
+// to the local stroke thickness, that branch is a thinning artifact and is
+// erased. Longer branches (real line ends) are left alone.
+
+// Number of 0->1 transitions around (x,y), clockwise from N -- the same
+// A(P) value Zhang-Suen uses. 1 = line end / line interior, >=3 = junction.
+static int crossingNumber(const uint8_t* b, int w, int h, int x, int y)
+{
+    static const int dx[8] = { 0, 1, 1, 1, 0, -1, -1, -1 };
+    static const int dy[8] = { -1, -1, 0, 1, 1, 1, 0, -1 };
+    int v[8];
+    for (int k = 0; k < 8; k++)
+    {
+        int nx = x + dx[k], ny = y + dy[k];
+        v[k] = (nx >= 0 && ny >= 0 && nx < w && ny < h) ? b[ny * w + nx] : 0;
+    }
+    int cn = 0;
+    for (int k = 0; k < 8; k++)
+        if (!v[k] && v[(k + 1) % 8]) cn++;
+    return cn;
+}
+
+static int neighborCount(const uint8_t* b, int w, int h, int x, int y)
+{
+    int n = 0;
+    for (int dy = -1; dy <= 1; dy++)
+        for (int dx = -1; dx <= 1; dx++)
+        {
+            if (!dx && !dy) continue;
+            int nx = x + dx, ny = y + dy;
+            if (nx >= 0 && ny >= 0 && nx < w && ny < h && b[ny * w + nx]) n++;
+        }
+    return n;
+}
+
+#define SPUR_MAX_WALK 64
+
+// 1 = prune spurs after thinning (normal), 0 = skip it (temporary test).
+#define ENABLE_SPUR_PRUNING 1
+
+// Removes spurs from a thinned skeleton in place. origBin (the un-thinned
+// ink) supplies the local stroke half-thickness at each junction, so the
+// "short" threshold scales with how thick the drawing is. Returns the number
+// of pixels removed.
+static int pruneSkeletonSpurs(uint8_t* skel, const uint8_t* origBin, int w, int h)
+{
+    int removedTotal = 0;
+    int bx[SPUR_MAX_WALK + 1], by[SPUR_MAX_WALK + 1];
+
+    for (int pass = 0; pass < 4; pass++)
+    {
+        int removedThisPass = 0;
+        for (int y = 0; y < h; y++)
+        for (int x = 0; x < w; x++)
+        {
+            if (!skel[y * w + x]) continue;
+            if (crossingNumber(skel, w, h, x, y) != 1 || neighborCount(skel, w, h, x, y) > 2) continue; // not an end
+
+            // Walk from this end until a junction, the other end, or too far.
+            int len = 0, cx = x, cy = y, px = -1, py = -1, reachedJunction = 0;
+            while (len <= SPUR_MAX_WALK)
+            {
+                bx[len] = cx; by[len] = cy; len++;
+                int nx = -1, ny = -1, best = 99;
+                for (int dy = -1; dy <= 1; dy++)
+                    for (int dx = -1; dx <= 1; dx++)
+                    {
+                        if (!dx && !dy) continue;
+                        int qx = cx + dx, qy = cy + dy;
+                        if (qx < 0 || qy < 0 || qx >= w || qy >= h || !skel[qy * w + qx]) continue;
+                        int seen = 0;
+                        for (int k = 0; k < len; k++) if (bx[k] == qx && by[k] == qy) { seen = 1; break; }
+                        if (seen) continue;
+                        int rank = (dx == 0 || dy == 0) ? 0 : 1; // prefer 4-neighbours
+                        if (rank < best) { best = rank; nx = qx; ny = qy; }
+                    }
+                if (nx < 0) break;                          // dead end: isolated short piece, keep it
+                if (crossingNumber(skel, w, h, nx, ny) >= 3) { reachedJunction = 1; px = nx; py = ny; break; }
+                cx = nx; cy = ny;
+            }
+            if (!reachedJunction) continue;
+
+            float localR = measureLocalRadiusPx(origBin, w, h, px, py, MAX_MEASURED_STROKE_RADIUS_PX);
+            float maxSpurLen = 2.0f * localR + 2.0f;
+            if ((float)len > maxSpurLen) continue;          // long branch: a real line, keep
+
+            for (int k = 0; k < len; k++) skel[by[k] * w + bx[k]] = 0;
+            removedThisPass += len;
+        }
+        removedTotal += removedThisPass;
+        if (!removedThisPass) break;
+    }
+    return removedTotal;
+}
+
+// ---- Ink-band re-centering ----
+// The skeleton of a stroke with an EVEN pixel width (the default 2 px
+// strokes are drawn 2 rows thick) can't sit on the stroke's true
+// centerline -- that lies on the boundary between the two middle rows --
+// so thinning keeps one of them and every reconstructed line ends up half
+// a pixel off the drawing. That's what made Comparison Mode's horizontal
+// lines look thinner than the originals: a ~1.2 px wide line straddling
+// two pixel rows lights both, the same line centered on one row lights
+// only that row.
+//
+// For each skeleton point this scans the ORIGINAL (pre-thinning) ink
+// across the stroke, along the segment's normal, finds where the ink band
+// ends on each side and takes the band's midpoint. The median of those
+// per-point offsets is the segment's shift -- a TRIMMED MEAN (outer 20% on
+// each side dropped, robust against the odd point near a junction), not a
+// median: on a diagonal the skeleton zigzags, so the per-point offsets take
+// a few discrete values whose median is biased while their mean isn't. A few points at each end are skipped: that's where a
+// neighbouring stroke's ink starts and would skew the scan.
+#define INK_SCAN_STEP_PX   0.05f
+#define INK_SHIFT_MAX_PX   1.0f     // thinning never moves the centerline more than this
+#define INK_LINE_FIT_TRIM_PX 4      // pixels skipped at each end of a straight segment (corner-bent), like LINE_REFINE_TRIM_PX
+
+static int inkAt(const uint8_t* ink, int w, int h, float fx, float fy)
+{
+    int x = (int)floorf(fx), y = (int)floorf(fy);
+    if (x < 0 || y < 0 || x >= w || y >= h) return 0;
+    return ink[y * w + x] != 0;
+}
+
+// Signed midpoint of the ink band through the point (cx,cy) (continuous
+// pixel coordinates, e.g. a pixel's centre) along unit normal (nx,ny),
+// relative to that point. Returns 0 on failure (*ok=0).
+static float inkBandMidOffset(const uint8_t* ink, int w, int h, float cx, float cy,
+                              float nx, float ny, float limit, int* ok)
+{
+    *ok = 0;
+    if (!inkAt(ink, w, h, cx, cy)) return 0.0f;
+
+    float tPlus = limit, tMinus = limit;
+    for (float t = INK_SCAN_STEP_PX; t <= limit; t += INK_SCAN_STEP_PX)
+        if (!inkAt(ink, w, h, cx + nx * t, cy + ny * t)) { tPlus = t - 0.5f * INK_SCAN_STEP_PX; break; }
+    for (float t = INK_SCAN_STEP_PX; t <= limit; t += INK_SCAN_STEP_PX)
+        if (!inkAt(ink, w, h, cx - nx * t, cy - ny * t)) { tMinus = t - 0.5f * INK_SCAN_STEP_PX; break; }
+    if (tPlus >= limit || tMinus >= limit) return 0.0f;   // ran into other ink -- unreliable
+
+    *ok = 1;
+    return 0.5f * (tPlus - tMinus);
+}
+
+static int cmpFloat(const void* a, const void* b)
+{
+    float fa = *(const float*)a, fb = *(const float*)b;
+    return (fa > fb) - (fa < fb);
+}
+
+// fine/fineScale: the same drawing rendered fineScale times finer
+// (canvasInkMask), or NULL. The band middle can only be pinned down to
+// about half a pixel of the raster it's measured on, which is a visible
+// pixel or two once the view is zoomed in; measuring on the finer mask
+// (while the segmentation itself stays on the normal raster) cuts that by
+// fineScale.
+#define TRACE_FINE_SCALE 3
+
+static void measureInkCenterShift(const uint8_t* ink, int w, int h, ArcSegment* seg,
+                                  const uint8_t* fine, int fineScale)
+{
+    seg->inkShiftX = seg->inkShiftY = seg->inkShiftR = 0.0f;
+    seg->lineFitValid = 0;
+    int n = seg->count;
+    if (n < 2) return;
+
+    BOOL isArc = (seg->circle.r > 1e-3f);
+
+    float maxR = (seg->avgRadiusPx > 0.0f) ? seg->avgRadiusPx : 1.0f;
+    if (maxR > MAX_MEASURED_STROKE_RADIUS_PX) maxR = MAX_MEASURED_STROKE_RADIUS_PX;
+    int skip = (int)ceilf(maxR) + 2;
+    if (!isArc && skip < INK_LINE_FIT_TRIM_PX) skip = INK_LINE_FIT_TRIM_PX;
+    int a = skip, b = n - 1 - skip;
+    if (b < a) { a = n / 2; b = a; }   // short segment: just use its middle pixel
+
+    // Straight segment: one normal for the whole segment, from the
+    // principal direction of its pixels.
+    float lnx = 0.0f, lny = 0.0f;
+    if (!isArc)
+    {
+        double mx = 0, my = 0;
+        for (int i = 0; i < n; i++) { mx += seg->pts[i].x; my += seg->pts[i].y; }
+        mx /= n; my /= n;
+        double sxx = 0, syy = 0, sxy = 0;
+        for (int i = 0; i < n; i++)
+        {
+            double ux = seg->pts[i].x - mx, uy = seg->pts[i].y - my;
+            sxx += ux * ux; syy += uy * uy; sxy += ux * uy;
+        }
+        double ang = 0.5 * atan2(2.0 * sxy, sxx - syy);
+        lnx = (float)-sin(ang);
+        lny = (float)cos(ang);
+    }
+
+    int cap = b - a + 1;
+    float* offs = (float*)malloc(sizeof(float) * (size_t)cap);
+    float* midX = (float*)malloc(sizeof(float) * (size_t)cap);   // band middles, for the line fit
+    float* midY = (float*)malloc(sizeof(float) * (size_t)cap);
+    if (!offs || !midX || !midY) { free(offs); free(midX); free(midY); return; }
+    int m = 0;
+    for (int i = a; i <= b; i++)
+    {
+        float nx = lnx, ny = lny;
+        if (isArc)
+        {
+            // Outward radial direction (the circle was fitted to the raw
+            // pixel indices, so compare like with like), so a positive
+            // offset means "ink band center is farther out".
+            float rx = (float)seg->pts[i].x - seg->circle.cx;
+            float ry = (float)seg->pts[i].y - seg->circle.cy;
+            float rl = sqrtf(rx * rx + ry * ry);
+            if (rl < 1e-3f) continue;
+            nx = rx / rl; ny = ry / rl;
+        }
+        int ok;
+        float o;
+        if (fine)
+            o = inkBandMidOffset(fine, w * fineScale, h * fineScale,
+                                 (seg->pts[i].x + 0.5f) * fineScale, (seg->pts[i].y + 0.5f) * fineScale,
+                                 nx, ny, (maxR + 2.0f) * fineScale, &ok) / (float)fineScale;
+        else
+            o = inkBandMidOffset(ink, w, h, seg->pts[i].x + 0.5f, seg->pts[i].y + 0.5f, nx, ny, maxR + 2.0f, &ok);
+        if (ok)
+        {
+            midX[m] = seg->pts[i].x + nx * o;
+            midY[m] = seg->pts[i].y + ny * o;
+            offs[m++] = o;
+        }
+    }
+
+    // Straight segment: fit the line to the band middles (total least
+    // squares, same as canvas_bridge.c's fitLineToPixels does for pixels).
+    if (!isArc && m >= 3)
+    {
+        double mx = 0, my = 0;
+        for (int i = 0; i < m; i++) { mx += midX[i]; my += midY[i]; }
+        mx /= m; my /= m;
+        double sxx = 0, syy = 0, sxy = 0;
+        for (int i = 0; i < m; i++)
+        {
+            double ux = midX[i] - mx, uy = midY[i] - my;
+            sxx += ux * ux; syy += uy * uy; sxy += ux * uy;
+        }
+        double ang = 0.5 * atan2(2.0 * sxy, sxx - syy);
+        seg->lineFitValid = 1;
+        seg->lineFitCx = (float)mx;
+        seg->lineFitCy = (float)my;
+        seg->lineFitDx = (float)cos(ang);
+        seg->lineFitDy = (float)sin(ang);
+    }
+    free(midX);
+    free(midY);
+    if (m > 0)
+    {
+        qsort(offs, (size_t)m, sizeof(float), cmpFloat);
+        int trim = m / 5;
+        double sum = 0.0;
+        for (int i = trim; i < m - trim; i++) sum += offs[i];
+        float med = (float)(sum / (double)(m - 2 * trim));
+        if (med >  INK_SHIFT_MAX_PX) med =  INK_SHIFT_MAX_PX;
+        if (med < -INK_SHIFT_MAX_PX) med = -INK_SHIFT_MAX_PX;
+        if (isArc) seg->inkShiftR = med;
+        else { seg->inkShiftX = med * lnx; seg->inkShiftY = med * lny; }
+    }
+    free(offs);
+}
+
+static void runPipelineOnImage(Image* img, const char* sourceLabel, BOOL stretched,
+                               const uint8_t* fineInk, int fineScale)
+{
+    int w = img->width;
+    int h = img->height;
+
+    // Preserve the RAW (pre-thinning) binary raster -- canvasToImage/
+    // img_to_bin stamp it with the actual drawn stroke width, but
+    // thinningZhangSuen below immediately collapses every stroke down to a
+    // 1px-wide skeleton (which the arc-fit needs), destroying that width
+    // info in the process. Keeping a copy is what lets
+    // measureLocalRadiusPx recover it afterward, per skeleton point.
+    uint8_t* origBin = (uint8_t*)malloc((size_t)w * h);
+    memcpy(origBin, img->bin, (size_t)w * h);
+
+    thinningZhangSuen(img);
+
+    // Remove thinning spurs so one stray stub can't make find_start_end_pixels
+    // see 3+ endpoints and drop the whole drawing (see pruneSkeletonSpurs).
+    // TEMPORARILY DISABLED for testing -- set ENABLE_SPUR_PRUNING back to 1
+    // (top of the spur-pruning section above) to restore it.
+#if ENABLE_SPUR_PRUNING
+    pruneSkeletonSpurs(img->bin, origBin, w, h);
+#else
+    (void)pruneSkeletonSpurs;   // keep the function referenced (no unused-function warning)
+#endif
+
+    uint8_t* remaining = (uint8_t*)malloc((size_t)w * h);
+    memcpy(remaining, img->bin, (size_t)w * h);
+    uint8_t* compBin = (uint8_t*)malloc((size_t)w * h);
+
+    // ArcSegment.pts (set by buildSegments) points INTO the path buffer you
+    // pass it, it doesn't copy - so each component's path buffer has to stay
+    // alive until setSegmentOverlay below has consumed all the segments.
+    Point* componentPaths[MAX_TRACE_COMPONENTS];
+    int componentPathCount = 0;
+
+    static ArcSegment allSegments[MAX_ARC_SEGMENTS];
+    int totalSegCount = 0;
+
+    for (int y = 0; y < h && totalSegCount < MAX_ARC_SEGMENTS && componentPathCount < MAX_TRACE_COMPONENTS; y++)
+    {
+        for (int x = 0; x < w && totalSegCount < MAX_ARC_SEGMENTS && componentPathCount < MAX_TRACE_COMPONENTS; x++)
+        {
+            if (!remaining[y * w + x]) continue;
+
+            memset(compBin, 0, (size_t)w * h);
+            extractComponent(remaining, compBin, w, h, x, y);
+
+            int sx, sy, ex, ey;
+            int found = find_start_end_pixels(compBin, w, h, &sx, &sy, &ex, &ey);
+            if (found != 2) continue;   // closed loop or a noise speck - not an open curve, skip it
+
+            Point* path = (Point*)malloc(sizeof(Point) * 10000);
+            componentPaths[componentPathCount++] = path;
+
+            int numPoints = tracePath(compBin, w, h, sx, sy, ex, ey, path, 10000);
+            if (!gSuppressTraceDebugPrints) debugPrintPath(path, numPoints);
+
+            ArcSegment segs[MAX_ARC_SEGMENTS];
+            int segCount = buildSegments(path, numPoints, segs);
+
+            // Recover ONE average stroke width for the WHOLE traced path
+            // (not one independent measurement per arc-fit segment) from
+            // the preserved pre-thinning raster, before the path buffer
+            // gets copied off and this component's own buildSegments
+            // locals go out of scope. The original stroke only ever has
+            // ONE thickness for its entire length (strokeThickness[] is
+            // set once per stroke at draw-start, see canvas.c's
+            // WM_LBUTTONDOWN, never varied along it) -- measuring per
+            // ARC SEGMENT instead let each piece's own subset of points
+            // (sometimes just a handful, right at a buildSegments split)
+            // pull its own estimate slightly away from its neighbors',
+            // which showed up as a visible width "pinch" right at a
+            // segment boundary -- invisible at a large overall thickness,
+            // but a big fraction of the total width (and so very visible)
+            // at the smallest 1px setting, even though the segments'
+            // POSITIONS still joined up perfectly (that's a separate,
+            // already-fixed guarantee -- see sampleArcPoints' shared-
+            // endpoint snapping in canvas_bridge.c). Averaging over the
+            // whole path first keeps every segment of the same stroke
+            // rendered at the exact same, more representative width.
+            // EXACT path (img->radius != NULL, i.e. a hand-drawn canvas
+            // stroke, see canvasToImage): every pixel canvasToImage
+            // actually stamped carries the TRUE intended half-thickness
+            // it was stamped with (strokeThickness[s]/2 -- see
+            // canvas_bridge.c's stampDisc/setBinPixel), and that value is
+            // the same across the whole stroke (see the comment above),
+            // so there's no need to measure or average anything -- one
+            // lookup at any point on this path is already the exact,
+            // noise-free answer. This is what the measurement loop below
+            // (kept as the `else` fallback for an uploaded BMP, which has
+            // no such known-exact source) could only APPROXIMATE by
+            // scanning the post-thinning raster for how wide the
+            // original stroke was at each point and averaging -- pixel-
+            // grid quantization and ring-search resolution both leave
+            // slack there, which is exactly what let Simulation's ground
+            // collision (canvas.c's pointCollidesWithAnyEnvironmentStroke,
+            // fed by this same avgRadiusPx via segmentThicknessWorld) sit
+            // a hair off from the actually-drawn line instead of exactly
+            // on it.
+            float pathAvgRadiusPx;
+
+            if (img->radius && numPoints > 0)
+            {
+                pathAvgRadiusPx = img->radius[path[0].y * w + path[0].x];
+            }
+            else
+            {
+                double sum = 0.0;
+                for (int k = 0; k < numPoints; k++)
+                {
+                    // Local tangent direction at path[k], from its two
+                    // immediate neighbors (one-sided at either end of the
+                    // path) -- lets the width measurement below cut straight
+                    // across the stroke's TRUE perpendicular regardless of
+                    // which way it happens to run, instead of always
+                    // measuring along a fixed pair of axes (see
+                    // measureLocalRadiusPxDirectional's comment for why that
+                    // matters).
+                    int kPrev = (k > 0) ? k - 1 : k;
+                    int kNext = (k < numPoints - 1) ? k + 1 : k;
+
+                    float tdx = (float)(path[kNext].x - path[kPrev].x);
+                    float tdy = (float)(path[kNext].y - path[kPrev].y);
+                    float tlen = sqrtf(tdx * tdx + tdy * tdy);
+
+                    if (tlen > 1e-3f)
+                    {
+                        sum += measureLocalRadiusPxDirectional(origBin, w, h,
+                                                     path[k].x, path[k].y,
+                                                     tdx / tlen, tdy / tlen,
+                                                     MAX_MEASURED_STROKE_RADIUS_PX);
+                    }
+                    else
+                    {
+                        // Degenerate (a single-point path, or repeated
+                        // coordinates) -- no tangent to measure across, so
+                        // fall back to the old direction-agnostic ring
+                        // search rather than dividing by a near-zero tlen.
+                        sum += measureLocalRadiusPx(origBin, w, h,
+                                                     path[k].x, path[k].y,
+                                                     MAX_MEASURED_STROKE_RADIUS_PX);
+                    }
+                }
+                pathAvgRadiusPx = (numPoints > 0) ? (float)(sum / numPoints) : 1.0f;
+            }
+
+            if (pathAvgRadiusPx < 1.0f) pathAvgRadiusPx = 1.0f;
+
+            for (int i = 0; i < segCount; i++)
+            {
+                segs[i].avgRadiusPx = pathAvgRadiusPx;
+                measureInkCenterShift(origBin, w, h, &segs[i], fineInk, fineScale);
+            }
+
+            for (int i = 0; i < segCount && totalSegCount < MAX_ARC_SEGMENTS; i++)
+                allSegments[totalSegCount++] = segs[i];
+        }
+    }
+
+    if (totalSegCount == 0) {
+        printf("No traceable curve found (%s)\n", sourceLabel);
+    }
+
+    if (!gSuppressTraceDebugPrints) debugPrintSegments(allSegments, totalSegCount);
+    setSegmentOverlay(allSegments, totalSegCount, w, h, stretched);
+
+    for (int i = 0; i < componentPathCount; i++) free(componentPaths[i]);
+    free(remaining);
+    free(compBin);
+    free(origBin);
+
+    free(img->data);
+    free(img->bin);
+    free(img->radius); // NULL for an uploaded BMP -- free(NULL) is a no-op
+    free(img);
+}
+
+void RunTracePipeline(void)
+{
+    Image* img = canvasToImage();
+
+    if (!img) {
+        // No canvas strokes - check if there's a pending uploaded BMP to trace instead
+        if (RunPendingUploadTrace()) {
+            return;  // Just trace, don't auto-show
+        }
+        printf("Canvas is empty - draw a curve or upload a BMP first\n");
+        return;
+    }
+
+    freePendingBmpImage();   // a manual trace supersedes any not-yet-viewed upload
+
+    // Finer copy of the drawing for measuring stroke middles (see
+    // measureInkCenterShift). Optional: without it the normal raster is used.
+    int fineW = 0, fineH = 0;
+    uint8_t* fine = canvasInkMask(TRACE_FINE_SCALE, &fineW, &fineH);
+
+    runPipelineOnImage(img, "canvas drawing", FALSE, fine, TRACE_FINE_SCALE);  // not stretched
+    free(fine);
+}
+
+void RunUploadPipeline(void)
+{
+    Image* img = loadBMP_UI("");
+    if (!img) {
+        printf("No image loaded\n");
+        return;
+    }
+
+    displayImageOnCanvas(img);
+
+    img->bin = img_to_bin(img);
+    if (!img->bin) {
+        printf("Failed to binarize uploaded image\n");
+        free(img->data);
+        free(img->radius); // already NULL (loadBMP), but free(NULL) is a no-op
+        free(img);
+        return;
+    }
+
+    // NEW: upload just displays the image now - no auto-trace. Drop any
+    // stale results/pending image from before so they don't linger on
+    // screen or leak.
+    freePendingBmpImage();
+    canvas.showSegments = FALSE;
+    canvas.segmentResultCount = 0;
+
+    s_pendingBmpImage = img;   // traced later, on demand (see RunPendingUploadTrace)
+}
+
+BOOL RunPendingUploadTrace(void)
+{
+    if (!s_pendingBmpImage) return FALSE;
+
+    Image* img = s_pendingBmpImage;
+    s_pendingBmpImage = NULL;   // runPipelineOnImage frees img when done
+    runPipelineOnImage(img, "uploaded BMP", TRUE, NULL, 1);  // stretched to fill the view
+    return TRUE;
+}

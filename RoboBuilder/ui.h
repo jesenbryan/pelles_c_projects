@@ -21,3 +21,7 @@ void createUIWindow(HINSTANCE hInst, HWND hWndParent);
 // view over to the reconstructed/arc-fitted drawing, since that's what
 // ground collision actually tests against now, not the original strokes.
 void SetComparisonModeUI(BOOL on);
+
+// Programmatically sets View Segments on/off, checkbox included (see
+// SetComparisonModeUI). Used by Undo to switch the overlays off.
+void SetViewSegmentsUI(BOOL on);

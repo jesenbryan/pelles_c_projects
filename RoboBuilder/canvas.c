@@ -472,6 +472,8 @@ static BOOL restoreClearedCanvas(void)
     canvas.panY = clearUndoPanY;
     canvas.zoom = clearUndoZoom;
     clearUndoValid = FALSE;      // one Clear, one restore
+    SetViewSegmentsUI(FALSE);
+    SetComparisonModeUI(FALSE);
 
     hoveredSegment = -1;
     snapEndpointAvailable = FALSE;
@@ -483,9 +485,9 @@ static BOOL restoreClearedCanvas(void)
 }
 
 // Undo: drops the last stroke (its points are always the tail of points[],
-// starting at strokeStarts[last]). Re-traces if View Segments / Comparison
-// Mode is showing the reconstruction, so that overlay never shows a stroke
-// that's gone, and autosaves like any other drawing change.
+// starting at strokeStarts[last]), turns View Segments / Comparison Mode off
+// (so no overlay shows a stroke that's gone), and autosaves like any other
+// drawing change.
 void UndoLastStroke(void)
 {
     if (drawing) return;                       // never pull a stroke out from under an active drag
@@ -503,13 +505,11 @@ void UndoLastStroke(void)
     snapEndpointAvailable = FALSE;
     branchMarkerCount = 0;
 
-    if (canvas.showSegments || canvas.comparisonMode)
-    {
-        if (canvas.strokeCount > 0)
-            RunTracePipeline();
-        else
-            canvas.segmentResultCount = 0;     // nothing left to trace
-    }
+    // Undo switches View Segments and Comparison Mode off (checkboxes
+    // included) rather than re-tracing -- the user re-checks them to see the
+    // trace of the drawing as it is now.
+    SetViewSegmentsUI(FALSE);
+    SetComparisonModeUI(FALSE);
 
     saveEnvironmentAutosave();
     if (hWndGL) InvalidateRect(hWndGL, NULL, FALSE);
@@ -9357,14 +9357,24 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		nx += canvas.panX;   // NEW
 		ny += canvas.panY;   // NEW
 
-		// NEW: if the cursor was hovering near an existing stroke's
-		// endpoint, snap this new stroke's first point exactly onto it
-		// instead of the raw cursor position - lets straight lines be
-		// chained end-to-end into a connected polyline.
-		if (snapEndpointAvailable)
+		// If the click lands near an existing stroke's endpoint, snap this
+		// new stroke's first point exactly onto that endpoint (its center)
+		// instead of the raw cursor position - lets lines be chained
+		// end-to-end into a connected polyline, always starting from the
+		// very same point. Looked up from the CLICK position itself rather
+		// than the hover state (snapEndpointAvailable): hover detection is
+		// off while drawing and the hover snap is cleared after use, so
+		// clicking again right after finishing a line without moving the
+		// mouse first used to start the new stroke at the raw cursor, a few
+		// pixels off the endpoint (especially after a Shift line, whose end
+		// sits on the snapped angle rather than under the cursor).
 		{
-		    nx = snapEndpointX;
-		    ny = snapEndpointY;
+		    float snapX, snapY;
+		    if (findNearestStrokeEndpoint(nx, ny, &snapX, &snapY))
+		    {
+		        nx = snapX;
+		        ny = snapY;
+		    }
 		    snapEndpointAvailable = FALSE;
 		}
 

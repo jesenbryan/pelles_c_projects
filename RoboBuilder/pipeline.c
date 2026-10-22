@@ -301,7 +301,7 @@ static int pruneSkeletonSpurs(uint8_t* skel, const uint8_t* origBin, int w, int 
             if (!reachedJunction) continue;
 
             float localR = measureLocalRadiusPx(origBin, w, h, px, py, MAX_MEASURED_STROKE_RADIUS_PX);
-            float maxSpurLen = 2.0f * localR + 2.0f;
+            float maxSpurLen = 2.0f * localR + 4.0f;   // was 2r + 2; +4 lets V-tip stubs down to ~22 deg (2 px brush) be pruned
             if ((float)len > maxSpurLen) continue;          // long branch: a real line, keep
 
             for (int k = 0; k < len; k++) skel[by[k] * w + bx[k]] = 0;
