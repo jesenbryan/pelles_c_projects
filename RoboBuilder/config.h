@@ -1260,3 +1260,15 @@
 // Shift straight-line angle overlay (canvas.c, Design > Environment): radius
 // in screen pixels of the protractor arc drawn at the line's start point.
 #define SHIFT_ANGLE_ARC_RADIUS_PX 36.0f
+
+// Freehand stroke smoothing (canvas.c, smoothLastStroke; Environment panel
+// "Smooth strokes" checkbox). Applied when a freehand stroke is released:
+//   STEP_PX     resample spacing in screen pixels
+//   PASSES      1-2-1 neighbour-average passes (0 = no smoothing at all);
+//               more passes = smoother, but tight curves round off more
+//   CORNER_DEG  turns sharper than this are kept as exact corners
+//   CORNER_SPAN samples each side used to measure that turn
+#define STROKE_SMOOTH_STEP_PX       3.0f
+#define STROKE_SMOOTH_PASSES        4
+#define STROKE_SMOOTH_CORNER_DEG    60.0f
+#define STROKE_SMOOTH_CORNER_SPAN   2

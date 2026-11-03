@@ -415,6 +415,149 @@ void ResetCanvas(void)
 	saveEnvironmentAutosave();
 }
 
+// ---- Freehand stroke smoothing (on mouse release) ----
+// The mouse only reports whole screen pixels, so a slowly drawn curve is
+// recorded as flat runs joined by 1 px steps -- a visible staircase that the
+// tracer then also treats as real wobble. When a FREEHAND stroke is finished
+// (not a Shift line), smoothLastStroke replaces its points with a smoothed
+// version:
+//   1. resample to one point every STROKE_SMOOTH_STEP_PX screen pixels
+//      (removes the clumps of repeated positions from slow drawing);
+//   2. STROKE_SMOOTH_PASSES passes of a 1-2-1 neighbour average (together a
+//      soft blur along the stroke) that flattens the steps.
+// The first and last point never move (endpoint snapping stays exact), and
+// neither do real corners -- points where the stroke turns by more than
+// STROKE_SMOOTH_CORNER_DEG -- so a freehand V keeps its sharp tip.
+// Toggled by the Environment panel's "Smooth strokes" checkbox (on by
+// default); only affects strokes drawn while it's on.
+BOOL gStrokeSmoothing = TRUE;
+
+// Resamples the polyline in[0..n) to evenly spaced points `step` apart,
+// always keeping the exact first and last point. Returns the point count.
+static int resampleStrokePts(const float* in, int n, float* out, int maxPts, float step)
+{
+    int m = 0;
+    out[m * 2] = in[0]; out[m * 2 + 1] = in[1]; m++;
+    float carry = 0.0f;
+    for (int i = 1; i < n && m < maxPts - 1; i++)
+    {
+        float ax = in[(i - 1) * 2], ay = in[(i - 1) * 2 + 1];
+        float bx = in[i * 2],       by = in[i * 2 + 1];
+        float seg = sqrtf((bx - ax) * (bx - ax) + (by - ay) * (by - ay));
+        while (seg > 0.0f && carry + seg >= step && m < maxPts - 1)
+        {
+            float t = (step - carry) / seg;
+            ax += (bx - ax) * t;
+            ay += (by - ay) * t;
+            seg -= (step - carry);
+            carry = 0.0f;
+            out[m * 2] = ax; out[m * 2 + 1] = ay; m++;
+        }
+        carry += seg;
+    }
+    // exact end point (replacing a sample that landed almost on top of it)
+    float ex = in[(n - 1) * 2], ey = in[(n - 1) * 2 + 1];
+    if (m >= 2)
+    {
+        float dx = out[(m - 1) * 2] - ex, dy = out[(m - 1) * 2 + 1] - ey;
+        if (sqrtf(dx * dx + dy * dy) < step * 0.5f) m--;
+    }
+    out[m * 2] = ex; out[m * 2 + 1] = ey; m++;
+    return m;
+}
+
+static void smoothLastStroke(void)
+{
+    if (!gStrokeSmoothing || STROKE_SMOOTH_PASSES <= 0 || canvas.strokeCount <= 0)
+        return;
+
+    int start = strokeStarts[canvas.strokeCount - 1];
+    int n = (canvas.pointCount - start) / 2;
+    if (n < 3)
+        return;                                   // a click or a single segment: nothing to smooth
+
+    // One screen pixel in world units (inverse of updateDrawingPoint's mapping).
+    float aspect = (float)glWindowWidth / (float)glWindowHeight;
+    float worldPerPx = 2.0f * canvas.zoom * ((aspect >= 1.0f) ? aspect : 1.0f) / (float)glWindowWidth;
+    float step = STROKE_SMOOTH_STEP_PX * worldPerPx;
+    if (step <= 0.0f)
+        return;
+
+    const float* src = &points[start];
+    float len = 0.0f;
+    for (int i = 1; i < n; i++)
+    {
+        float dx = src[i * 2] - src[(i - 1) * 2], dy = src[i * 2 + 1] - src[(i - 1) * 2 + 1];
+        len += sqrtf(dx * dx + dy * dy);
+    }
+    if (len < 3.0f * step)
+        return;                                   // too short to smooth meaningfully
+
+    int maxPts = (int)(len / step) + 8;
+    float* a = (float*)malloc(sizeof(float) * 2 * (size_t)maxPts);
+    float* b = (float*)malloc(sizeof(float) * 2 * (size_t)maxPts);
+    unsigned char* fixedPt = (unsigned char*)calloc((size_t)maxPts, 1);
+    if (!a || !b || !fixedPt) { free(a); free(b); free(fixedPt); return; }
+
+    int m = resampleStrokePts(src, n, a, maxPts, step);
+    if (m < 3) { free(a); free(b); free(fixedPt); return; }
+
+    // Pin the ends and real corners. Turn angle at i is measured between the
+    // directions to points k samples back and k samples ahead; only the
+    // sharpest point of each corner (local maximum) is pinned.
+    fixedPt[0] = fixedPt[m - 1] = 1;
+    {
+        const int k = STROKE_SMOOTH_CORNER_SPAN;
+        float* turn = (float*)calloc((size_t)m, sizeof(float));
+        if (turn)
+        {
+            for (int i = k; i < m - k; i++)
+            {
+                float ux = a[i * 2] - a[(i - k) * 2],  uy = a[i * 2 + 1] - a[(i - k) * 2 + 1];
+                float vx = a[(i + k) * 2] - a[i * 2],  vy = a[(i + k) * 2 + 1] - a[i * 2 + 1];
+                float lu = sqrtf(ux * ux + uy * uy), lv = sqrtf(vx * vx + vy * vy);
+                if (lu > 0.0f && lv > 0.0f)
+                {
+                    float c = (ux * vx + uy * vy) / (lu * lv);
+                    if (c > 1.0f) c = 1.0f;
+                    if (c < -1.0f) c = -1.0f;
+                    turn[i] = acosf(c) * (180.0f / 3.14159265f);
+                }
+            }
+            for (int i = k; i < m - k; i++)
+            {
+                if (turn[i] < STROKE_SMOOTH_CORNER_DEG) continue;
+                int isMax = 1;
+                for (int j = i - k; j <= i + k && isMax; j++)
+                    if (j != i && (turn[j] > turn[i] || (turn[j] == turn[i] && j < i))) isMax = 0;
+                if (isMax) fixedPt[i] = 1;
+            }
+            free(turn);
+        }
+    }
+
+    // 1-2-1 neighbour average, pinned points untouched.
+    for (int pass = 0; pass < STROKE_SMOOTH_PASSES; pass++)
+    {
+        for (int i = 0; i < m; i++)
+        {
+            if (fixedPt[i]) { b[i * 2] = a[i * 2]; b[i * 2 + 1] = a[i * 2 + 1]; continue; }
+            b[i * 2]     = 0.25f * a[(i - 1) * 2]     + 0.5f * a[i * 2]     + 0.25f * a[(i + 1) * 2];
+            b[i * 2 + 1] = 0.25f * a[(i - 1) * 2 + 1] + 0.5f * a[i * 2 + 1] + 0.25f * a[(i + 1) * 2 + 1];
+        }
+        float* t = a; a = b; b = t;
+    }
+
+    // Write back over this (last) stroke's points.
+    if (start + m * 2 <= MAX_POINTS)
+    {
+        memcpy(&points[start], a, sizeof(float) * 2 * (size_t)m);
+        canvas.pointCount = start + m * 2;
+    }
+
+    free(a); free(b); free(fixedPt);
+}
+
 // ---- Undo for Clear ----
 // ClearCanvasWithUndo (the Environment panel's Clear button) keeps a copy of
 // everything ResetCanvas wipes from the drawing itself -- the strokes and the
@@ -9394,6 +9537,13 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         // reset below, since that's what this check is testing.
         if (drawing)
         {
+            // Freehand strokes get smoothed on release (see smoothLastStroke);
+            // a Shift line still active here is already perfectly straight.
+            if (!shiftHoldActive)
+            {
+                smoothLastStroke();
+                InvalidateRect(hWnd, NULL, FALSE);
+            }
             saveEnvironmentAutosave();
             SetCursor(LoadCursor(NULL, IDC_ARROW)); // show it again after a Shift line
         }

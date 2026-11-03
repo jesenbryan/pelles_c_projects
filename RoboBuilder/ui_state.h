@@ -32,6 +32,7 @@
 #define ID_UNDO              21
 #define ID_ABOUT             22
 #define ID_DEBUG_LOG_MENU    23   // View > Debug Log -- prints the current mode's debug info
+#define ID_SMOOTH_STROKES    24   // Environment panel: "Smooth strokes" checkbox
 
 // Author credit -- shown in Help > About RoboBuilder.
 #define APP_AUTHOR_NAME L"Jesen Bryan"
@@ -113,6 +114,10 @@ void UndoLastStroke(void);
 // Clear button: ResetCanvas, but keeps a copy of the drawing so the next
 // Undo on an empty canvas restores it (see canvas.c).
 void ClearCanvasWithUndo(void);
+
+// Freehand stroke smoothing on mouse release, toggled by the Environment
+// panel's "Smooth strokes" checkbox (canvas.c, smoothLastStroke). On by default.
+extern BOOL gStrokeSmoothing;
 
 // Global state shared across modules
 extern HWND hWndGL;

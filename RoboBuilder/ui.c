@@ -22,7 +22,8 @@ static HWND hFitLabel;       // state readout above the fit slider ("balanced", 
 static HWND hFitSlider;      // arc-vs-line preference for tracing (gArcLineBias)
 static HWND hFitArcIcon;     // owner-drawn arc symbol at the slider's left (arcs) end
 static HWND hFitLineIcon;    // owner-drawn straight-lines symbol at its right (lines) end
-static int controlCount = 8;   // sizing estimate (labels are shorter than buttons)
+static HWND hSmoothChk;       // "Smooth strokes" checkbox (gStrokeSmoothing)
+static int controlCount = 9;   // sizing estimate (labels are shorter than buttons)
 
 // Fit slider: FIT_SLIDER_STEPS + 1 positions in 25% steps, left = arcs,
 // right = lines, middle = default. Position p maps to
@@ -216,6 +217,8 @@ static void LayoutUI(HWND hWnd)
 	MoveWindow(hFitArcIcon, centerX, y + 1, FIT_ICON_SIZE, FIT_ICON_SIZE, TRUE);
 	MoveWindow(hFitSlider, centerX + FIT_ICON_SIZE + 2, y, btnW - 2 * (FIT_ICON_SIZE + 2), btnH, TRUE);
 	MoveWindow(hFitLineIcon, centerX + btnW - FIT_ICON_SIZE, y + 1, FIT_ICON_SIZE, FIT_ICON_SIZE, TRUE);
+	y += btnH + spacing;
+	MoveWindow(hSmoothChk, centerX, y, btnW, 24, TRUE);
 }
 
 LRESULT CALLBACK WndProcUI(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
@@ -266,6 +269,12 @@ LRESULT CALLBACK WndProcUI(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             SendMessage(hFitSlider, TBM_SETPOS, TRUE, pos);
             updateFitLabel(pos);
         }
+
+        // Freehand stroke smoothing (see gStrokeSmoothing / canvas.c's
+        // smoothLastStroke), on by default.
+        hSmoothChk = CreateWindowEx(0, L"BUTTON", L"Smooth strokes", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
+                                    20, 400, 300, 24, hWnd, (HMENU)ID_SMOOTH_STROKES, GetModuleHandle(NULL), NULL);
+        SendMessage(hSmoothChk, BM_SETCHECK, gStrokeSmoothing ? BST_CHECKED : BST_UNCHECKED, 0);
 
         SendMessage(hSlider, TBM_SETRANGE, TRUE, MAKELPARAM(1, 10));
         SendMessage(hSlider, TBM_SETPOS, TRUE, (LPARAM)thickness);
@@ -372,6 +381,11 @@ LRESULT CALLBACK WndProcUI(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		    }
 		    canvas.showSegments = nowChecked;
 		    if (hWndGL) InvalidateRect(hWndGL, NULL, FALSE);
+		}
+		else if (LOWORD(wParam) == ID_SMOOTH_STROKES)
+		{
+		    gStrokeSmoothing = (SendMessage(hSmoothChk, BM_GETCHECK, 0, 0) == BST_CHECKED);
+		    if (hWndGL) SetFocus(hWndGL);   // keep Ctrl+Z etc. going to the canvas
 		}
 		else if (LOWORD(wParam) == ID_COMPARISON)
 		{
