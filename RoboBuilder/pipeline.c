@@ -256,7 +256,7 @@ static int neighborCount(const uint8_t* b, int w, int h, int x, int y)
 #define SPUR_MAX_WALK 64
 
 // 1 = prune spurs after thinning (normal), 0 = skip it (temporary test).
-#define ENABLE_SPUR_PRUNING 1
+#define ENABLE_SPUR_PRUNING 0
 
 // Removes spurs from a thinned skeleton in place. origBin (the un-thinned
 // ink) supplies the local stroke half-thickness at each junction, so the
