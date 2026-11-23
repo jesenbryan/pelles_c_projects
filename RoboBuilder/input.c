@@ -18,16 +18,29 @@
 #include "app_init.h"
 
 // ---------------- ARC AUTO-ADJUST ----------------
-// Re-validates an arc pair's EXISTING angles against a circle's new
-// size/position, nudging an angle only as far as needed to keep its
-// fillet solve from exceeding maxRadius -- geometry.h's
-// clampToSafeAngleRange is a no-op when the current angle is already
-// safe, so an arc that's still comfortably valid after the resize/move
-// is left completely untouched, and one that isn't gets pulled back in
-// by the minimum amount rather than reset to some fixed default. Same
-// outer-bound margin (ARC_ANGLE_MARGIN_DEG and friends) the drag code
-// already computes maxDelta with -- this just applies it to the angle
-// that's already there instead of one freshly read off the mouse.
+// Re-validates an arc pair's angles against a circle's new size/position,
+// keeping each fillet solve inside maxRadius. The angle field (what every
+// consumer reads) gets the CLAMPED value, but the angle the user actually
+// chose is remembered in an ArcIntent and re-clamped on every call, so a
+// length/radius change that squeezes the safe range only hides the arc's
+// shape temporarily: once the geometry comes back, the arc does too.
+// (Before, the clamp overwrote the only copy, so shrinking a leg and
+// stretching it back left the arcs permanently changed.) An angle written
+// by anything else (drag, pose load, init, mirror) is detected -- either the
+// intent was cleared (CLEAR_*_ARC_INTENTS in app.h) or the field no longer
+// equals what we last wrote -- and becomes the new intent. Same outer-bound
+// margin (ARC_ANGLE_MARGIN_DEG and friends) the drag code uses.
+static void applyArcIntent(float* angleField, ArcIntent* it, SafeAngleRange range, float marginDeg)
+{
+    if (!it->valid || *angleField != it->eff)
+    {
+        it->want = *angleField;
+        it->valid = 1;
+    }
+    *angleField = clampToSafeAngleRange(it->want, range, marginDeg);
+    it->eff = *angleField;
+}
+
 static void adjustHeadButtArcs(AppState* app)
 {
     PointF headLocal = { app->robotScene.robot.headX, app->robotScene.robot.y };
@@ -35,8 +48,8 @@ static void adjustHeadButtArcs(AppState* app)
 
     SafeAngleRange range = filletSafeAngleRange(headLocal, app->robotScene.robot.headRadius, buttLocal, app->robotScene.robot.buttRadius, MAX_ARC_R);
 
-    app->robotScene.robot.seamArc1Angle = clampToSafeAngleRange(app->robotScene.robot.seamArc1Angle, range, ARC_ANGLE_MARGIN_DEG);
-    app->robotScene.robot.seamArc2Angle = clampToSafeAngleRange(app->robotScene.robot.seamArc2Angle, range, ARC_ANGLE_MARGIN_DEG);
+    applyArcIntent(&app->robotScene.robot.seamArc1Angle, &app->robotScene.robot.seamArc1Intent, range, ARC_ANGLE_MARGIN_DEG);
+    applyArcIntent(&app->robotScene.robot.seamArc2Angle, &app->robotScene.robot.seamArc2Intent, range, ARC_ANGLE_MARGIN_DEG);
 }
 
 static void adjustThighArcs(AppState* app)
@@ -44,8 +57,8 @@ static void adjustThighArcs(AppState* app)
     SafeAngleRange range1 = filletSafeAngleRange(app->robotScene.robot.innerCircle, app->robotScene.robot.innerRadius, app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeRadius, MAX_SEMNI_THIGH_ARC_R);
     SafeAngleRange range2 = filletSafeAngleRangeConcave(app->robotScene.robot.innerCircle, app->robotScene.robot.innerRadius, app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeRadius, MAX_THIGH_ARC2_CONCAVE_R);
 
-    app->robotScene.robot.thighArc1Angle = clampToSafeAngleRange(app->robotScene.robot.thighArc1Angle, range1, THIGH_ARC_ANGLE_MARGIN_DEG);
-    app->robotScene.robot.thighArc2Angle = clampToSafeAngleRange(app->robotScene.robot.thighArc2Angle, range2, THIGH_ARC_ANGLE_MARGIN_DEG);
+    applyArcIntent(&app->robotScene.robot.thighArc1Angle, &app->robotScene.robot.thighArc1Intent, range1, THIGH_ARC_ANGLE_MARGIN_DEG);
+    applyArcIntent(&app->robotScene.robot.thighArc2Angle, &app->robotScene.robot.thighArc2Intent, range2, THIGH_ARC_ANGLE_MARGIN_DEG);
 }
 
 static void adjustShinArcs(AppState* app)
@@ -53,8 +66,8 @@ static void adjustShinArcs(AppState* app)
     SafeAngleRange range1 = filletSafeAngleRange(app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeRadius, app->robotScene.robot.footCircle, app->robotScene.robot.footRadius, MAX_SHIN_ARC_R);
     SafeAngleRange range2 = filletSafeAngleRangeConcave(app->robotScene.robot.kneeCircle, app->robotScene.robot.kneeRadius, app->robotScene.robot.footCircle, app->robotScene.robot.footRadius, MAX_SHIN_ARC2_CONCAVE_R);
 
-    app->robotScene.robot.shinArc1Angle = clampToSafeAngleRange(app->robotScene.robot.shinArc1Angle, range1, SHIN_ARC_ANGLE_MARGIN_DEG);
-    app->robotScene.robot.shinArc2Angle = clampToSafeAngleRange(app->robotScene.robot.shinArc2Angle, range2, SHIN_ARC_ANGLE_MARGIN_DEG);
+    applyArcIntent(&app->robotScene.robot.shinArc1Angle, &app->robotScene.robot.shinArc1Intent, range1, SHIN_ARC_ANGLE_MARGIN_DEG);
+    applyArcIntent(&app->robotScene.robot.shinArc2Angle, &app->robotScene.robot.shinArc2Intent, range2, SHIN_ARC_ANGLE_MARGIN_DEG);
 }
 
 // Same re-validation as adjustShinArcs, just for Rocky's own kneeCircle/
@@ -66,8 +79,8 @@ static void adjustRockyShinArcs(AppState* app)
     SafeAngleRange range1 = filletSafeAngleRange(app->robotScene.rocky.kneeCircle, app->robotScene.rocky.kneeRadius, app->robotScene.rocky.footCircle, app->robotScene.rocky.footRadius, MAX_SHIN_ARC_R);
     SafeAngleRange range2 = filletSafeAngleRangeConcave(app->robotScene.rocky.kneeCircle, app->robotScene.rocky.kneeRadius, app->robotScene.rocky.footCircle, app->robotScene.rocky.footRadius, MAX_SHIN_ARC2_CONCAVE_R);
 
-    app->robotScene.rocky.shinArc1Angle = clampToSafeAngleRange(app->robotScene.rocky.shinArc1Angle, range1, SHIN_ARC_ANGLE_MARGIN_DEG);
-    app->robotScene.rocky.shinArc2Angle = clampToSafeAngleRange(app->robotScene.rocky.shinArc2Angle, range2, SHIN_ARC_ANGLE_MARGIN_DEG);
+    applyArcIntent(&app->robotScene.rocky.shinArc1Angle, &app->robotScene.rocky.shinArc1Intent, range1, SHIN_ARC_ANGLE_MARGIN_DEG);
+    applyArcIntent(&app->robotScene.rocky.shinArc2Angle, &app->robotScene.rocky.shinArc2Intent, range2, SHIN_ARC_ANGLE_MARGIN_DEG);
 }
 
 // Same re-validation as adjustThighArcs/adjustShinArcs, for Stilo's own
@@ -80,8 +93,8 @@ static void adjustStiloThigh1Arcs(AppState* app)
     SafeAngleRange range1 = filletSafeAngleRange(app->robotScene.stilo.hip1Circle, app->robotScene.stilo.hip1Radius, app->robotScene.stilo.feet1Circle, app->robotScene.stilo.feet1Radius, MAX_SEMNI_THIGH_ARC_R);
     SafeAngleRange range2 = filletSafeAngleRangeConcave(app->robotScene.stilo.hip1Circle, app->robotScene.stilo.hip1Radius, app->robotScene.stilo.feet1Circle, app->robotScene.stilo.feet1Radius, MAX_THIGH_ARC2_CONCAVE_R);
 
-    app->robotScene.stilo.thigh1Arc1Angle = clampToSafeAngleRange(app->robotScene.stilo.thigh1Arc1Angle, range1, THIGH_ARC_ANGLE_MARGIN_DEG);
-    app->robotScene.stilo.thigh1Arc2Angle = clampToSafeAngleRange(app->robotScene.stilo.thigh1Arc2Angle, range2, THIGH_ARC_ANGLE_MARGIN_DEG);
+    applyArcIntent(&app->robotScene.stilo.thigh1Arc1Angle, &app->robotScene.stilo.thigh1Arc1Intent, range1, THIGH_ARC_ANGLE_MARGIN_DEG);
+    applyArcIntent(&app->robotScene.stilo.thigh1Arc2Angle, &app->robotScene.stilo.thigh1Arc2Intent, range2, THIGH_ARC_ANGLE_MARGIN_DEG);
 }
 
 // Same re-validation as adjustStiloThigh1Arcs above, for Stilo's SECOND leg
@@ -93,8 +106,8 @@ static void adjustStiloThigh2Arcs(AppState* app)
     SafeAngleRange range1 = filletSafeAngleRange(app->robotScene.stilo.hip2Circle, app->robotScene.stilo.hip2Radius, app->robotScene.stilo.feet2Circle, app->robotScene.stilo.feet2Radius, MAX_SEMNI_THIGH_ARC_R);
     SafeAngleRange range2 = filletSafeAngleRangeConcave(app->robotScene.stilo.hip2Circle, app->robotScene.stilo.hip2Radius, app->robotScene.stilo.feet2Circle, app->robotScene.stilo.feet2Radius, MAX_THIGH_ARC2_CONCAVE_R);
 
-    app->robotScene.stilo.thigh2Arc1Angle = clampToSafeAngleRange(app->robotScene.stilo.thigh2Arc1Angle, range1, THIGH_ARC_ANGLE_MARGIN_DEG);
-    app->robotScene.stilo.thigh2Arc2Angle = clampToSafeAngleRange(app->robotScene.stilo.thigh2Arc2Angle, range2, THIGH_ARC_ANGLE_MARGIN_DEG);
+    applyArcIntent(&app->robotScene.stilo.thigh2Arc1Angle, &app->robotScene.stilo.thigh2Arc1Intent, range1, THIGH_ARC_ANGLE_MARGIN_DEG);
+    applyArcIntent(&app->robotScene.stilo.thigh2Arc2Angle, &app->robotScene.stilo.thigh2Arc2Intent, range2, THIGH_ARC_ANGLE_MARGIN_DEG);
 }
 
 // Axis-aligned bounding box (in whichever robot's own RAW local, pre-
@@ -1607,6 +1620,19 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 BOOL rockyLegHidden = app->robotScene.rocky.legHidden;
                 BOOL rockyBodyHidden = app->robotScene.rocky.bodyHidden;
 
+                // Hover is frozen while any Rocky handle is being dragged: the
+                // hover hit-tests keep running against the moving geometry
+                // (hitTestRockyEdge hits the whole edge LINE), so dragging the
+                // foot across the body's left edge used to light up "Body
+                // Width 2" mid-drag. The flags/label below are computed as
+                // usual but put back to their pre-drag values afterwards.
+                BOOL rockyHoverFrozen = app->draggingRockyBody || app->draggingRockyEdge != ROCKY_EDGE_NONE ||
+                                        app->draggingRockyKnee || app->draggingRockyFoot || app->draggingRockyMassCenter ||
+                                        app->draggingRockyShin1 || app->draggingRockyShin2;
+                int keepHoverMass = app->hoverRockyMassCenter, keepHoverBody = app->hoverRockyBody, keepHoverEdge = app->hoverRockyEdge;
+                int keepHoverKnee = app->hoverRockyKnee, keepHoverFoot = app->hoverRockyFoot;
+                int keepHoverShin1 = app->hoverRockyShin1, keepHoverShin2 = app->hoverRockyShin2;
+
                 app->hoverRockyMassCenter = rockyMassWinsNow;
                 app->hoverRockyBody = !rockyBodyHidden && !app->hoverRockyMassCenter && isNear(app->mouseGL, rockyCenter, HIP_HANDLE_RADIUS);
                 app->hoverRockyEdge = (rockyBodyHidden || app->hoverRockyMassCenter || app->hoverRockyBody || !rockyEdgeWinsNow) ? ROCKY_EDGE_NONE : rockyEdgeHitNow;
@@ -1643,7 +1669,14 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     rockyHoverLabel = L"Shin Arc 1";
                 else if (hoverRockyShin2Now)
                     rockyHoverLabel = L"Shin Arc 2";
-                SetWindowText(app->ui.hHoverLabel, rockyHoverLabel);
+                if (rockyHoverFrozen)
+                {
+                    app->hoverRockyMassCenter = keepHoverMass; app->hoverRockyBody = keepHoverBody; app->hoverRockyEdge = keepHoverEdge;
+                    app->hoverRockyKnee = keepHoverKnee; app->hoverRockyFoot = keepHoverFoot;
+                    app->hoverRockyShin1 = keepHoverShin1; app->hoverRockyShin2 = keepHoverShin2;
+                }
+                else
+                    SetWindowText(app->ui.hHoverLabel, rockyHoverLabel);
 
                 // View Segments hover -- same idea as Semni's own version
                 // further down (computeRockyArcPoints' trimmed fillet
@@ -1908,6 +1941,7 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     }
 
                     app->robotScene.rocky.shinArc1Angle = range.centerDeg + delta;
+                    app->robotScene.rocky.shinArc1Intent.valid = 0;   // user-set angle becomes the new intent (see applyArcIntent)
                 }
                 else if (app->draggingRockyShin2)
                 {
@@ -1935,6 +1969,7 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     if (delta < -maxDelta) delta = -maxDelta;
 
                     app->robotScene.rocky.shinArc2Angle = range.centerDeg + delta;
+                    app->robotScene.rocky.shinArc2Intent.valid = 0;   // user-set angle becomes the new intent (see applyArcIntent)
                 }
                 else if (app->draggingRockyEdge == ROCKY_EDGE_LEFT || app->draggingRockyEdge == ROCKY_EDGE_RIGHT)
                 {
@@ -2337,6 +2372,7 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     }
 
                     app->robotScene.stilo.thigh1Arc1Angle = range.centerDeg + delta;
+                    app->robotScene.stilo.thigh1Arc1Intent.valid = 0;   // user-set angle becomes the new intent (see applyArcIntent)
                 }
 
                 if (app->draggingStiloThigh1Arc2)
@@ -2358,6 +2394,7 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     if (delta < -maxDelta) delta = -maxDelta;
 
                     app->robotScene.stilo.thigh1Arc2Angle = range.centerDeg + delta;
+                    app->robotScene.stilo.thigh1Arc2Intent.valid = 0;   // user-set angle becomes the new intent (see applyArcIntent)
                 }
 
                 // ---- leg 2 drag updates -- same construction as leg 1's
@@ -2425,6 +2462,7 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     }
 
                     app->robotScene.stilo.thigh2Arc1Angle = range.centerDeg + delta;
+                    app->robotScene.stilo.thigh2Arc1Intent.valid = 0;   // user-set angle becomes the new intent (see applyArcIntent)
                 }
 
                 if (app->draggingStiloThigh2Arc2)
@@ -2446,6 +2484,7 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                     if (delta < -maxDelta) delta = -maxDelta;
 
                     app->robotScene.stilo.thigh2Arc2Angle = range.centerDeg + delta;
+                    app->robotScene.stilo.thigh2Arc2Intent.valid = 0;   // user-set angle becomes the new intent (see applyArcIntent)
                 }
 
                 break;
@@ -2801,7 +2840,9 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 if (delta < -maxDelta) delta = -maxDelta;
 
                 app->robotScene.robot.seamArc1Angle = range.centerDeg + delta;
+                app->robotScene.robot.seamArc1Intent.valid = 0;   // user-set angle becomes the new intent (see applyArcIntent)
                 app->robotScene.robot.seamArc2Angle = range.centerDeg - delta;
+                app->robotScene.robot.seamArc2Intent.valid = 0;   // user-set angle becomes the new intent (see applyArcIntent)
             }
 
             if (app->draggingSeamArc2)
@@ -2823,7 +2864,9 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 if (delta > maxDelta) delta = maxDelta;
 
                 app->robotScene.robot.seamArc2Angle = range.centerDeg + delta;
+                app->robotScene.robot.seamArc2Intent.valid = 0;   // user-set angle becomes the new intent (see applyArcIntent)
                 app->robotScene.robot.seamArc1Angle = range.centerDeg - delta;
+                app->robotScene.robot.seamArc1Intent.valid = 0;   // user-set angle becomes the new intent (see applyArcIntent)
             }
 
             // dragging the hip carries the whole leg along as one rigid
@@ -2965,6 +3008,7 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 }
 
                 app->robotScene.robot.thighArc1Angle = range.centerDeg + delta;
+                app->robotScene.robot.thighArc1Intent.valid = 0;   // user-set angle becomes the new intent (see applyArcIntent)
             }
 
             // thighArc2Angle drags the same incremental, perpendicular-
@@ -2994,6 +3038,7 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 if (delta < -maxDelta) delta = -maxDelta;
 
                 app->robotScene.robot.thighArc2Angle = range.centerDeg + delta;
+                app->robotScene.robot.thighArc2Intent.valid = 0;   // user-set angle becomes the new intent (see applyArcIntent)
             }
 
             // the shin sits in a frame additionally rotated by kneeAngle
@@ -3071,6 +3116,7 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 }
 
                 app->robotScene.robot.shinArc1Angle = range.centerDeg + delta;
+                app->robotScene.robot.shinArc1Intent.valid = 0;   // user-set angle becomes the new intent (see applyArcIntent)
             }
 
             // shinArc2Angle drags the same incremental, perpendicular-
@@ -3099,6 +3145,7 @@ LRESULT handleInput(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, AppState*
                 if (delta < -maxDelta) delta = -maxDelta;
 
                 app->robotScene.robot.shinArc2Angle = range.centerDeg + delta;
+                app->robotScene.robot.shinArc2Intent.valid = 0;   // user-set angle becomes the new intent (see applyArcIntent)
             }
         }
         break;

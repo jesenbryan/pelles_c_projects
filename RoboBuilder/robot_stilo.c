@@ -66,6 +66,7 @@ void mirrorStiloLeg(Stilo* s)
 
     s->thigh1Arc1Angle = newThigh1Arc1Angle;
     s->thigh1Arc2Angle = newThigh1Arc2Angle;
+    CLEAR_STILO_LEG1_ARC_INTENTS(s);   // angles rewritten above: re-adopt them as the intent
 }
 
 // Same construction as mirrorStiloLeg above, for Stilo's SECOND leg (its
@@ -116,6 +117,7 @@ void mirrorStiloLeg2(Stilo* s)
 
     s->thigh2Arc1Angle = newThigh2Arc1Angle;
     s->thigh2Arc2Angle = newThigh2Arc2Angle;
+    CLEAR_STILO_LEG2_ARC_INTENTS(s);   // angles rewritten above: re-adopt them as the intent
 }
 
 void printStiloAsInit(Stilo s)

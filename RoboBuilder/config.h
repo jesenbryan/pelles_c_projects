@@ -1159,6 +1159,13 @@
 // this; nothing else in the simulation tests leg against body.
 #define SIMULATION_LEG_BODY_COLLISION 0
 
+// 1 = canvas.c prints "[BSWING]" lines (Simulation log must be on) that say
+// WHICH check rejects each Probe 2 body-swing step, why Probe 2's step size
+// shrinks, and what the final seat pass looks at -- added to find out why a
+// Rocky lying on knee + foot stops swinging its rectangle a few pixels above
+// the floor. Pure logging, changes no behaviour. Set to 0 to compile it out.
+#define SIMULATION_BODYSWING_DIAG 1
+
 // Simulation mode: plain Left/Right (no Shift) rotates the WHOLE robot
 // (Semni.angle) -- see canvas.c's WM_KEYDOWN. Same value (and Left =
 // positive / Right = negative sign convention) as Design > Robot mode's

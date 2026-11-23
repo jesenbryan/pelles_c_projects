@@ -3512,12 +3512,93 @@ static PointF settleBodyCentroid(void)
     return bodyC;
 }
 
+// Environment test for a body-swing candidate. applyBodySwing rotates the
+// body about the joint and takes the same angle off the joint, so the leg
+// is geometrically unchanged. For Rocky only the body is therefore tested
+// (leg temporarily hidden): a foot/knee lying exactly on the floor
+// (clearance ~ -1e-7 from float round-off) otherwise counts as a collision
+// on every step and stops the swing with the rectangle still in the air.
+static BOOL bodySwingCollidesWithEnvironment(void)
+{
+    if (app.robotScene.activeKind != ROBOT_KIND_ROCKY)
+        return robotCollidesWithEnvironment();
+    BOOL savedLegHidden = app.robotScene.rocky.legHidden;
+    app.robotScene.rocky.legHidden = TRUE;
+    BOOL c = robotCollidesWithEnvironment();
+    app.robotScene.rocky.legHidden = savedLegHidden;
+    return c;
+}
+
 static void applyBodySwing(int j, float delta)
 {
     PointF pivot = settleJointPivotWorld(j);
     rotateActiveBodyAroundPivot(pivot, delta);
     *settleJointPtr(j) -= delta;
 }
+
+#if SIMULATION_BODYSWING_DIAG
+// ---- [BSWING] diagnostics (see SIMULATION_BODYSWING_DIAG in config.h) ----
+// Only logging: nothing here changes a decision. gBodySwingDiag is TRUE only
+// while advanceRockySettle itself measures a body swing, so the polling calls
+// from passiveJointSwingWouldMove stay silent. The helpers deliberately avoid
+// settleToppleContactPoints (it updates the sticky pivot-category memory).
+static BOOL gBodySwingDiag = FALSE;
+
+static const char* diagKindName(int kind)
+{
+    switch (kind)
+    {
+        case ROCKY_LEG_CONTACT_KNEE: return "KNEE";
+        case ROCKY_LEG_CONTACT_FOOT: return "FOOT";
+        case ROCKY_LEG_CONTACT_ARC:  return "ARC";
+        default:                     return "BODY_CORNER";
+    }
+}
+
+// Clearance (robot units) of Rocky's 4 rectangle corners above the
+// environment, same formula rockyToppleContactPoints uses. -1 for non-Rocky.
+static void diagRockyCornerClearances(float out[4])
+{
+    for (int i = 0; i < 4; i++) out[i] = -1.0f;
+    if (app.robotScene.activeKind != ROBOT_KIND_ROCKY)
+        return;
+    RockyEdgeSegment rectEdges[NUM_ROCKY_RECT_SEGMENTS];
+    computeRockyRectSegments(app.robotScene.rocky, rectEdges);
+    float combinedRadius = simEnvLineHalfWidthWorld();
+    float envPerRobot = robotLengthToEnvWorld(1.0f);
+    for (int e = 0; e < NUM_ROCKY_RECT_SEGMENTS && e < 4; e++)
+    {
+        float ecx, ecy;
+        robotPointToEnvWorld(rectEdges[e].start.x, rectEdges[e].start.y, &ecx, &ecy);
+        float c = nearestEnvDistance(ecx, ecy) - combinedRadius;
+        out[e] = (envPerRobot > 0.0f) ? c / envPerRobot : c;
+    }
+}
+
+// Closest two LEG contacts (Rocky only), clearances in robot units.
+static void diagRockyLegClearances(int* k1, float* c1, int* k2, float* c2)
+{
+    *k1 = *k2 = -1; *c1 = *c2 = -1.0f;
+    if (app.robotScene.activeKind != ROBOT_KIND_ROCKY)
+        return;
+    RockyLegContact a, b;
+    rockyLegContactPoints(&app.robotScene.rocky, &a, &b);
+    float envPerRobot = robotLengthToEnvWorld(1.0f);
+    float inv = (envPerRobot > 0.0f) ? 1.0f / envPerRobot : 1.0f;
+    *k1 = (int)a.kind; *c1 = a.clearance * inv;
+    *k2 = (int)b.kind; *c2 = b.clearance * inv;
+}
+
+static void diagLogPoseState(const char* tag)
+{
+    float corner[4]; int k1, k2; float c1, c2;
+    diagRockyCornerClearances(corner);
+    diagRockyLegClearances(&k1, &c1, &k2, &c2);
+    SIM_LOG("[BSWING] %s: bodyAngle=%.3f kneeAngle=%.3f | leg contacts %s clr=%.6f, %s clr=%.6f | rect corners clr(robot units) = %.6f %.6f %.6f %.6f\n",
+            tag, app.robotScene.rocky.angle, app.robotScene.rocky.kneeAngle,
+            diagKindName(k1), c1, diagKindName(k2), c2, corner[0], corner[1], corner[2], corner[3]);
+}
+#endif
 
 // Tries a body swing of +/-step about joint j and reports, per direction,
 // how far the body side's centroid goes down (0 if that direction isn't a
@@ -3535,8 +3616,41 @@ static void measureBodySwing(int j, float step, const LegSelfSnapshot* snap, flo
     for (int dir = -1; dir <= 1; dir += 2, di++)
     {
         applyBodySwing(j, dir * step);
-        if (!legEntersBody(snap) && !robotCollidesWithEnvironment())
+#if SIMULATION_BODYSWING_DIAG
+        {
+            // Evaluate every check (none has side effects) so each can be
+            // reported, then decide exactly as the plain version below does.
+            BOOL diagEnters = legEntersBody(snap);
+            BOOL diagCollides = bodySwingCollidesWithEnvironment();
+            float diagDrop = baseBodyY - settleBodyCentroid().y;
+            if (!diagEnters && !diagCollides)
+                outDropAtDir[di] = diagDrop;
+            if (gBodySwingDiag && (diagEnters || diagCollides))   // plain no-gain steps are covered by the per-tick summary in advanceRockySettle
+            {
+                // Which part collides: re-test with the leg (then the body) hidden.
+                int collBodyOnly = -1, collLegOnly = -1;
+                if (diagCollides && app.robotScene.activeKind == ROBOT_KIND_ROCKY)
+                {
+                    BOOL savedSuppressDiag = gSuppressGravityDebug;
+                    gSuppressGravityDebug = TRUE;
+                    BOOL lh = app.robotScene.rocky.legHidden, bh = app.robotScene.rocky.bodyHidden;
+                    app.robotScene.rocky.legHidden = TRUE;  collBodyOnly = robotCollidesWithEnvironment();
+                    app.robotScene.rocky.legHidden = lh;
+                    app.robotScene.rocky.bodyHidden = TRUE; collLegOnly = robotCollidesWithEnvironment();
+                    app.robotScene.rocky.bodyHidden = bh;
+                    gSuppressGravityDebug = savedSuppressDiag;
+                }
+                char tag[512];
+                snprintf(tag, sizeof(tag), "%s body-swing step %+.5f deg (j=%d): legEntersBody=%d [LEG_BODY_COLLISION=%d] collidesEnv=%d (rect-only=%d leg-only=%d, -1 = not tested) bodyCentroidDrop=%.7f (needs > %.7f)",
+                         "BLOCKED", dir * step, j, (int)diagEnters, (int)SIMULATION_LEG_BODY_COLLISION, (int)diagCollides, collBodyOnly, collLegOnly,
+                         diagDrop, (double)SIMULATION_LEG_SETTLE_MIN_COM_DROP);
+                diagLogPoseState(tag);
+            }
+        }
+#else
+        if (!legEntersBody(snap) && !bodySwingCollidesWithEnvironment())
             outDropAtDir[di] = baseBodyY - settleBodyCentroid().y;
+#endif
         restoreSettlePose(&bk);
     }
 }
@@ -3683,6 +3797,17 @@ static void seatRockyDanglingPoint(void)
 
     float envPerRobot = robotLengthToEnvWorld(1.0f);
     float gapRobot = (envPerRobot > 0.0f) ? dangling.clearance / envPerRobot : 0.0f;
+
+#if SIMULATION_BODYSWING_DIAG
+    {
+        float pivClr = (envPerRobot > 0.0f) ? pivotContact.clearance / envPerRobot : 0.0f;
+        char tag[256];
+        snprintf(tag, sizeof(tag), "SEAT PASS considers only pivot=%s (clr %.6f) and dangling=%s (clr %.6f); skips if dangling clr <= 0, <= %.6f or > %.6f. (a rectangle corner is only 'dangling' if it is closer than the 2nd leg contact)",
+                 diagKindName((int)pivotContact.kind), pivClr, diagKindName((int)dangling.kind), gapRobot,
+                 0.5 * (double)SIMULATION_CONTACT_VISUAL_TOLERANCE, (double)SIMULATION_ROCKY_SEAT_MAX_GAP);
+        diagLogPoseState(tag);
+    }
+#endif
 
     // Skip when the gap is already small enough to register as a visible
     // contact (half of SIMULATION_CONTACT_VISUAL_TOLERANCE, for margin) --
@@ -4178,8 +4303,26 @@ static void advanceRockySettle(void)
         // together they just walked the hanging leg around the knee (the
         // visible joint wiggle).
         float bodySwingDropAtDir[2] = { 0.0f, 0.0f };
+#if SIMULATION_BODYSWING_DIAG
+        {
+            static int diagLastMeasured = -1;   // log the measured/not-measured switch only, not every tick
+            if (legRestingOnImmovableJoint)
+            {
+                diagLastMeasured = 1;
+                gBodySwingDiag = TRUE;
+                measureBodySwing(settleJoint, (*jointStep), &legSelfBase, bodySwingDropAtDir);
+                gBodySwingDiag = FALSE;
+            }
+            else if (diagLastMeasured != 0)
+            {
+                diagLastMeasured = 0;
+                diagLogPoseState("body swing NOT measured (leg not resting on knee/foot/arc: legRestingOnImmovableJoint=0)");
+            }
+        }
+#else
         if (legRestingOnImmovableJoint)
             measureBodySwing(settleJoint, (*jointStep), &legSelfBase, bodySwingDropAtDir);
+#endif
         float bestBodySwingDrop = 0.0f;
         int bestBodySwingDir = 0;
         for (int d = 0; d < 2; d++)
@@ -4188,6 +4331,17 @@ static void advanceRockySettle(void)
                 bestBodySwingDrop = bodySwingDropAtDir[d];
                 bestBodySwingDir = (d == 0) ? -1 : 1;
             }
+
+#if SIMULATION_BODYSWING_DIAG
+        if (legRestingOnImmovableJoint && bestBodySwingDrop <= SIMULATION_LEG_SETTLE_MIN_COM_DROP)
+        {
+            char tag[160];
+            snprintf(tag, sizeof(tag), "no body swing committable this tick: drops %.7f/%.7f, jointStep=%.5f (min %.5f), bodyStep=%.5f, legComDrops %.7f/%.7f bestLegComDrop=%.7f",
+                     bodySwingDropAtDir[0], bodySwingDropAtDir[1], (*jointStep), (double)SIMULATION_LEG_SETTLE_MIN_STEP_DEG,
+                     rockyBodySettleStep, legComDropAtDir[0], legComDropAtDir[1], bestLegComDrop);
+            diagLogPoseState(tag);
+        }
+#endif
 
         // Same idea for "body sinks one way, leg falls the other way".
         BOOL crossCriterionStraddle =
@@ -4207,6 +4361,9 @@ static void advanceRockySettle(void)
             SIM_LOG("[SETTLE] %s=%.2f both directions improve but by different criteria (drop=%.5f/%.5f gain=%.5f/%.5f legComDrop=%.5f/%.5f) -- shrinking instead of picking one, to avoid rocking back and forth\n",
                    settleJointName(settleJoint), (*joint), dropAtDir[0], dropAtDir[1], gainAtDir[0], gainAtDir[1], legComDropAtDir[0], legComDropAtDir[1]);
             (*jointStep) *= 0.5f;
+#if SIMULATION_BODYSWING_DIAG
+            SIM_LOG("[BSWING] Probe 2 %s: cross-criterion straddle -> step halved to %.5f deg\n", settleJointName(settleJoint), (*jointStep));
+#endif
         }
         else if (bestDrop > SIMULATION_LEG_SETTLE_MIN_DROP)
         {
@@ -4470,6 +4627,11 @@ static void advanceRockySettle(void)
             {
                 (*joint) = baseKneeAngle;
                 (*jointStep) *= 0.5f; // nothing here, and nothing further out either -- get finer before giving up
+#if SIMULATION_BODYSWING_DIAG
+                SIM_LOG("[BSWING] Probe 2 %s: nothing found at any size (incl. scout) -> step halved to %.5f deg%s\n",
+                        settleJointName(settleJoint), (*jointStep),
+                        ((*jointStep) < SIMULATION_LEG_SETTLE_MIN_STEP_DEG) ? "  ** below SIMULATION_LEG_SETTLE_MIN_STEP_DEG: Probe 2 is finished for this landing **" : "");
+#endif
             }
         }
     }
@@ -5354,6 +5516,14 @@ static void advanceRockySettle(void)
         // before calling this the rest pose -- see seatRockyDanglingPoint.
         perfLastSettleSanityMs = perfNowMs() - perfSanityStart;
 
+#if SIMULATION_BODYSWING_DIAG
+        {
+            char tag[160];
+            snprintf(tag, sizeof(tag), "about to latch converged: jointStep0=%.5f bodyStep=%.5f (min %.5f)",
+                     *settleJointStepPtr(0), rockyBodySettleStep, (double)SIMULATION_LEG_SETTLE_MIN_STEP_DEG);
+            diagLogPoseState(tag);
+        }
+#endif
         double perfSeatStart = perfNowMs();
         seatRockyDanglingPoint();
         perfLastSettleSeatMs = perfNowMs() - perfSeatStart;

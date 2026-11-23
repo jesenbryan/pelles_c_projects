@@ -26,6 +26,7 @@ void initHomePosition(AppState* app)
 	app->robotScene.robot.footRadius = 0.050000f;
 	app->robotScene.robot.shinArc1Angle = 169.821564f;
 	app->robotScene.robot.shinArc2Angle = -22.810974f;
+	CLEAR_SEMNI_ARC_INTENTS(&app->robotScene.robot);   // angles just set above: they are the new arc intent
 }
 
 void initStandingPosition(AppState* app)
@@ -53,6 +54,7 @@ void initStandingPosition(AppState* app)
 	app->robotScene.robot.footRadius = 0.050000f;
 	app->robotScene.robot.shinArc1Angle = 169.821564f;
 	app->robotScene.robot.shinArc2Angle = -22.810974f;
+	CLEAR_SEMNI_ARC_INTENTS(&app->robotScene.robot);   // angles just set above: they are the new arc intent
 }
 
 // ---- Rocky ----
@@ -82,6 +84,7 @@ void initRockyStandingPosition(AppState* app)
 	// knee/foot radii, so the same angles already look right.
 	app->robotScene.rocky.shinArc1Angle = 169.821564f;
 	app->robotScene.rocky.shinArc2Angle = -22.810974f;
+	CLEAR_ROCKY_ARC_INTENTS(&app->robotScene.rocky);   // angles just set above: they are the new arc intent
 }
 
 void initRockyHomePosition(AppState* app)
@@ -102,6 +105,7 @@ void initRockyHomePosition(AppState* app)
 	app->robotScene.rocky.footRadius = 0.050000f;
 	app->robotScene.rocky.shinArc1Angle = 169.821564f;
 	app->robotScene.rocky.shinArc2Angle = -22.810974f;
+	CLEAR_ROCKY_ARC_INTENTS(&app->robotScene.rocky);   // angles just set above: they are the new arc intent
 }
 
 // ---- Stilo ----
@@ -153,6 +157,7 @@ void initStiloStandingPosition(AppState* app)
 	app->robotScene.stilo.feet2Radius = 0.080000f;
 	app->robotScene.stilo.thigh2Arc1Angle = 161.913239f;
 	app->robotScene.stilo.thigh2Arc2Angle = -19.956024f;
+	CLEAR_STILO_ARC_INTENTS(&app->robotScene.stilo);   // angles just set above: they are the new arc intent
 }
 
 // Same torso as initHomePosition (Semni's own Home pose) above, with the
@@ -191,6 +196,7 @@ void initStiloHomePosition(AppState* app)
 	app->robotScene.stilo.feet2Radius = 0.080000f;
 	app->robotScene.stilo.thigh2Arc1Angle = 161.913239f;
 	app->robotScene.stilo.thigh2Arc2Angle = -19.956024f;
+	CLEAR_STILO_ARC_INTENTS(&app->robotScene.stilo);   // angles just set above: they are the new arc intent
 }
 
 void initAppState(AppState* app)

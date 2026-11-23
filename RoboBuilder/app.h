@@ -69,6 +69,23 @@
 
 // ---- robot model (the "Semni") ----
 
+// Fillet arc attach angles are CLAMPED to a safe range that depends on the
+// circles' current size/distance (input.c's adjust*Arcs). The clamped value
+// is what every consumer reads (drawing, hit-testing, export, poses,
+// simulation collision) and stays in the plain xxxArcNAngle field. An
+// ArcIntent remembers the angle the user actually asked for, so when the
+// geometry comes back (leg stretched out again) the arc returns to its
+// original shape instead of staying stuck at the value it was squeezed to.
+//   want  = intended (unclamped) angle
+//   eff   = the clamped value adjust*Arcs last wrote into the angle field
+//   valid = 0 -> the angle field was just set by someone else (drag, pose
+//           load, init, mirror): adopt it as the new intent
+typedef struct {
+    float want;
+    float eff;
+    int valid;
+} ArcIntent;
+
 typedef struct {
     float headX, buttX;
     float y;
@@ -174,6 +191,11 @@ typedef struct {
     float bodyWeight;
     float legWeight;
     float actualWeight;
+
+    // see ArcIntent (above) -- one per fillet arc angle that adjust*Arcs clamps
+    ArcIntent seamArc1Intent, seamArc2Intent;
+    ArcIntent thighArc1Intent, thighArc2Intent;
+    ArcIntent shinArc1Intent, shinArc2Intent;
 } Semni;
 
 // ---- robot model ("Rocky") ----
@@ -243,6 +265,9 @@ typedef struct {
     // same for the rectangular torso (computeRockyRectSegments) alone.
     BOOL legHidden;
     BOOL bodyHidden;
+
+    // see ArcIntent (above)
+    ArcIntent shinArc1Intent, shinArc2Intent;
 } Rocky;
 
 // ---- robot model ("Stilo") ----
@@ -310,7 +335,22 @@ typedef struct {
     float bodyWeight;
     float legWeight;
     float actualWeight;
+
+    // see ArcIntent (above) -- Stilo's seam arcs are never auto-clamped, so only the thigh arcs have one
+    ArcIntent thigh1Arc1Intent, thigh1Arc2Intent;
+    ArcIntent thigh2Arc1Intent, thigh2Arc2Intent;
 } Stilo;
+
+// Mark intents as "re-adopt the angle field next time" -- use after ANY code
+// that writes the angle fields directly (drag, pose load/init, mirror).
+// p is a pointer to the robot struct.
+#define CLEAR_SEMNI_SEAM_ARC_INTENTS(p) do { (p)->seamArc1Intent.valid = 0; (p)->seamArc2Intent.valid = 0; } while (0)
+#define CLEAR_SEMNI_LEG_ARC_INTENTS(p)  do { (p)->thighArc1Intent.valid = 0; (p)->thighArc2Intent.valid = 0; (p)->shinArc1Intent.valid = 0; (p)->shinArc2Intent.valid = 0; } while (0)
+#define CLEAR_SEMNI_ARC_INTENTS(p)      do { CLEAR_SEMNI_SEAM_ARC_INTENTS(p); CLEAR_SEMNI_LEG_ARC_INTENTS(p); } while (0)
+#define CLEAR_ROCKY_ARC_INTENTS(p)      do { (p)->shinArc1Intent.valid = 0; (p)->shinArc2Intent.valid = 0; } while (0)
+#define CLEAR_STILO_LEG1_ARC_INTENTS(p) do { (p)->thigh1Arc1Intent.valid = 0; (p)->thigh1Arc2Intent.valid = 0; } while (0)
+#define CLEAR_STILO_LEG2_ARC_INTENTS(p) do { (p)->thigh2Arc1Intent.valid = 0; (p)->thigh2Arc2Intent.valid = 0; } while (0)
+#define CLEAR_STILO_ARC_INTENTS(p)      do { CLEAR_STILO_LEG1_ARC_INTENTS(p); CLEAR_STILO_LEG2_ARC_INTENTS(p); } while (0)
 
 // Which of the three robot models the Robot editor (input.c) is currently
 // showing/editing -- picked via the hRobotSelector dropdown in the

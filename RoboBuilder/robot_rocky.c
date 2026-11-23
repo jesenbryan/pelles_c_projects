@@ -34,6 +34,7 @@ void mirrorRockyLeg(Rocky* r)
 
     r->shinArc1Angle = mirrorArcAngle(r->shinArc1Angle);
     r->shinArc2Angle = mirrorArcAngle(r->shinArc2Angle);
+    CLEAR_ROCKY_ARC_INTENTS(r);   // angles rewritten above: re-adopt them as the intent
 }
 
 void printRockyAsInit(Rocky r)

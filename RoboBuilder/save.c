@@ -316,6 +316,7 @@ int loadRobotPoseFromFile(const char* filename, Semni* out)
     }
 
     fclose(f);
+    CLEAR_SEMNI_ARC_INTENTS(out);   // angles were just overwritten from the file: they are the new intent
     return 1;
 }
 
@@ -355,6 +356,7 @@ int loadRockyPoseFromFile(const char* filename, Rocky* out)
     }
 
     fclose(f);
+    CLEAR_ROCKY_ARC_INTENTS(out);   // see loadRobotPoseFromFile
     return 1;
 }
 
@@ -445,6 +447,7 @@ int loadStiloPoseFromFile(const char* filename, Stilo* out)
     }
 
     fclose(f);
+    CLEAR_STILO_ARC_INTENTS(out);   // see loadRobotPoseFromFile
     return 1;
 }
 

@@ -115,6 +115,7 @@ void mirrorHipLeg(Semni* b)
     b->thighArc2Angle = newThighArc2Angle;
     b->shinArc1Angle  = newShinArc1Angle;
     b->shinArc2Angle  = newShinArc2Angle;
+    CLEAR_SEMNI_LEG_ARC_INTENTS(b);   // leg arc angles rewritten above: re-adopt them as the intent
 }
 
 // All of headX/buttX/y, innerCircle, kneeCircle, and footCircle live in
