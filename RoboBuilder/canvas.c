@@ -5589,6 +5589,11 @@ static float activeRobotAngleDegrees(void)
     return app.robotScene.robot.angle;
 }
 
+// Mirror of applyGravityStep's own local `wasLanded`, readable by the
+// display-only settle smoothing (settleDisplayBegin, next to
+// renderCombinedFrame). Written in exactly one place, never read by physics.
+static BOOL simLandedForDisplay = FALSE;
+
 static BOOL applyGravityStep(HWND hWnd, float step)
 {
     // wasLanded persists across calls (it's a local static): TRUE means the
@@ -5973,6 +5978,7 @@ static BOOL applyGravityStep(HWND hWnd, float step)
     }
 
     wasLanded = landed;
+    simLandedForDisplay = landed; // see settleDisplayBegin (display-only settle smoothing)
     InvalidateRect(hWnd, NULL, FALSE);
     return landed;
 }
@@ -6271,6 +6277,15 @@ static void advanceAutoGravity(HWND hWnd)
 
     if (landedThisTick)
         autoGravityVelocity = 0.0f; // landed -- next fall starts from rest
+
+#if SIMULATION_SETTLE_FRAME_DIAG
+    // One line per gravity tick (see config.h): solver pose + probe step sizes,
+    // to measure the per-frame settle motion from the log.
+    if (settleSupportedKind())
+        SIM_LOG("[FRAME] t=%lu landed=%d conv=%d body=%.4f joint=%.4f bodyStep=%.4f jointStep=%.4f\n",
+                (unsigned long)now, (int)landedThisTick, (int)rockySettleConverged,
+                *settleBodyAnglePtr(), *settleJointPtr(0), rockyBodySettleStep, rockyKneeSettleStep);
+#endif
 
     // Keep the passive joint swing (Probe 2) watching for as long as Auto
     // Gravity is on. Once a settle converges, advanceRockySettle stops
@@ -7955,7 +7970,235 @@ void canvasRenderFrame(float dimAmount)
 // whole point is seeing the robot posed clearly within its environment,
 // and dragging it into a starting position (WM_LBUTTONDOWN/WM_MOUSEMOVE
 // above). So both subsystems draw at full opacity together here instead.
+// ---- Display-only settle smoothing (config.h SIMULATION_SETTLE_DISPLAY_SMOOTH) ----
+//
+// advanceRockySettle is a step search, not dynamics: its pose moves in
+// uneven per-tick jumps (fast-forward batches of 0.01-1 deg, halving and
+// regrowing step sizes, small back-and-forth while Probe 1 and Probe 2
+// trade moves, a reset to full step size when the Auto Gravity watch
+// re-arms the settle). The SOLVER pose stays exactly as it is; only the
+// pose that gets DRAWN follows it with a velocity- and acceleration-
+// limited tracker (ease-in/ease-out), so the robot moves at a steady,
+// capped angular speed and small reversals are absorbed instead of shown.
+//
+// How: renderCombinedFrame (the only draw entry, used by WM_PAINT and
+// main.c's loop) swaps the display pose into app.robotScene for the
+// duration of the draw and swaps the solver pose back right after. The
+// renderer only reads the robot, so physics, hit-tests, saving and the
+// [SETTLE] log never see the display pose. Once the solver stops moving the
+// display reaches it exactly (snap below DISPLAY_SNAP_DEG), so the drawn
+// rest pose is identical to the solver's and there is no drift/jitter at
+// rest. Body angle and each settle joint angle get their own tracker; the
+// translation fields (body/head/butt/y and the stored circle centres) are
+// interpolated by the body tracker's fraction, so the pivot contact stays
+// on the ground while the body rotates around it.
+// Snaps straight to the solver pose (no smoothing) whenever: the switch is
+// 0, not in Simulation, the robot is Stilo (no settle), the robot isn't
+// landed (free fall / Reset / drag), the user is dragging it, the kind
+// changed, or any angle would have to travel more than DISPLAY_SNAP_JUMP_DEG.
+#define SETTLE_DISPLAY_SNAP_DEG       0.002f
+#define SETTLE_DISPLAY_SNAP_JUMP_DEG  120.0f
+
+typedef struct {
+    float pos;   // displayed value (deg)
+    float vel;   // deg/s, signed
+    float goal;  // low-pass filtered solver value the tracker steers to
+} SettleDisplayAxis;
+
+static BOOL dispSmoothValid = FALSE;
+static RobotKind dispSmoothKind = ROBOT_KIND_SEMNI;
+static double dispSmoothLastMs = 0.0;
+static SettleDisplayAxis dispBody, dispJoint[2];
+static Rocky dispRocky;          // display pose (translation fields used)
+static Semni dispSemni;
+static Rocky savedSolverRocky;   // solver pose, restored after the draw
+static Semni savedSolverSemni;
+static BOOL dispSwapped = FALSE;
+
+static float* dispJointFieldRocky(Rocky* r, int j) { (void)j; return &r->kneeAngle; }
+static float* dispJointFieldSemni(Semni* s, int j) { return (j == 0) ? &s->kneeAngle : &s->hipAngle; }
+
+// One tracker step: move a.pos toward target with |vel| <= vmax and
+// |dvel/dt| <= amax, braking early enough (v <= sqrt(2*a*dist)) to stop on
+// the target. Returns the new displayed value.
+static float settleDisplayTrack(SettleDisplayAxis* a, float solverValue, float dt)
+{
+    // 1) low-pass the solver value (time constant SIMULATION_SETTLE_DISPLAY_LAG_S):
+    //    turns the step search's uneven per-tick increments into a steady
+    //    average speed, so a slow crawl doesn't become stop-and-go
+    float k = (SIMULATION_SETTLE_DISPLAY_LAG_S > 0.0f) ? (1.0f - expf(-dt / SIMULATION_SETTLE_DISPLAY_LAG_S)) : 1.0f;
+    a->goal += (solverValue - a->goal) * k;
+    if (fabsf(solverValue - a->goal) <= SETTLE_DISPLAY_SNAP_DEG)
+        a->goal = solverValue;
+    float target = a->goal;
+    // 2) speed/acceleration-limited tracker towards that goal
+    const float vmax = SIMULATION_SETTLE_DISPLAY_MAX_DEG_PER_S;
+    const float amax = SIMULATION_SETTLE_DISPLAY_ACCEL_DEG_PER_S2;
+    float e = target - a->pos;
+    float ae = fabsf(e);
+    if (ae <= SETTLE_DISPLAY_SNAP_DEG && fabsf(a->vel) <= amax * dt * 2.0f)
+    {
+        a->pos = target;
+        a->vel = 0.0f;
+        return a->pos;
+    }
+    float want = sqrtf(2.0f * amax * ae);
+    if (want > vmax) want = vmax;
+    if (e < 0.0f) want = -want;
+    float dv = want - a->vel;
+    float maxDv = amax * dt;
+    if (dv > maxDv) dv = maxDv;
+    if (dv < -maxDv) dv = -maxDv;
+    a->vel += dv;
+    float move = a->vel * dt;
+    // never step past the target in one frame (that would be a visible
+    // overshoot-and-return); land on it and keep only the braking speed
+    if ((e > 0.0f && move > e) || (e < 0.0f && move < e))
+    {
+        move = e;
+        a->vel = 0.0f;
+    }
+    a->pos += move;
+    return a->pos;
+}
+
+static float lerpf_disp(float a, float b, float t) { return a + (b - a) * t; }
+static PointF lerpPointDisp(PointF a, PointF b, float t) { PointF r; r.x = lerpf_disp(a.x, b.x, t); r.y = lerpf_disp(a.y, b.y, t); return r; }
+
+static void settleDisplaySnap(void)
+{
+    dispSmoothValid = TRUE;
+    dispSmoothKind = app.robotScene.activeKind;
+    dispRocky = app.robotScene.rocky;
+    dispSemni = app.robotScene.robot;
+    dispBody.pos = *settleBodyAnglePtr(); dispBody.vel = 0.0f; dispBody.goal = dispBody.pos;
+    for (int j = 0; j < 2; j++)
+    {
+        dispJoint[j].pos = (j < settleJointCount()) ? *settleJointPtr(j) : 0.0f;
+        dispJoint[j].vel = 0.0f;
+        dispJoint[j].goal = dispJoint[j].pos;
+    }
+}
+
+static void settleDisplayBegin(void)
+{
+    dispSwapped = FALSE;
+    double nowMs = perfNowMs();
+    float dt = (float)((nowMs - dispSmoothLastMs) * 0.001);
+    dispSmoothLastMs = nowMs;
+    if (dt < 0.0f) dt = 0.0f;
+    if (dt > 0.05f) dt = 0.05f; // a stalled frame doesn't turn into one big jump
+
+#if SIMULATION_SETTLE_DISPLAY_SMOOTH
+    BOOL smoothable = (appMode == APP_MODE_SIMULATION)
+                      && settleSupportedKind()
+                      && simLandedForDisplay
+                      && autoGravityActive
+                      && !app.draggingRobotSim;
+#else
+    BOOL smoothable = FALSE;
+#endif
+    if (!smoothable || !dispSmoothValid || dispSmoothKind != app.robotScene.activeKind)
+    {
+        settleDisplaySnap();
+        return;
+    }
+
+    // Big jumps (arrow-key rotations by the user are only 2 deg, so this
+    // only catches teleports) are shown immediately.
+    float bodyTarget = *settleBodyAnglePtr();
+    BOOL bigJump = fabsf(bodyTarget - dispBody.pos) > SETTLE_DISPLAY_SNAP_JUMP_DEG;
+    for (int j = 0; j < settleJointCount(); j++)
+        if (fabsf(*settleJointPtr(j) - dispJoint[j].pos) > SETTLE_DISPLAY_SNAP_JUMP_DEG) bigJump = TRUE;
+    if (bigJump)
+    {
+        settleDisplaySnap();
+        return;
+    }
+
+    // --- advance the trackers ---
+    float bodyOld = dispBody.pos;
+    float bodyNew = settleDisplayTrack(&dispBody, bodyTarget, dt);
+    float frac = 1.0f; // share of the remaining translation to cover this frame
+    float bodyGap = bodyTarget - bodyOld;
+    if (fabsf(bodyGap) > 1e-4f)
+    {
+        frac = (bodyNew - bodyOld) / bodyGap;
+        if (frac < 0.0f) frac = 0.0f;
+        if (frac > 1.0f) frac = 1.0f;
+    }
+    if (bodyNew == bodyTarget) frac = 1.0f;
+
+    float jointNew[2] = { 0.0f, 0.0f };
+    for (int j = 0; j < settleJointCount(); j++)
+        jointNew[j] = settleDisplayTrack(&dispJoint[j], *settleJointPtr(j), dt);
+
+    if (app.robotScene.activeKind == ROBOT_KIND_ROCKY)
+    {
+        Rocky* t = &app.robotScene.rocky;
+        Rocky d = *t; // every non-pose field (sizes, weights, flags) straight from the solver
+        d.bodyX = lerpf_disp(dispRocky.bodyX, t->bodyX, frac);
+        d.bodyY = lerpf_disp(dispRocky.bodyY, t->bodyY, frac);
+        d.kneeCircle = lerpPointDisp(dispRocky.kneeCircle, t->kneeCircle, frac);
+        d.footCircle = lerpPointDisp(dispRocky.footCircle, t->footCircle, frac);
+        d.angle = bodyNew;
+        *dispJointFieldRocky(&d, 0) = jointNew[0];
+        dispRocky = d;
+        savedSolverRocky = *t;
+        *t = d;
+    }
+    else
+    {
+        Semni* t = &app.robotScene.robot;
+        Semni d = *t;
+        d.headX = lerpf_disp(dispSemni.headX, t->headX, frac);
+        d.buttX = lerpf_disp(dispSemni.buttX, t->buttX, frac);
+        d.y     = lerpf_disp(dispSemni.y, t->y, frac);
+        d.innerCircle = lerpPointDisp(dispSemni.innerCircle, t->innerCircle, frac);
+        d.kneeCircle  = lerpPointDisp(dispSemni.kneeCircle, t->kneeCircle, frac);
+        d.footCircle  = lerpPointDisp(dispSemni.footCircle, t->footCircle, frac);
+        d.angle = bodyNew;
+        for (int j = 0; j < settleJointCount(); j++)
+            *dispJointFieldSemni(&d, j) = jointNew[j];
+        dispSemni = d;
+        savedSolverSemni = *t;
+        *t = d;
+    }
+    dispSwapped = TRUE;
+
+#if SIMULATION_SETTLE_FRAME_DIAG
+    {
+        static double lastDispLogMs = 0.0;
+        if (nowMs - lastDispLogMs >= 15.0) // ~one line per physics tick, not per 144 Hz frame
+        {
+            lastDispLogMs = nowMs;
+            SIM_LOG("[DISP] ms=%.1f solverBody=%.4f dispBody=%.4f vel=%.2f solverJoint=%.4f dispJoint=%.4f frac=%.3f\n",
+                    nowMs, bodyTarget, bodyNew, dispBody.vel,
+                    *(app.robotScene.activeKind == ROBOT_KIND_ROCKY ? &savedSolverRocky.kneeAngle : &savedSolverSemni.kneeAngle),
+                    jointNew[0], frac);
+        }
+    }
+#endif
+}
+
+static void settleDisplayEnd(void)
+{
+    if (!dispSwapped) return;
+    if (app.robotScene.activeKind == ROBOT_KIND_ROCKY) app.robotScene.rocky = savedSolverRocky;
+    else app.robotScene.robot = savedSolverSemni;
+    dispSwapped = FALSE;
+}
+
+static void renderCombinedFrameBody(void);
+
 void renderCombinedFrame(void)
+{
+    settleDisplayBegin();     // swaps the smoothed display pose in (no-op / snap when off)
+    renderCombinedFrameBody();
+    settleDisplayEnd();       // solver pose back before anything else runs
+}
+
+static void renderCombinedFrameBody(void)
 {
     glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -8965,6 +9208,12 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         return 0;
     }
     case WM_KEYDOWN:
+        // Display-only settle smoothing: a key in Simulation may move the
+        // robot directly (arrows, Q/E, ...) -- show that at once instead of
+        // easing into it. Shift+G and bare modifiers don't move it.
+        if (appMode == APP_MODE_SIMULATION && wParam != 'G'
+            && wParam != VK_SHIFT && wParam != VK_CONTROL && wParam != VK_MENU)
+            dispSmoothValid = FALSE;
         // Ctrl+Z = Undo last stroke (same as the Environment panel's Undo button).
         if (wParam == 'Z' && (GetKeyState(VK_CONTROL) & 0x8000)
             && appMode == APP_MODE_DESIGN && designLayer == LAYER_ENVIRONMENT)
@@ -10147,6 +10396,7 @@ LRESULT CALLBACK WndProcGL(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	            // having really happened.
 	            autoGravityVelocity = 0.0f;
 
+	            dispSmoothValid = FALSE; // display-only settle smoothing: show the reset pose at once
 	            SIM_LOG("[RESET] robot restored to its Simulation-start pose (kind=%d)\n", app.robotScene.activeKind);
 	        }
 

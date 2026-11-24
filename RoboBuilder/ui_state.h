@@ -64,7 +64,22 @@ extern BOOL simPhysicsLogEnabled;
 extern BOOL simFpsLogEnabled;
 
 #include <stdio.h>
+
+// SIM_LOG_TO_FILE (diagnostics, added 24.11. for the settle-smoothing work):
+// 1 = every SIM_LOG line is ALSO appended to sim_log.txt in the working
+// directory (the project folder), truncated once per app start, so a long
+// [SETTLE]/[FRAME] run can be read back in full instead of from the console
+// window. 0 = SIM_LOG is exactly the old printf-only macro.
+#ifndef SIM_LOG_TO_FILE
+#define SIM_LOG_TO_FILE 0
+#endif
+
+#if SIM_LOG_TO_FILE
+void simLogTee(const char* fmt, ...); // debug.c -- printf + append to sim_log.txt
+#define SIM_LOG(...)     do { if (appMode == APP_MODE_SIMULATION && simPhysicsLogEnabled) simLogTee(__VA_ARGS__); } while (0)
+#else
 #define SIM_LOG(...)     do { if (appMode == APP_MODE_SIMULATION && simPhysicsLogEnabled) printf(__VA_ARGS__); } while (0)
+#endif
 #define SIM_FPS_LOG(...) do { if (appMode == APP_MODE_SIMULATION && simFpsLogEnabled) printf(__VA_ARGS__); } while (0)
 
 // Sub-mode of APP_MODE_DESIGN, picked from the "Design Mode" submenu

@@ -1166,6 +1166,29 @@
 // the floor. Pure logging, changes no behaviour. Set to 0 to compile it out.
 #define SIMULATION_BODYSWING_DIAG 1
 
+// Simulation diagnostics (24.11.): one [FRAME] line per gravity tick with
+// the settle solver's pose and probe step sizes (needs View > Simulation
+// Log). Pure logging, changes no behaviour. Set to 0 to compile it out.
+#define SIMULATION_SETTLE_FRAME_DIAG 0
+
+// Simulation: display-only smoothing of the settle motion (24.11.) -- see
+// canvas.c settleDisplayBegin. The settle SOLVER (advanceRockySettle) is
+// unchanged; only the drawn pose follows it at a capped angular speed with
+// eased start/stop, so the uneven per-tick jumps and small back-and-forth of
+// the step search aren't visible. The final drawn rest pose is exactly the
+// solver's. 1 = on, 0 = draw the solver pose directly (old behaviour).
+#define SIMULATION_SETTLE_DISPLAY_SMOOTH 1
+// Max drawn angular speed (deg per real second) and acceleration/braking
+// (deg/s^2) for the body angle and each settle joint (Rocky knee, Semni
+// knee + hip). Not scaled by Slow Motion: the settle itself advances once
+// per gravity tick, independent of Slow Motion.
+#define SIMULATION_SETTLE_DISPLAY_MAX_DEG_PER_S   30.0f
+#define SIMULATION_SETTLE_DISPLAY_ACCEL_DEG_PER_S2 90.0f
+// Low-pass time constant (s) applied to the solver pose before the tracker
+// above follows it -- evens out the per-tick unevenness of the step search
+// (fast-forward batches, small reversals). 0 = no low-pass.
+#define SIMULATION_SETTLE_DISPLAY_LAG_S 0.15f
+
 // Simulation mode: plain Left/Right (no Shift) rotates the WHOLE robot
 // (Semni.angle) -- see canvas.c's WM_KEYDOWN. Same value (and Left =
 // positive / Right = negative sign convention) as Design > Robot mode's

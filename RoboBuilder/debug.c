@@ -131,3 +131,40 @@ void debugPrintSegments(ArcSegment* segments, int count)
     printf("----------------------------------------------------------------\n");
     printf("[DEBUG] End of segmentation.\n\n");
 }
+
+// ---- SIM_LOG_TO_FILE tee (see ui_state.h) ----
+#include <stdarg.h>
+#include <string.h>
+#include "ui_state.h"
+#if SIM_LOG_TO_FILE
+void simLogTee(const char* fmt, ...)
+{
+    static FILE* logFile = NULL;
+    static int triedOpen = 0;
+    va_list args;
+
+    va_start(args, fmt);
+    vprintf(fmt, args);
+    va_end(args);
+
+    if (!triedOpen)
+    {
+        triedOpen = 1;
+        logFile = fopen("sim_log.txt", "w");
+    }
+    if (logFile)
+    {
+        static int atLineStart = 1;
+        char buf[2048];
+        va_start(args, fmt);
+        vsnprintf(buf, sizeof(buf), fmt, args);
+        va_end(args);
+        if (atLineStart)
+            fprintf(logFile, "%10lu ", (unsigned long)GetTickCount()); // ms timestamp per line
+        fputs(buf, logFile);
+        size_t n = strlen(buf);
+        atLineStart = (n > 0 && buf[n - 1] == '\n');
+        fflush(logFile);
+    }
+}
+#endif
